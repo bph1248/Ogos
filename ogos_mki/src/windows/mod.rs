@@ -10,7 +10,7 @@ use winapi::shared::minwindef::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use winapi::shared::windef::HHOOK__;
 use winapi::um::winuser::{
     CallNextHookEx, GetMessageW, SetWindowsHookExW, GET_XBUTTON_WPARAM, KBDLLHOOKSTRUCT, MSG,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    LLKHF_INJECTED, LLMHF_INJECTED, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MBUTTONDOWN, WM_MBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
 };
@@ -40,7 +40,13 @@ unsafe extern "system" fn keybd_hook(
     w_param: WPARAM,
     l_param: LPARAM,
 ) -> LRESULT {
-    let vk: i32 = (*(l_param as *const KBDLLHOOKSTRUCT))
+    let hook_struct = &*(l_param as *const KBDLLHOOKSTRUCT);
+
+    if hook_struct.flags & LLKHF_INJECTED == LLKHF_INJECTED {
+        return CallNextHookEx(null_mut(), code, w_param, l_param)
+    }
+
+    let vk: i32 = hook_struct
         .vkCode
         .try_into()
         .expect("vkCode does not fit in i32");
@@ -90,9 +96,14 @@ unsafe extern "system" fn mouse_hook(
     //   ULONG_PTR dwExtraInfo;
     // } MSLLHOOKSTRUCT, *LPMSLLHOOKSTRUCT, *PMSLLHOOKSTRUCT;
 
-    let data = &*(l_param as *const MSLLHOOKSTRUCT);
+    let hook_struct = &*(l_param as *const MSLLHOOKSTRUCT);
+
+    if hook_struct.flags & LLMHF_INJECTED == LLMHF_INJECTED {
+        return CallNextHookEx(null_mut(), code, w_param, l_param)
+    }
+
     let x_button_param: u16 =
-        GET_XBUTTON_WPARAM(data.mouseData.try_into().expect("u32 fits usize"));
+        GET_XBUTTON_WPARAM(hook_struct.mouseData.try_into().expect("u32 fits usize"));
     let maybe_x_button = if x_button_param == XBUTTON1 {
         Some(Mouse::Side)
     } else if x_button_param == XBUTTON2 {
@@ -101,7 +112,7 @@ unsafe extern "system" fn mouse_hook(
         None
     };
     let w_param_u32: u32 = w_param.try_into().expect("w_param > u32");
-    registry().update_mouse_position(data.pt.x, data.pt.y);
+    registry().update_mouse_position(hook_struct.pt.x, hook_struct.pt.y);
     let inhibit = match w_param_u32 {
         code if code == WM_LBUTTONDOWN => registry().event_down(Event::Mouse(Mouse::Left)),
         code if code == WM_LBUTTONDBLCLK => registry().event_click(Event::Mouse(Mouse::DoubleLeft)),
