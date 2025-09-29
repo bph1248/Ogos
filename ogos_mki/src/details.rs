@@ -111,26 +111,30 @@ impl Registry {
         }
     }
 
-    pub(crate) fn sequence(&self, event: Event, state: State, action: Arc<Action>) {
-        let erased_action = Box::new(move || {
-            (action.callback)(event, state);
-        });
-        let mut sequencer = self.sequencer.lock().unwrap();
-        let sequencer = sequencer.get_or_insert({
-            let (tx, rx) = mpsc::channel::<Box<dyn Fn() + Send + Sync>>();
-            Sequencer {
-                _handle: thread::Builder::new()
-                    .name("sequencer".into())
-                    .spawn(move || {
-                        while let Ok(action) = rx.recv() {
-                            action()
-                        }
-                    })
-                    .unwrap(),
-                tx,
-            }
-        });
-        let _ = sequencer.tx.send(erased_action);
+    pub(crate) fn clear(&self) {
+        self.key_callbacks.lock().unwrap().clear();
+        self.button_callbacks.lock().unwrap().clear();
+        self.wheel_callbacks.lock().unwrap().clear();
+        *self.any_key_callback.lock().unwrap() = None;
+        *self.any_button_callback.lock().unwrap() = None;
+        *self.pressed.lock().unwrap() = Pressed::default();
+        *self.hotkeys.lock().unwrap() = HashMap::new();
+    }
+
+    pub(crate) fn sequence(&self, action: Arc<Action>, event: Event, state: State) {
+        // let start = std::time::Instant::now();
+
+        if let Some(sequencer) = self.sequencer.read().unwrap().as_ref() {
+            sequencer.sx.send(
+                Box::new(move || {
+                    (action.callback)(event, state);
+                })
+            )
+            .unwrap()
+        }
+
+        // let dur = start.elapsed();
+        // info!("event: {}, dur: {}", event, dur.as_micros());
     }
 
     fn invoke_action(&self, action: Arc<Action>, event: Event, state: State) {

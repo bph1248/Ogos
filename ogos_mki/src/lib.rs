@@ -443,3 +443,7 @@ pub fn enable_debug() {
 pub fn print_pressed_state() {
     registry().print_pressed_state();
 }
+
+pub fn clear() {
+    registry().clear();
+}
