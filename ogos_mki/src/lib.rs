@@ -47,7 +47,7 @@ impl fmt::Display for State {
     }
 }
 
-impl Keyboard {
+impl Key {
     /// Send an event to Press this key
     pub fn press(&self) {
         kimpl::press(*self)
@@ -69,7 +69,7 @@ impl Keyboard {
     }
 
     /// Bind an action on this KeyboardKey, action will be invoked on a new thread.
-    pub fn bind(&self, handler: impl Fn(Keyboard) + Send + Sync + 'static) {
+    pub fn bind(&self, handler: impl Fn(Key) + Send + Sync + 'static) {
         bind_key(*self, Action::handle_kb(handler))
     }
 
@@ -85,11 +85,11 @@ impl Keyboard {
 
     /// Whether given KeyboardKey is pressed.
     pub fn is_pressed(&self) -> bool {
-        registry().is_pressed(Event::Keyboard(*self))
+        registry().is_pressed(InputEvent::Keyboard(*self))
     }
 }
 
-impl Mouse {
+impl Button {
     /// Send an event to Press this Button
     pub fn press(&self) {
         mimpl::press(*self)
@@ -124,7 +124,7 @@ impl Mouse {
     }
 
     /// Bind an action on this MouseButton, action will be invoked on a new thread.
-    pub fn bind(&self, handler: impl Fn(Mouse) + Send + Sync + 'static) {
+    pub fn bind(&self, handler: impl Fn(Button) + Send + Sync + 'static) {
         bind_button(*self, Action::handle_mouse(handler))
     }
 
@@ -140,7 +140,7 @@ impl Mouse {
 
     /// Whether given MouseButton is pressed.
     pub fn is_pressed(&self) -> bool {
-        registry().is_pressed(Event::MouseButton(*self))
+        registry().is_pressed(InputEvent::MouseButton(*self))
     }
 }
 
@@ -177,18 +177,18 @@ impl InhibitEvent {
 }
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
-pub enum Event {
-    Keyboard(Keyboard),
-    MouseButton(Mouse),
+pub enum InputEvent {
+    Keyboard(Key),
+    MouseButton(Button),
     MouseWheel(Wheel)
 }
 
-impl fmt::Display for Event {
+impl fmt::Display for InputEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Event::Keyboard(k) => f.write_fmt(format_args!("Keyboard: {}", k)),
-            Event::MouseButton(m) => f.write_fmt(format_args!("MouseButton: {}", m)),
-            Event::MouseWheel(w) => f.write_fmt(format_args!("MouseWheel: {}", w)),
+            InputEvent::Keyboard(k) => f.write_fmt(format_args!("Keyboard: {}", k)),
+            InputEvent::MouseButton(m) => f.write_fmt(format_args!("MouseButton: {}", m)),
+            InputEvent::MouseWheel(w) => f.write_fmt(format_args!("MouseWheel: {}", w)),
         }
     }
 }
@@ -196,7 +196,7 @@ impl fmt::Display for Event {
 pub struct Action {
     /// What do you want to do on the key callback, see `defer` and `sequencer` to understand
     /// on which thread those are invoked.
-    pub callback: Box<dyn Fn(Event, State) + Send + Sync + 'static>,
+    pub callback: Box<dyn Fn(InputEvent, State) + Send + Sync + 'static>,
     /// Whether to inhibit the event propagation to further applications down the call stack.
     /// This only works on windows.
     /// Note that for now the 'release' event cannot be inhibited.
@@ -217,25 +217,25 @@ impl Action {
     /// Use this if you want to send inputs from the handlers as on windows it is not allowed
     /// to pump new events.
     /// will not inhibit event.
-    pub fn handle_kb(action: impl Fn(Keyboard) + Send + Sync + 'static) -> Self {
+    pub fn handle_kb(action: impl Fn(Key) + Send + Sync + 'static) -> Self {
         Self::handle(move |event| {
-            if let Event::Keyboard(key) = event {
+            if let InputEvent::Keyboard(key) = event {
                 action(key);
             }
         })
     }
 
     /// Version of `handle_kb` but for mouse.
-    pub fn handle_mouse(action: impl Fn(Mouse) + Send + Sync + 'static) -> Self {
+    pub fn handle_mouse(action: impl Fn(Button) + Send + Sync + 'static) -> Self {
         Self::handle(move |event| {
-            if let Event::MouseButton(button) = event {
+            if let InputEvent::MouseButton(button) = event {
                 action(button);
             }
         })
     }
 
     /// General version of `handle_kb` for both Mouse and Keyboard.
-    pub fn handle(action: impl Fn(Event) + Send + Sync + 'static) -> Self {
+    pub fn handle(action: impl Fn(InputEvent) + Send + Sync + 'static) -> Self {
         Action {
             callback: Box::new(move |event, state| {
                 if state == State::Pressed {
@@ -252,25 +252,25 @@ impl Action {
     /// will only react to key press not a release.
     /// will not inhibit event.
     /// Use this if you want a simple handler without spawning threads.
-    pub fn callback_kb(action: impl Fn(Keyboard) + Send + Sync + 'static) -> Self {
+    pub fn callback_kb(action: impl Fn(Key) + Send + Sync + 'static) -> Self {
         Self::callback(move |event| {
-            if let Event::Keyboard(key) = event {
+            if let InputEvent::Keyboard(key) = event {
                 action(key);
             }
         })
     }
 
     /// Version of `callback_kb` but for mouse.
-    pub fn callback_mouse(action: impl Fn(Mouse) + Send + Sync + 'static) -> Self {
+    pub fn callback_mouse(action: impl Fn(Button) + Send + Sync + 'static) -> Self {
         Self::callback(move |event| {
-            if let Event::MouseButton(button) = event {
+            if let InputEvent::MouseButton(button) = event {
                 action(button);
             }
         })
     }
 
     /// General version of `callback_kb` for both Mouse and Keyboard.
-    pub fn callback(action: impl Fn(Event) + Send + Sync + 'static) -> Self {
+    pub fn callback(action: impl Fn(InputEvent) + Send + Sync + 'static) -> Self {
         Action {
             callback: Box::new(move |event, state| {
                 if state == State::Pressed {
@@ -288,25 +288,25 @@ impl Action {
     /// will only react to key press not a release.
     /// will not inhibit event.
     /// Use this if you want to have complicated actions that do not overlap.
-    pub fn sequencing_kb(action: impl Fn(Keyboard) + Send + Sync + 'static) -> Self {
+    pub fn sequencing_kb(action: impl Fn(Key) + Send + Sync + 'static) -> Self {
         Self::sequencing(move |event| {
-            if let Event::Keyboard(key) = event {
+            if let InputEvent::Keyboard(key) = event {
                 action(key);
             }
         })
     }
 
     /// Version of `sequencing_kb` but for mouse.
-    pub fn sequencing_mouse(action: impl Fn(Mouse) + Send + Sync + 'static) -> Self {
+    pub fn sequencing_mouse(action: impl Fn(Button) + Send + Sync + 'static) -> Self {
         Self::sequencing(move |event| {
-            if let Event::MouseButton(button) = event {
+            if let InputEvent::MouseButton(button) = event {
                 action(button);
             }
         })
     }
 
     /// General version of `sequencing_kb` for both Mouse and Keyboard.
-    pub fn sequencing(action: impl Fn(Event) + Send + Sync + 'static) -> Self {
+    pub fn sequencing(action: impl Fn(InputEvent) + Send + Sync + 'static) -> Self {
         Action {
             callback: Box::new(move |event, state| {
                 if state == State::Pressed {
@@ -340,7 +340,7 @@ pub fn bind_any_key(action: Action) {
 ///   bind_key(Keyboard::B, Action::handle_kb(|(key)| println!("B Pressed")));
 /// }
 /// ```
-pub fn bind_key(key: Keyboard, action: Action) {
+pub fn bind_key(key: Key, action: Action) {
     registry()
         .key_callbacks
         .lock()
@@ -362,7 +362,7 @@ pub fn remove_any_key_bind() {
 }
 
 /// Removes specific key bind.
-pub fn remove_key_bind(key: Keyboard) {
+pub fn remove_key_bind(key: Key) {
     registry().key_callbacks.lock().unwrap().remove(&key);
 }
 
@@ -372,7 +372,7 @@ pub fn bind_any_button(action: Action) {
 }
 
 /// Same as `bind_key` but for mouse buttons.
-pub fn bind_button(button: Mouse, action: Action) {
+pub fn bind_button(button: Button, action: Action) {
     registry()
         .button_callbacks
         .lock()
@@ -394,7 +394,7 @@ pub fn remove_any_button_bind() {
 }
 
 /// Same as `remove_key_bind` but for mouse buttons.
-pub fn remove_button_bind(button: Mouse) {
+pub fn remove_button_bind(button: Button) {
     registry().button_callbacks.lock().unwrap().remove(&button);
 }
 
@@ -411,12 +411,12 @@ pub fn remove_wheel_bind(wheel: Wheel) {
 ///   register_hotkey(&[Keyboard::LeftControl, Keyboard::B], || println!("CTRL+B pressed"));
 /// }
 /// ```
-pub fn register_hotkey(sequence: &[Keyboard], callback: impl Fn() + Send + Sync + 'static) {
+pub fn register_hotkey(sequence: &[Key], callback: impl Fn() + Send + Sync + 'static) {
     registry().register_hotkey(sequence, callback);
 }
 
 /// Returns whether given key sequence is currently pressed down, this may be a single key.
-pub fn are_pressed(sequence: &[Keyboard]) -> bool {
+pub fn are_pressed(sequence: &[Key]) -> bool {
     registry().are_pressed(sequence)
 }
 
@@ -432,7 +432,7 @@ pub fn get_state(key: &str) -> Option<String> {
 }
 
 /// Unregisters hotkey, a original sequence has to be passed as parameter..
-pub fn unregister_hotkey(sequence: &[Keyboard]) {
+pub fn unregister_hotkey(sequence: &[Key]) {
     registry().unregister_hotkey(sequence);
 }
 

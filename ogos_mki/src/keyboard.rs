@@ -5,7 +5,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-pub enum Keyboard {
+pub enum Key {
     Escape,
     F1,
     F2,
@@ -109,11 +109,11 @@ pub enum Keyboard {
     KeypadPlus,
     KeypadDot
 }
-impl FromStr for Keyboard {
+impl FromStr for Key {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use Keyboard::*;
+        use Key::*;
 
         Ok(match s {
             "escape" | "esc" => Escape,
@@ -222,7 +222,7 @@ impl FromStr for Keyboard {
         })
     }
 }
-impl fmt::Display for Keyboard {
+impl fmt::Display for Key {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let code: i32 = (*self).into();
 

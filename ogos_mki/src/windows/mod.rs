@@ -2,7 +2,7 @@ pub mod keyboard;
 pub mod mouse;
 
 use crate::details::registry;
-use crate::{Event, InhibitEvent, Keyboard, Mouse, Wheel};
+use crate::{InputEvent, InhibitEvent, Key, Button, Wheel};
 use std::convert::*;
 use std::mem::MaybeUninit;
 use std::ptr::null_mut;
@@ -64,15 +64,15 @@ unsafe extern "system" fn keybd_hook(
     let mut inhibit = InhibitEvent::No;
     // Note this seemingly is only activated when ALT is not pressed, need to handle WM_SYSKEYDOWN then
     // Test that case.
-    if let Ok(key) = Keyboard::try_from(vk) {
+    if let Ok(key) = Key::try_from(vk) {
         let code = w_param as u32;
 
         match code {
             _ if code == WM_KEYDOWN || code == WM_SYSKEYDOWN => {
-                inhibit = registry().event_down(Event::Keyboard(key));
+                inhibit = registry().event_down(InputEvent::Keyboard(key));
             }
             _ if code == WM_KEYUP || code == WM_SYSKEYUP => {
-                inhibit = registry().event_up(Event::Keyboard(key));
+                inhibit = registry().event_up(InputEvent::Keyboard(key));
             }
             _ => ()
         }
@@ -108,61 +108,61 @@ unsafe extern "system" fn mouse_hook(
     let x_button_param: u16 =
         GET_XBUTTON_WPARAM(hook_struct.mouseData.try_into().expect("u32 fits usize"));
     let maybe_x_button = if x_button_param == XBUTTON1 {
-        Some(Mouse::Back)
+        Some(Button::Back)
     } else if x_button_param == XBUTTON2 {
-        Some(Mouse::Forward)
+        Some(Button::Forward)
     } else {
         None
     };
     let w_param_u32: u32 = w_param.try_into().expect("w_param > u32");
     registry().update_mouse_position(hook_struct.pt.x, hook_struct.pt.y);
     let inhibit = match w_param_u32 {
-        code if code == WM_LBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Left)),
-        code if code == WM_LBUTTONDBLCLK => registry().event_click(Event::MouseButton(Mouse::DoubleLeft)),
-        code if code == WM_RBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Right)),
+        code if code == WM_LBUTTONDOWN => registry().event_down(InputEvent::MouseButton(Button::Left)),
+        code if code == WM_LBUTTONDBLCLK => registry().event_click(InputEvent::MouseButton(Button::DoubleLeft)),
+        code if code == WM_RBUTTONDOWN => registry().event_down(InputEvent::MouseButton(Button::Right)),
         code if code == WM_RBUTTONDBLCLK => {
-            registry().event_click(Event::MouseButton(Mouse::DoubleRight))
+            registry().event_click(InputEvent::MouseButton(Button::DoubleRight))
         }
-        code if code == WM_MBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Middle)),
+        code if code == WM_MBUTTONDOWN => registry().event_down(InputEvent::MouseButton(Button::Middle)),
         code if code == WM_MOUSEWHEEL => {
             let wheel_delta = (hook_struct.mouseData >> 16) as i16;
 
             match wheel_delta > 0 {
-                true => registry().event_wheel(Event::MouseWheel(Wheel::Up)),
-                false => registry().event_wheel(Event::MouseWheel(Wheel::Down))
+                true => registry().event_wheel(InputEvent::MouseWheel(Wheel::Up)),
+                false => registry().event_wheel(InputEvent::MouseWheel(Wheel::Down))
             }
         },
-        code if code == WM_LBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Left)),
-        code if code == WM_RBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Right)),
-        code if code == WM_MBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Middle)),
+        code if code == WM_LBUTTONDOWN => registry().event_down(InputEvent::MouseButton(Button::Left)),
+        code if code == WM_RBUTTONDOWN => registry().event_down(InputEvent::MouseButton(Button::Right)),
+        code if code == WM_MBUTTONDOWN => registry().event_down(InputEvent::MouseButton(Button::Middle)),
         code if code == WM_XBUTTONDOWN => {
             if let Some(x_button) = maybe_x_button {
-                registry().event_down(Event::MouseButton(x_button))
+                registry().event_down(InputEvent::MouseButton(x_button))
             } else {
                 InhibitEvent::No
             }
         }
-        code if code == WM_LBUTTONDBLCLK => registry().event_click(Event::MouseButton(Mouse::DoubleLeft)),
-        code if code == WM_RBUTTONDBLCLK => registry().event_click(Event::MouseButton(Mouse::DoubleRight)),
-        code if code == WM_MBUTTONDBLCLK => registry().event_click(Event::MouseButton(Mouse::DoubleMiddle)),
+        code if code == WM_LBUTTONDBLCLK => registry().event_click(InputEvent::MouseButton(Button::DoubleLeft)),
+        code if code == WM_RBUTTONDBLCLK => registry().event_click(InputEvent::MouseButton(Button::DoubleRight)),
+        code if code == WM_MBUTTONDBLCLK => registry().event_click(InputEvent::MouseButton(Button::DoubleMiddle)),
         code if code == WM_XBUTTONDBLCLK => {
             if let Some(x_button) = maybe_x_button {
                 // TODO: figure out the other XButtons.
-                if Mouse::Back == x_button {
-                    registry().event_click(Event::MouseButton(Mouse::DoubleSide))
+                if Button::Back == x_button {
+                    registry().event_click(InputEvent::MouseButton(Button::DoubleSide))
                 } else {
-                    registry().event_click(Event::MouseButton(Mouse::DoubleExtra))
+                    registry().event_click(InputEvent::MouseButton(Button::DoubleExtra))
                 }
             } else {
                 InhibitEvent::No
             }
         }
-        code if code == WM_LBUTTONUP => registry().event_up(Event::MouseButton(Mouse::Left)),
-        code if code == WM_RBUTTONUP => registry().event_up(Event::MouseButton(Mouse::Right)),
-        code if code == WM_MBUTTONUP => registry().event_up(Event::MouseButton(Mouse::Middle)),
+        code if code == WM_LBUTTONUP => registry().event_up(InputEvent::MouseButton(Button::Left)),
+        code if code == WM_RBUTTONUP => registry().event_up(InputEvent::MouseButton(Button::Right)),
+        code if code == WM_MBUTTONUP => registry().event_up(InputEvent::MouseButton(Button::Middle)),
         code if code == WM_XBUTTONUP => {
             if let Some(x_button) = maybe_x_button {
-                registry().event_up(Event::MouseButton(x_button))
+                registry().event_up(InputEvent::MouseButton(x_button))
             } else {
                 InhibitEvent::No
             }

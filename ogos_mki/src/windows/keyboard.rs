@@ -1,4 +1,4 @@
-use crate::Keyboard::{self, *};
+use crate::Key::{self, *};
 
 use std::{
     convert::*,
@@ -12,21 +12,21 @@ use winapi::{
 pub(crate) mod kimpl {
     use super::*;
 
-    pub(crate) fn press(key: Keyboard) {
+    pub(crate) fn press(key: Key) {
         send_key_stroke(true, key)
     }
 
-    pub(crate) fn release(key: Keyboard) {
+    pub(crate) fn release(key: Key) {
         send_key_stroke(false, key)
     }
 
-    pub(crate) fn click(key: Keyboard) {
+    pub(crate) fn click(key: Key) {
         // Do we need sleep in between?
         press(key);
         release(key);
     }
 
-    pub(crate) fn is_toggled(key: Keyboard) -> bool {
+    pub(crate) fn is_toggled(key: Key) -> bool {
         // GetAsync is universal, but does not provide whether button is toggled.
         // as the GetKeyState seems to guarantee the correctness.
         let state = unsafe { GetKeyState(vk_code(key).into()) };
@@ -34,7 +34,7 @@ pub(crate) mod kimpl {
     }
 }
 
-pub fn send_key_stroke(press: bool, key: Keyboard) {
+pub fn send_key_stroke(press: bool, key: Key) {
     let action = if press {
         0 // 0 means to press.
     } else {
@@ -99,14 +99,14 @@ const VK_X: i32 = 0x58;
 const VK_Y: i32 = 0x59;
 const VK_Z: i32 = 0x5A;
 
-fn vk_code(key: Keyboard) -> WORD {
+fn vk_code(key: Key) -> WORD {
     i32::from(key)
         .try_into()
         .expect("vk does not fit into WORD")
 }
 
-impl From<Keyboard> for i32 {
-    fn from(key: Keyboard) -> i32 {
+impl From<Key> for i32 {
+    fn from(key: Key) -> i32 {
         match key {
             Escape => VK_ESCAPE,
             F1 => VK_F1,
@@ -214,7 +214,7 @@ impl From<Keyboard> for i32 {
     }
 }
 
-impl TryFrom<i32> for Keyboard {
+impl TryFrom<i32> for Key {
     type Error = ();
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {

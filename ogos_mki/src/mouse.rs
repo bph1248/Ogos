@@ -6,7 +6,7 @@ use std::{
 
 #[cfg(target_os = "windows")] // Not sure how to detect double on linux
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-pub enum Mouse {
+pub enum Button {
     Left,
     DoubleLeft,
     Right,
@@ -30,11 +30,11 @@ pub enum Mouse {
     Back,
     Task,
 }
-impl FromStr for Mouse {
+impl FromStr for Button {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use Mouse::*;
+        use Button::*;
 
         Ok(match s {
             "left_button" | "lft_but" | "lb" => Left,
@@ -46,7 +46,7 @@ impl FromStr for Mouse {
         })
     }
 }
-impl fmt::Display for Mouse {
+impl fmt::Display for Button {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("{:?}", self))
     }

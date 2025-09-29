@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 fn main() {
-    use Keyboard::*;
+    use Key::*;
     bind_any_key(Action::handle_kb(|key| {
         println!("Pressed: {:?}", key);
     }));
@@ -26,16 +26,16 @@ fn main() {
         Q.click();
     });
 
-    Mouse::Left.bind(|_| {
+    Button::Left.bind(|_| {
         println!("Left Mouse button pressed");
     });
 
     #[cfg(target_os = "windows")] // Not sure how to detect double on linux
-    Mouse::DoubleLeft.bind(|_| {
+    Button::DoubleLeft.bind(|_| {
         println!("Double Left Click Mouse");
     });
 
-    Mouse::Right.bind(|_| {
+    Button::Right.bind(|_| {
         println!("Right Mouse button pressed");
     });
 
@@ -50,7 +50,7 @@ fn main() {
 
     register_hotkey(&[LeftCtrl, U], || println!("Ctrl+U pressed"));
 
-    Mouse::track(|x, y| {
+    Button::track(|x, y| {
         static COUNTER: AtomicI64 = AtomicI64::new(0);
         if COUNTER.load(Ordering::Relaxed) % 100 == 0 {
             println!("mouse movement (once every 100 ticks): {} {} ", x, y)

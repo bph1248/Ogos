@@ -1,5 +1,5 @@
-use crate::{install_hooks, process_message, Action, Event, Mouse, State};
-use crate::{InhibitEvent, Keyboard};
+use crate::{install_hooks, process_message, Action, InputEvent, Button, State};
+use crate::{InhibitEvent, Key, Wheel};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,35 +23,35 @@ struct Sequencer {
 
 #[derive(Default)]
 struct Pressed {
-    pressed: Vec<Event>,
-    pressed_keys: Vec<Keyboard>,
+    pressed: Vec<InputEvent>,
+    pressed_keys: Vec<Key>,
 }
 
 impl Pressed {
-    pub(crate) fn is_pressed(&self, event: Event) -> bool {
+    pub(crate) fn is_pressed(&self, event: InputEvent) -> bool {
         self.pressed.contains(&event)
     }
 
     // Order matters intentionally here.
-    pub(crate) fn are_pressed(&self, keys: &[Keyboard]) -> bool {
+    pub(crate) fn are_pressed(&self, keys: &[Key]) -> bool {
         self.pressed_keys == keys
     }
 
-    fn pressed(&mut self, event: Event) {
+    fn pressed(&mut self, event: InputEvent) {
         if !self.pressed.contains(&event) {
             self.pressed.push(event);
 
-            if let Event::Keyboard(key) = event {
+            if let InputEvent::Keyboard(key) = event {
                 self.pressed_keys.push(key);
             }
         }
     }
 
-    fn released(&mut self, event: Event) {
+    fn released(&mut self, event: InputEvent) {
         if let Some(index) = self.pressed.iter().position(|e| *e == event) {
             self.pressed.remove(index);
 
-            if let Event::Keyboard(key) = event {
+            if let InputEvent::Keyboard(key) = event {
                 let pos = self
                     .pressed_keys
                     .iter()
@@ -64,13 +64,13 @@ impl Pressed {
 }
 
 pub(crate) struct Registry {
-    pub(crate) key_callbacks: Mutex<HashMap<Keyboard, Arc<Action>>>,
-    pub(crate) button_callbacks: Mutex<HashMap<Mouse, Arc<Action>>>,
+    pub(crate) key_callbacks: Mutex<HashMap<Key, Arc<Action>>>,
+    pub(crate) button_callbacks: Mutex<HashMap<Button, Arc<Action>>>,
     pub(crate) wheel_callbacks: Mutex<HashMap<Wheel, Arc<Action>>>,
     pub(crate) any_key_callback: Mutex<Option<Arc<Action>>>,
     pub(crate) any_button_callback: Mutex<Option<Arc<Action>>>,
     #[allow(clippy::type_complexity)]
-    pub(crate) hotkeys: Mutex<HashMap<Vec<Keyboard>, Arc<Box<dyn Fn() + Send + Sync + 'static>>>>,
+    pub(crate) hotkeys: Mutex<HashMap<Vec<Key>, Arc<Box<dyn Fn() + Send + Sync + 'static>>>>,
     #[allow(clippy::type_complexity)]
     mouse_tracking_callback: Mutex<Option<Arc<Box<dyn Fn(i32, i32) + Send + Sync + 'static>>>>,
 
@@ -121,7 +121,7 @@ impl Registry {
         *self.hotkeys.lock().unwrap() = HashMap::new();
     }
 
-    pub(crate) fn sequence(&self, action: Arc<Action>, event: Event, state: State) {
+    pub(crate) fn sequence(&self, action: Arc<Action>, event: InputEvent, state: State) {
         // let start = std::time::Instant::now();
 
         if let Some(sequencer) = self.sequencer.read().unwrap().as_ref() {
@@ -137,7 +137,7 @@ impl Registry {
         // info!("event: {}, dur: {}", event, dur.as_micros());
     }
 
-    fn invoke_action(&self, action: Arc<Action>, event: Event, state: State) {
+    fn invoke_action(&self, action: Arc<Action>, event: InputEvent, state: State) {
         if self.debug_enabled.load(Ordering::Relaxed) {
             self.maybe_log_event(&format!("invoking: {:?}", state), event);
         }
@@ -152,17 +152,17 @@ impl Registry {
         }
     }
 
-    fn map_event_to_actions(&self, event: Event) -> (Option<Arc<Action>>, Option<Arc<Action>>) {
+    fn map_event_to_actions(&self, event: InputEvent) -> (Option<Arc<Action>>, Option<Arc<Action>>) {
         let (global_action, key_action) = match event {
-            Event::Keyboard(key) => (
+            InputEvent::Keyboard(key) => (
                 self.any_key_callback.lock().unwrap().clone(),
                 self.key_callbacks.lock().unwrap().get(&key).cloned(),
             ),
-            Event::MouseButton(button) => (
+            InputEvent::MouseButton(button) => (
                 self.any_button_callback.lock().unwrap().clone(),
                 self.button_callbacks.lock().unwrap().get(&button).cloned(),
             ),
-            Event::MouseWheel(wheel) => (
+            InputEvent::MouseWheel(wheel) => (
                 self.any_button_callback.lock().unwrap().clone(),
                 self.wheel_callbacks.lock().unwrap().get(&wheel).cloned(),
             )
@@ -170,8 +170,8 @@ impl Registry {
         (global_action, key_action)
     }
 
-    pub(crate) fn event_wheel(&self, event: Event) -> InhibitEvent {
-        if let Event::MouseWheel(wheel) = event {
+    pub(crate) fn event_wheel(&self, event: InputEvent) -> InhibitEvent {
+        if let InputEvent::MouseWheel(wheel) = event {
             self.maybe_log_event("scroll", event);
 
             let (_, action) = self.map_event_to_actions(event);
@@ -190,11 +190,11 @@ impl Registry {
         InhibitEvent::No
     }
 
-    pub(crate) fn event_down(&self, event: Event) -> InhibitEvent {
+    pub(crate) fn event_down(&self, event: InputEvent) -> InhibitEvent {
         self.maybe_log_event("down", event);
         self.pressed.lock().unwrap().pressed(event);
         let mut callbacks = Vec::new();
-        if let Event::Keyboard(key) = event {
+        if let InputEvent::Keyboard(key) = event {
             for (sequence, callback) in self.hotkeys.lock().unwrap().iter() {
                 if sequence.last() == Some(&key)
                     && self.pressed.lock().unwrap().are_pressed(sequence)
@@ -222,7 +222,7 @@ impl Registry {
         inhibit
     }
 
-    pub(crate) fn event_up(&self, event: Event) -> InhibitEvent {
+    pub(crate) fn event_up(&self, event: InputEvent) -> InhibitEvent {
         self.maybe_log_event("up", event);
         self.pressed.lock().unwrap().released(event);
         let state = State::Released;
@@ -238,24 +238,24 @@ impl Registry {
     }
 
     #[cfg(target_os = "windows")] // Not sure how to detect double on linux
-    pub(crate) fn event_click(&self, event: Event) -> InhibitEvent {
+    pub(crate) fn event_click(&self, event: InputEvent) -> InhibitEvent {
         self.maybe_log_event("click", event);
         let inhibit = self.event_down(event);
         self.event_up(event);
         inhibit
     }
 
-    pub(crate) fn is_pressed(&self, event: Event) -> bool {
+    pub(crate) fn is_pressed(&self, event: InputEvent) -> bool {
         self.pressed.lock().unwrap().is_pressed(event)
     }
 
-    pub(crate) fn are_pressed(&self, keys: &[Keyboard]) -> bool {
+    pub(crate) fn are_pressed(&self, keys: &[Key]) -> bool {
         self.pressed.lock().unwrap().are_pressed(keys)
     }
 
     pub(crate) fn register_hotkey(
         &self,
-        sequence: &[Keyboard],
+        sequence: &[Key],
         handler: impl Fn() + Send + Sync + 'static,
     ) {
         let mut hotkeys = self.hotkeys.lock().unwrap();
@@ -279,7 +279,7 @@ impl Registry {
         };
     }
 
-    pub(crate) fn unregister_hotkey(&self, sequence: &[Keyboard]) {
+    pub(crate) fn unregister_hotkey(&self, sequence: &[Key]) {
         self.hotkeys.lock().unwrap().remove(&sequence.to_vec());
     }
 
@@ -319,7 +319,7 @@ impl Registry {
         self.debug_enabled.store(true, Ordering::Relaxed);
     }
 
-    pub fn maybe_log_event(&self, prefix: &str, event: Event) {
+    pub fn maybe_log_event(&self, prefix: &str, event: InputEvent) {
         if self.debug_enabled.load(Ordering::Relaxed) {
             println!("Event: {} - {:?}. ts: {}", prefix, event, log_timestamp())
         }

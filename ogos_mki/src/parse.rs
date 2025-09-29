@@ -1,5 +1,5 @@
 use crate::{
-    are_pressed, get_state, print_pressed_state, register_hotkey, set_state, Keyboard, Mouse,
+    are_pressed, get_state, print_pressed_state, register_hotkey, set_state, Key, Button,
 };
 use serde::de::Error;
 use serde::{Deserialize, Serialize};
@@ -24,9 +24,9 @@ struct Bind {
 #[derive(Deserialize, Serialize)]
 struct Input {
     #[serde(skip_serializing_if = "Option::is_none")]
-    key: Option<Vec<Keyboard>>,
+    key: Option<Vec<Key>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    button: Option<Vec<Mouse>>,
+    button: Option<Vec<Button>>,
 }
 
 impl Input {
@@ -56,7 +56,7 @@ impl Input {
         }
     }
     #[allow(unused)]
-    fn key(key: Keyboard) -> Self {
+    fn key(key: Key) -> Self {
         Input {
             button: None,
             key: Some(vec![key]),
@@ -262,7 +262,7 @@ pub fn load_config(content: &str) -> Result<(), serde_yaml::Error> {
 #[cfg(test)]
 mod tests {
     use crate::parse::{Action, Bind, Config, Input, SetState, StateMatches};
-    use crate::Keyboard::{LeftCtrl, N0, N1, D, E, H, K, L, R, S, W};
+    use crate::Key::{LeftCtrl, N0, N1, D, E, H, K, L, R, S, W};
 
     #[test]
     fn example() {

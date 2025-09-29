@@ -1,4 +1,4 @@
-use crate::Keyboard;
+use crate::Key;
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
@@ -6,7 +6,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 /// A sequence of events to execute.
 pub struct Sequence {
-    sequence: Vec<Vec<Keyboard>>,
+    sequence: Vec<Vec<Key>>,
 }
 
 impl Sequence {
@@ -17,8 +17,8 @@ impl Sequence {
         let mut sequence = Vec::new();
         for char in text.chars() {
             let uppercase = char.to_ascii_uppercase();
-            use Keyboard::*;
-            let key = Keyboard::from_str(&uppercase.to_string()).ok()?;
+            use Key::*;
+            let key = Key::from_str(&uppercase.to_string()).ok()?;
             if char.is_uppercase() || char == ':' || char == '\"' {
                 sequence.push(vec![LeftShift, key])
             } else {

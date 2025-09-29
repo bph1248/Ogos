@@ -1,4 +1,4 @@
-use crate::Mouse;
+use crate::Button;
 use std::mem;
 use std::mem::size_of;
 use winapi::um::winuser::{
@@ -13,17 +13,17 @@ pub(crate) mod mimpl {
         button_to_event_down, button_to_mouse_data, mouse_click, mouse_interact_with, mouse_press,
         mouse_release, Pos,
     };
-    use crate::Mouse;
+    use crate::Button;
 
-    pub(crate) fn press(button: Mouse) {
+    pub(crate) fn press(button: Button) {
         mouse_press(button)
     }
 
-    pub(crate) fn click(button: Mouse) {
+    pub(crate) fn click(button: Button) {
         mouse_click(button);
     }
 
-    pub(crate) fn release(button: Mouse) {
+    pub(crate) fn release(button: Button) {
         mouse_release(button);
     }
 
@@ -41,7 +41,7 @@ pub(crate) mod mimpl {
         mouse_interact_with(0, 0, Some(Pos::relative(x, y)));
     }
 
-    pub(crate) fn click_at(x: i32, y: i32, button: Mouse) {
+    pub(crate) fn click_at(x: i32, y: i32, button: Button) {
         mouse_interact_with(
             button_to_event_down(button),
             button_to_mouse_data(button),
@@ -104,7 +104,7 @@ fn mouse_interact_with(mut interaction: u32, mouse_data: u16, pos: Option<Pos>) 
     }
 }
 
-pub fn mouse_press(button: Mouse) {
+pub fn mouse_press(button: Button) {
     mouse_interact_with(
         button_to_event_down(button),
         button_to_mouse_data(button),
@@ -112,7 +112,7 @@ pub fn mouse_press(button: Mouse) {
     )
 }
 
-pub fn mouse_release(button: Mouse) {
+pub fn mouse_release(button: Button) {
     mouse_interact_with(
         button_to_event_up(button),
         button_to_mouse_data(button),
@@ -120,21 +120,21 @@ pub fn mouse_release(button: Mouse) {
     )
 }
 
-pub fn mouse_click(button: Mouse) {
+pub fn mouse_click(button: Button) {
     let click = button_to_event_down(button) | button_to_event_up(button);
     mouse_interact_with(click, button_to_mouse_data(button), mouse_to_pos(button))
 }
 
-fn button_to_mouse_data(button: Mouse) -> u16 {
+fn button_to_mouse_data(button: Button) -> u16 {
     match button {
-        Mouse::Back | Mouse::DoubleSide => XBUTTON1,
-        Mouse::Forward | Mouse::DoubleExtra => XBUTTON2,
+        Button::Back | Button::DoubleSide => XBUTTON1,
+        Button::Forward | Button::DoubleExtra => XBUTTON2,
         _ => 0,
     }
 }
 
-fn button_to_event_up(button: Mouse) -> u32 {
-    use Mouse::*;
+fn button_to_event_up(button: Button) -> u32 {
+    use Button::*;
     match button {
         Left | DoubleLeft => MOUSEEVENTF_LEFTUP,
         Right | DoubleRight => MOUSEEVENTF_RIGHTUP,
@@ -143,8 +143,8 @@ fn button_to_event_up(button: Mouse) -> u32 {
     }
 }
 
-fn button_to_event_down(button: Mouse) -> u32 {
-    use Mouse::*;
+fn button_to_event_down(button: Button) -> u32 {
+    use Button::*;
     match button {
         Left | DoubleLeft => MOUSEEVENTF_LEFTDOWN,
         Right | DoubleRight => MOUSEEVENTF_RIGHTDOWN,
@@ -153,8 +153,8 @@ fn button_to_event_down(button: Mouse) -> u32 {
     }
 }
 
-fn mouse_to_pos(button: Mouse) -> Option<Pos> {
-    use Mouse::*;
+fn mouse_to_pos(button: Button) -> Option<Pos> {
+    use Button::*;
     match button {
         Left | DoubleLeft => None,
         Right | DoubleRight => None,
