@@ -64,22 +64,25 @@ unsafe extern "system" fn keybd_hook(
     let mut inhibit = InhibitEvent::No;
     // Note this seemingly is only activated when ALT is not pressed, need to handle WM_SYSKEYDOWN then
     // Test that case.
-    let key: Keyboard = vk.into();
-    match w_param as u32 {
-        code if code == WM_KEYDOWN || code == WM_SYSKEYDOWN => {
-            inhibit = registry().event_down(Event::Keyboard(key));
+    if let Ok(key) = Keyboard::try_from(vk) {
+        let code = w_param as u32;
+
+        match code {
+            _ if code == WM_KEYDOWN || code == WM_SYSKEYDOWN => {
+                inhibit = registry().event_down(Event::Keyboard(key));
+            }
+            _ if code == WM_KEYUP || code == WM_SYSKEYUP => {
+                inhibit = registry().event_up(Event::Keyboard(key));
+            }
+            _ => ()
         }
-        code if code == WM_KEYUP || code == WM_SYSKEYUP => {
-            inhibit = registry().event_up(Event::Keyboard(key));
+
+        if inhibit.should_inhibit() {
+            return 1
         }
-        _ => {}
     }
 
-    if inhibit.should_inhibit() {
-        1
-    } else {
-        CallNextHookEx(null_mut(), code, w_param, l_param)
-    }
+    CallNextHookEx(null_mut(), code, w_param, l_param)
 }
 
 unsafe extern "system" fn mouse_hook(
