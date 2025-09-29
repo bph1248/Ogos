@@ -131,7 +131,7 @@ impl Mouse {
 
     /// Whether given MouseButton is pressed.
     pub fn is_pressed(&self) -> bool {
-        registry().is_pressed(Event::Mouse(*self))
+        registry().is_pressed(Event::MouseButton(*self))
     }
 }
 
@@ -164,14 +164,14 @@ impl InhibitEvent {
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub enum Event {
     Keyboard(Keyboard),
-    Mouse(Mouse),
+    MouseButton(Mouse),
 }
 
 impl fmt::Display for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Event::Keyboard(k) => f.write_fmt(format_args!("k ({})", k)),
-            Event::Mouse(m) => f.write_fmt(format_args!("m ({})", m)),
+            Event::MouseButton(m) => f.write_fmt(format_args!("MouseButton: {}", m)),
         }
     }
 }
@@ -211,7 +211,7 @@ impl Action {
     /// Version of `handle_kb` but for mouse.
     pub fn handle_mouse(action: impl Fn(Mouse) + Send + Sync + 'static) -> Self {
         Self::handle(move |event| {
-            if let Event::Mouse(button) = event {
+            if let Event::MouseButton(button) = event {
                 action(button);
             }
         })
@@ -246,7 +246,7 @@ impl Action {
     /// Version of `callback_kb` but for mouse.
     pub fn callback_mouse(action: impl Fn(Mouse) + Send + Sync + 'static) -> Self {
         Self::callback(move |event| {
-            if let Event::Mouse(button) = event {
+            if let Event::MouseButton(button) = event {
                 action(button);
             }
         })
@@ -282,7 +282,7 @@ impl Action {
     /// Version of `sequencing_kb` but for mouse.
     pub fn sequencing_mouse(action: impl Fn(Mouse) + Send + Sync + 'static) -> Self {
         Self::sequencing(move |event| {
-            if let Event::Mouse(button) = event {
+            if let Event::MouseButton(button) = event {
                 action(button);
             }
         })

@@ -1,8 +1,11 @@
-use serde::{Deserialize, Serialize};
-use std::fmt;
+use serde::*;
+use std::{
+    fmt,
+    str::*
+};
 
 #[cfg(target_os = "windows")] // Not sure how to detect double on linux
-#[derive(Copy, Clone, Ord, PartialOrd, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Mouse {
     Left,
     DoubleLeft,
@@ -10,14 +13,13 @@ pub enum Mouse {
     DoubleRight,
     Middle,
     DoubleMiddle,
-    Side, // XBUTTON1
+    Back,
     DoubleSide,
-    Extra, // XBUTTON2
-    DoubleExtra,
+    Forward,
+    DoubleExtra
 }
-
 #[cfg(target_os = "linux")]
-#[derive(Copy, Clone, Ord, PartialOrd, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Mouse {
     Left,
     Right,
@@ -28,7 +30,22 @@ pub enum Mouse {
     Back,
     Task,
 }
+impl FromStr for Mouse {
+    type Err = ();
 
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use Mouse::*;
+
+        Ok(match s {
+            "left_button" | "lft_but" | "lb" => Left,
+            "right_button" | "rht_but" | "rb" => Right,
+            "middle_button" | "mdl_but" | "mb" => Middle,
+            "back_button" | "bck_but" | "xb1" | "bb" => Back,
+            "forward_button" | "fwd_but" | "xb2" | "fb" => Forward,
+            _ => Err(())?
+        })
+    }
+}
 impl fmt::Display for Mouse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("{:?}", self))

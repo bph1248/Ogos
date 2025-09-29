@@ -152,7 +152,7 @@ impl Registry {
                 self.any_key_callback.lock().unwrap().clone(),
                 self.key_callbacks.lock().unwrap().get(&key).cloned(),
             ),
-            Event::Mouse(button) => (
+            Event::MouseButton(button) => (
                 self.any_button_callback.lock().unwrap().clone(),
                 self.button_callbacks.lock().unwrap().get(&button).cloned(),
             ),

@@ -105,8 +105,11 @@ fn mouse_interact_with(mut interaction: u32, mouse_data: u16, pos: Option<Pos>) 
 }
 
 pub fn mouse_press(button: Mouse) {
-    let click = button_to_event_down(button) | button_to_event_up(button);
-    mouse_interact_with(click, button_to_mouse_data(button), mouse_to_pos(button))
+    mouse_interact_with(
+        button_to_event_down(button),
+        button_to_mouse_data(button),
+        mouse_to_pos(button),
+    )
 }
 
 pub fn mouse_release(button: Mouse) {
@@ -118,17 +121,14 @@ pub fn mouse_release(button: Mouse) {
 }
 
 pub fn mouse_click(button: Mouse) {
-    mouse_interact_with(
-        button_to_event_down(button),
-        button_to_mouse_data(button),
-        mouse_to_pos(button),
-    )
+    let click = button_to_event_down(button) | button_to_event_up(button);
+    mouse_interact_with(click, button_to_mouse_data(button), mouse_to_pos(button))
 }
 
 fn button_to_mouse_data(button: Mouse) -> u16 {
     match button {
-        Mouse::Side | Mouse::DoubleSide => XBUTTON1,
-        Mouse::Extra | Mouse::DoubleExtra => XBUTTON2,
+        Mouse::Back | Mouse::DoubleSide => XBUTTON1,
+        Mouse::Forward | Mouse::DoubleExtra => XBUTTON2,
         _ => 0,
     }
 }
@@ -136,20 +136,20 @@ fn button_to_mouse_data(button: Mouse) -> u16 {
 fn button_to_event_up(button: Mouse) -> u32 {
     use Mouse::*;
     match button {
-        Left | DoubleLeft => MOUSEEVENTF_LEFTDOWN,
-        Right | DoubleRight => MOUSEEVENTF_RIGHTDOWN,
-        Middle | DoubleMiddle => MOUSEEVENTF_MIDDLEDOWN,
-        Side | DoubleSide | Extra | DoubleExtra => MOUSEEVENTF_XDOWN,
+        Left | DoubleLeft => MOUSEEVENTF_LEFTUP,
+        Right | DoubleRight => MOUSEEVENTF_RIGHTUP,
+        Middle | DoubleMiddle => MOUSEEVENTF_MIDDLEUP,
+        Back | DoubleSide | Forward | DoubleExtra => MOUSEEVENTF_XUP
     }
 }
 
 fn button_to_event_down(button: Mouse) -> u32 {
     use Mouse::*;
     match button {
-        Left | DoubleLeft => MOUSEEVENTF_LEFTUP,
-        Right | DoubleRight => MOUSEEVENTF_RIGHTUP,
-        Middle | DoubleMiddle => MOUSEEVENTF_MIDDLEUP,
-        Side | DoubleSide | Extra | DoubleExtra => MOUSEEVENTF_XUP,
+        Left | DoubleLeft => MOUSEEVENTF_LEFTDOWN,
+        Right | DoubleRight => MOUSEEVENTF_RIGHTDOWN,
+        Middle | DoubleMiddle => MOUSEEVENTF_MIDDLEDOWN,
+        Back | DoubleSide | Forward | DoubleExtra => MOUSEEVENTF_XDOWN
     }
 }
 
@@ -159,6 +159,6 @@ fn mouse_to_pos(button: Mouse) -> Option<Pos> {
         Left | DoubleLeft => None,
         Right | DoubleRight => None,
         Middle | DoubleMiddle => None,
-        Side | DoubleSide | Extra | DoubleExtra => None,
+        Back | DoubleSide | Forward | DoubleExtra => None
     }
 }
