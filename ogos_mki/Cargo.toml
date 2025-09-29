@@ -18,6 +18,9 @@ libc = "0.2"
 serde = { version = "1", features = ["derive"]}
 serde_yaml = "0.8"
 
+[lib]
+path = "src/lib.rs"
+
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser"] }
 
