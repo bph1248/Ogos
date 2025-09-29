@@ -51,3 +51,27 @@ impl fmt::Display for Mouse {
         f.write_fmt(format_args!("{:?}", self))
     }
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub enum Wheel {
+    Up,
+    Down
+}
+impl FromStr for Wheel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use Wheel::*;
+
+        Ok(match s {
+            "wheel_up" | "wup" | "wu" => Up,
+            "wheel_down" | "wdown" | "wd" => Down,
+            _ => Err(())?
+        })
+    }
+}
+impl fmt::Display for Wheel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("{:?}", self))
+    }
+}

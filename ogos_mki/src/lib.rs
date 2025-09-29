@@ -36,8 +36,15 @@ use std::sync::Arc;
 /// Whether given button is now Pressed or Released.
 /// Send in some version of the callbacks.
 pub enum State {
+    WheelUp,
+    WheelDown,
     Pressed,
     Released,
+}
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("{:?}", self))
+    }
 }
 
 impl Keyboard {
@@ -137,6 +144,12 @@ impl Mouse {
     }
 }
 
+impl Wheel {
+    pub fn act_on(&self, action: Action) {
+        bind_wheel(*self, action)
+    }
+}
+
 #[derive(Clone)]
 /// Works only on windows.
 /// Whether to propagate the event for applications down the callstack.
@@ -167,13 +180,15 @@ impl InhibitEvent {
 pub enum Event {
     Keyboard(Keyboard),
     MouseButton(Mouse),
+    MouseWheel(Wheel)
 }
 
 impl fmt::Display for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Event::Keyboard(k) => f.write_fmt(format_args!("k ({})", k)),
+            Event::Keyboard(k) => f.write_fmt(format_args!("Keyboard: {}", k)),
             Event::MouseButton(m) => f.write_fmt(format_args!("MouseButton: {}", m)),
+            Event::MouseWheel(w) => f.write_fmt(format_args!("MouseWheel: {}", w)),
         }
     }
 }
@@ -365,6 +380,14 @@ pub fn bind_button(button: Mouse, action: Action) {
         .insert(button, Arc::new(action));
 }
 
+pub fn bind_wheel(wheel: Wheel, action: Action) {
+    registry()
+        .wheel_callbacks
+        .lock()
+        .unwrap()
+        .insert(wheel, Arc::new(action));
+}
+
 /// Same as `remove_any_key_bind` but for mouse buttons.
 pub fn remove_any_button_bind() {
     *registry().any_button_callback.lock().unwrap() = None;
@@ -373,6 +396,10 @@ pub fn remove_any_button_bind() {
 /// Same as `remove_key_bind` but for mouse buttons.
 pub fn remove_button_bind(button: Mouse) {
     registry().button_callbacks.lock().unwrap().remove(&button);
+}
+
+pub fn remove_wheel_bind(wheel: Wheel) {
+    registry().wheel_callbacks.lock().unwrap().remove(&wheel);
 }
 
 /// Allows for registering an action that will be triggered when sequence of buttons is pressed.

@@ -66,6 +66,7 @@ impl Pressed {
 pub(crate) struct Registry {
     pub(crate) key_callbacks: Mutex<HashMap<Keyboard, Arc<Action>>>,
     pub(crate) button_callbacks: Mutex<HashMap<Mouse, Arc<Action>>>,
+    pub(crate) wheel_callbacks: Mutex<HashMap<Wheel, Arc<Action>>>,
     pub(crate) any_key_callback: Mutex<Option<Arc<Action>>>,
     pub(crate) any_button_callback: Mutex<Option<Arc<Action>>>,
     #[allow(clippy::type_complexity)]
@@ -89,6 +90,7 @@ impl Registry {
         Registry {
             key_callbacks: Mutex::new(HashMap::new()),
             button_callbacks: Mutex::new(HashMap::new()),
+            wheel_callbacks: Mutex::new(HashMap::new()),
             any_key_callback: Mutex::new(None),
             any_button_callback: Mutex::new(None),
             _handle: thread::Builder::new()
@@ -105,7 +107,7 @@ impl Registry {
             state: Mutex::new(HashMap::new()),
             tracking_enabled: AtomicBool::new(false),
             mouse_tracking_callback: Mutex::new(None),
-            debug_enabled: AtomicBool::new(false),
+            debug_enabled: AtomicBool::new(false)
         }
     }
 
@@ -156,8 +158,32 @@ impl Registry {
                 self.any_button_callback.lock().unwrap().clone(),
                 self.button_callbacks.lock().unwrap().get(&button).cloned(),
             ),
+            Event::MouseWheel(wheel) => (
+                self.any_button_callback.lock().unwrap().clone(),
+                self.wheel_callbacks.lock().unwrap().get(&wheel).cloned(),
+            )
         };
         (global_action, key_action)
+    }
+
+    pub(crate) fn event_wheel(&self, event: Event) -> InhibitEvent {
+        if let Event::MouseWheel(wheel) = event {
+            self.maybe_log_event("scroll", event);
+
+            let (_, action) = self.map_event_to_actions(event);
+            let state = match wheel {
+                Wheel::Up => State::WheelUp,
+                Wheel::Down => State::WheelDown
+            };
+            if let Some(action) = action {
+                let inhibit = action.inhibit.clone();
+                self.invoke_action(action, event, state);
+
+                return inhibit
+            }
+        }
+
+        InhibitEvent::No
     }
 
     pub(crate) fn event_down(&self, event: Event) -> InhibitEvent {

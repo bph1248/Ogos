@@ -2,7 +2,7 @@ pub mod keyboard;
 pub mod mouse;
 
 use crate::details::registry;
-use crate::{Event, InhibitEvent, Keyboard, Mouse};
+use crate::{Event, InhibitEvent, Keyboard, Mouse, Wheel};
 use std::convert::*;
 use std::mem::MaybeUninit;
 use std::ptr::null_mut;
@@ -11,7 +11,7 @@ use winapi::shared::windef::HHOOK__;
 use winapi::um::winuser::{
     CallNextHookEx, GetMessageW, SetWindowsHookExW, GET_XBUTTON_WPARAM, KBDLLHOOKSTRUCT, MSG,
     LLKHF_INJECTED, LLMHF_INJECTED, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
 };
 use winapi::um::winuser::{
@@ -124,6 +124,14 @@ unsafe extern "system" fn mouse_hook(
             registry().event_click(Event::MouseButton(Mouse::DoubleRight))
         }
         code if code == WM_MBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Middle)),
+        code if code == WM_MOUSEWHEEL => {
+            let wheel_delta = (hook_struct.mouseData >> 16) as i16;
+
+            match wheel_delta > 0 {
+                true => registry().event_wheel(Event::MouseWheel(Wheel::Up)),
+                false => registry().event_wheel(Event::MouseWheel(Wheel::Down))
+            }
+        },
         code if code == WM_LBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Left)),
         code if code == WM_RBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Right)),
         code if code == WM_MBUTTONDOWN => registry().event_down(Event::MouseButton(Mouse::Middle)),
