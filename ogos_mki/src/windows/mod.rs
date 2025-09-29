@@ -3,7 +3,7 @@ pub mod mouse;
 
 use crate::details::registry;
 use crate::{Event, InhibitEvent, Keyboard, Mouse};
-use std::convert::TryInto;
+use std::convert::*;
 use std::mem::MaybeUninit;
 use std::ptr::null_mut;
 use winapi::shared::minwindef::{HINSTANCE, LPARAM, LRESULT, WPARAM};

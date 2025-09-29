@@ -46,7 +46,7 @@ fn main() {
         key.click();
     }
 
-    register_hotkey(&[LeftControl, U], || println!("Ctrl+U pressed"));
+    register_hotkey(&[LeftCtrl, U], || println!("Ctrl+U pressed"));
 
     Mouse::track(|x, y| {
         static COUNTER: AtomicI64 = AtomicI64::new(0);

@@ -262,7 +262,7 @@ pub fn load_config(content: &str) -> Result<(), serde_yaml::Error> {
 #[cfg(test)]
 mod tests {
     use crate::parse::{Action, Bind, Config, Input, SetState, StateMatches};
-    use crate::Keyboard::{LeftControl, Number0, Number1, D, E, H, K, L, R, S, W};
+    use crate::Keyboard::{LeftCtrl, N0, N1, D, E, H, K, L, R, S, W};
 
     #[test]
     fn example() {
@@ -274,7 +274,7 @@ mod tests {
                             .into(),
                     ),
                     input: Input {
-                        key: Some(vec![LeftControl, H]),
+                        key: Some(vec![LeftCtrl, H]),
                         button: None,
                     },
                     action: Action::Multi(vec![
@@ -315,12 +315,12 @@ mod tests {
                         Action::StateMatches(StateMatches {
                             name: "test".into(),
                             value: "1".into(),
-                            action: vec![Action::Click(Input::key(Number1))],
+                            action: vec![Action::Click(Input::key(N1))],
                         }),
                         Action::StateMatches(StateMatches {
                             name: "test".into(),
                             value: "0".into(),
-                            action: vec![Action::Click(Input::key(Number0))],
+                            action: vec![Action::Click(Input::key(N0))],
                         }),
                     ]),
                 },
@@ -394,7 +394,7 @@ bind:
             bind: vec![Bind {
                 description: Some("Whenever Ctrl+L is clicked click K as well".into()),
                 input: Input {
-                    key: Some(vec![LeftControl, L]),
+                    key: Some(vec![LeftCtrl, L]),
                     button: None,
                 },
                 action: Action::Click(Input::key(K)),

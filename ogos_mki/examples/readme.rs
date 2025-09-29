@@ -9,7 +9,7 @@ fn main() {
     });
     mki::bind_any_key(Action::handle_kb(|key| {
         use Keyboard::*;
-        if matches!(key, S | L | O | W | LeftShift | LeftControl | B) {
+        if matches!(key, S | L | O | W | LeftShift | LeftCtrl | B) {
             // Ignore outputs from other commands for nicer output
         } else {
             println!("Some key pressed pressed: {:?}", key);
@@ -18,7 +18,7 @@ fn main() {
     mki::bind_any_button(Action::handle_mouse(|button| {
         println!("Mouse button pressed {:?}", button);
     }));
-    mki::register_hotkey(&[Keyboard::LeftControl, Keyboard::B], || {
+    mki::register_hotkey(&[Keyboard::LeftCtrl, Keyboard::B], || {
         println!("Ctrl+B Pressed")
     });
     mki::bind_key(
