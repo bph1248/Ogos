@@ -1,3 +1,5 @@
+#![allow(clippy::uninlined_format_args)]
+
 pub(crate) mod details;
 
 mod keyboard;

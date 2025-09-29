@@ -1,3 +1,5 @@
+#![allow(clippy::uninlined_format_args)]
+
 use mki::*;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::thread;

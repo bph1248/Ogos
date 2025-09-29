@@ -1,3 +1,5 @@
+#![allow(clippy::uninlined_format_args)]
+
 use mki::{bind_key, Action, InhibitEvent, Keyboard, Sequence};
 use std::thread;
 use std::time::Duration;
