@@ -7,7 +7,7 @@ use std::time::Duration;
 fn main() {
     Key::A.bind(|_| {
         println!("A pressed, sending B");
-        Key::B.click();
+        Key::B.click(Duration::ZERO);
     });
     mki::bind_any_key(Action::handle_kb(|key| {
         use Key::*;

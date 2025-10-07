@@ -23,7 +23,7 @@ fn main() {
 
     R.bind(|_| {
         println!("R Pressed sending Q");
-        Q.click();
+        Q.click(Duration::ZERO);
     });
 
     Button::Left.bind(|_| {
@@ -45,7 +45,7 @@ fn main() {
     });
 
     for key in [T, H, I, S, Space, A, Space, T, E, S, T].iter() {
-        key.click();
+        key.click(Duration::ZERO);
     }
 
     register_hotkey(&[LeftCtrl, U], || println!("Ctrl+U pressed"));

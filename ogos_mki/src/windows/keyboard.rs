@@ -2,28 +2,45 @@ use crate::Key::{self, *};
 
 use std::{
     convert::*,
-    mem::*
+    mem::*,
+    thread,
+    time::Duration
 };
 use winapi::{
     shared::minwindef::*,
     um::winuser::*
 };
 
+pub struct KeyStroke {
+    press: bool,
+    key: Key
+}
+
 pub(crate) mod kimpl {
     use super::*;
 
     pub(crate) fn press(key: Key) {
-        send_key_stroke(true, key)
+        send_key_strokes(&[KeyStroke { press: true, key }]);
     }
 
     pub(crate) fn release(key: Key) {
-        send_key_stroke(false, key)
+        send_key_strokes(&[KeyStroke { press: false, key }]);
     }
 
-    pub(crate) fn click(key: Key) {
-        // Do we need sleep in between?
-        press(key);
-        release(key);
+    pub(crate) fn click(key: Key, dur: Duration) {
+        match dur.is_zero() {
+            true => {
+                send_key_strokes(&[
+                    KeyStroke { press: true, key },
+                    KeyStroke { press: false, key }
+                ]);
+            },
+            false => {
+                send_key_strokes(&[KeyStroke { press: true, key }]);
+                thread::sleep(dur);
+                send_key_strokes(&[KeyStroke { press: false, key }]);
+            }
+        }
     }
 
     pub(crate) fn is_toggled(key: Key) -> bool {
@@ -34,30 +51,36 @@ pub(crate) mod kimpl {
     }
 }
 
-pub fn send_key_stroke(press: bool, key: Key) {
-    let action = if press {
-        0 // 0 means to press.
-    } else {
-        KEYEVENTF_KEYUP
-    };
+pub fn send_key_strokes(key_strokes: &[KeyStroke]) {
     unsafe {
-        let mut input_u: INPUT_u = std::mem::zeroed();
-        *input_u.ki_mut() = KEYBDINPUT {
-            wVk: 0,
-            wScan: MapVirtualKeyW(vk_code(key).into(), 0)
-                .try_into()
-                .expect("Failed to map vk to scan code"), // This ignores the keyboard layout so better than vk?
-            dwFlags: KEYEVENTF_SCANCODE | action,
-            time: 0,
-            dwExtraInfo: 0,
-        };
+        let mut inputs: Vec<INPUT> = Vec::with_capacity(key_strokes.len());
 
-        let mut x = INPUT {
-            type_: INPUT_KEYBOARD,
-            u: input_u,
-        };
+        let iter = key_strokes.iter()
+            .map(|key_stroke| {
+                let stroke = match key_stroke.press {
+                    true => 0,
+                    false => KEYEVENTF_KEYUP
+                };
 
-        SendInput(1, &mut x as LPINPUT, size_of::<INPUT>() as libc::c_int);
+                let mut input_u: INPUT_u = std::mem::zeroed();
+                *input_u.ki_mut() = KEYBDINPUT {
+                    wVk: 0,
+                    wScan: MapVirtualKeyW(vk_code(key_stroke.key).into(), 0)
+                        .try_into()
+                        .expect("virtual key should map to scan code"),
+                    dwFlags: KEYEVENTF_SCANCODE | stroke,
+                    time: 0,
+                    dwExtraInfo: 0
+                };
+
+                INPUT {
+                    type_: INPUT_KEYBOARD,
+                    u: input_u
+                }
+            });
+        inputs.extend(iter);
+
+        SendInput(inputs.len() as u32, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
     }
 }
 

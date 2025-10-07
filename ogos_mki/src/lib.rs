@@ -29,17 +29,20 @@ pub use sequence::Sequence;
 pub use windows::*;
 
 use crate::details::registry;
-use std::fmt;
-use std::sync::Arc;
+use std::{
+    fmt,
+    sync::*,
+    time::*
+};
 
 #[derive(Copy, Clone, Ord, PartialOrd, Hash, Eq, PartialEq, Debug)]
 /// Whether given button is now Pressed or Released.
 /// Send in some version of the callbacks.
 pub enum State {
-    WheelUp,
-    WheelDown,
     Pressed,
     Released,
+    WheelUp,
+    WheelDown
 }
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,9 +60,10 @@ impl Key {
     pub fn release(&self) {
         kimpl::release(*self)
     }
+
     /// Send an event to Click (Press + Release) this key
-    pub fn click(&self) {
-        kimpl::click(*self);
+    pub fn click(&self, dur: Duration) {
+        kimpl::click(*self, dur);
     }
 
     // Some buttons are toggleable like caps lock.
@@ -181,6 +185,39 @@ pub enum InputEvent {
     Keyboard(Key),
     MouseButton(Button),
     MouseWheel(Wheel)
+}
+impl InputEvent {
+    pub fn act_on(&self, action: Action) {
+        match self {
+            InputEvent::Keyboard(key) => bind_key(*key, action),
+            InputEvent::MouseButton(button) => bind_button(*button, action),
+            InputEvent::MouseWheel(wheel) => bind_wheel(*wheel, action),
+        }
+    }
+
+    pub fn click(&self, dur: Duration) {
+        match self {
+            InputEvent::Keyboard(key) => key.click(dur),
+            InputEvent::MouseButton(button) => button.click(),
+            _ => ()
+        }
+    }
+
+    pub fn press(&self) {
+        match self {
+            InputEvent::Keyboard(key) => key.press(),
+            InputEvent::MouseButton(button) => button.press(),
+            _ => ()
+        }
+    }
+
+    pub fn release(&self) {
+        match self {
+            InputEvent::Keyboard(key) => key.release(),
+            InputEvent::MouseButton(button) => button.release(),
+            _ => ()
+        }
+    }
 }
 
 impl fmt::Display for InputEvent {

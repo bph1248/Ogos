@@ -198,7 +198,7 @@ fn handle_action(action: &Action) {
         Action::Click(input) => {
             if let Some(keys) = &input.key {
                 for k in keys {
-                    k.click()
+                    k.click(Duration::ZERO)
                 }
             }
             if let Some(buttons) = &input.button {
