@@ -6,29 +6,59 @@ use crate::{
     video
 };
 
+use concat_string::*;
 use discord_rich_presence::*;
 use eframe::{
     egui,
     egui_wgpu,
     wgpu
 };
+use indexmap::*;
+use raw_window_handle::*;
 use log::*;
+use rayon::*;
 use serde::*;
 use std::{
-    fs::*,
+    collections::*,
+    f64::consts::PI,
+    ffi::*,
+    fs::{self, *},
+    io::Read,
     path::*,
-    thread
+    rc::*,
+    sync::*,
+    thread,
+    time::*
+};
+use tokio::sync::oneshot::{self, error::*};
+use windows::Win32::{
+    Foundation::{COLORREF, HWND, POINT},
+    Graphics::Gdi::*,
+    UI::WindowsAndMessaging::*
 };
 
+const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color32::from_rgb(250, 246, 235) };
+const CHUNK_BYTE_COUNT: u64 = 500 * 1024;
+const GRID_IMAGE_WIDTH: f32 = 348.0;
+const GRID_IMAGE_HEIGHT: f32 = 522.0;
+const GRID_IMAGE_SIZE: egui::Vec2 = egui::vec2(GRID_IMAGE_WIDTH, GRID_IMAGE_HEIGHT);
+const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
+const DETAILS_IMAGE_SIZE: egui::Vec2 = egui::vec2(800.0, 1200.0);
+const FRAME_MARGIN: f32 = 15.0;
+const SEPARATOR_WIDTH: f32 = 2.0;
+const WINDOW_INNER_SIZE: egui::Vec2 = egui::vec2(3432.0, 1686.0);
+
+#[derive(Clone)]
 struct DirEntryInfo {
-    file_kind: FileKind,
-    file_stem: String,
-    path: PathBuf
+    path: PathBuf,
+    stem: String,
+    file_kind: FileKind
 }
 
 pub(crate) enum Kind {
     Discord { name: String, rp_info: DiscordRichPresenceInfo },
-    Dir { name: String, entries: Vec<DirEntry>, discord_app_ids: DiscordAppIds }
+    Dir { name: String, entries: Vec<DirEntry>, discord_app_ids: DiscordAppIds },
+    Lib { discord_app_ids: DiscordAppIds }
 }
 
 #[derive(Default, Deserialize, PartialEq)]
@@ -66,6 +96,8 @@ impl Discord {
 }
 impl eframe::App for Discord {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_pixels_per_point(1.0);
+
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::new([false, true]).show(ui, |ui| {
                 ui.heading(&self.name);
@@ -96,7 +128,9 @@ pub(crate) struct Dir {
     discord_rp_state: String
 }
 impl Dir {
-    pub(crate) fn new(_cctx: &eframe::CreationContext<'_>, name: String, entries: Vec<DirEntry>, discord_app_ids: DiscordAppIds) -> Self {
+    pub(crate) fn new(ctx: &egui::Context, name: String, entries: Vec<DirEntry>, discord_app_ids: DiscordAppIds) -> Self {
+        ctx.set_pixels_per_point(1.0);
+
         let valid_entries = entries.iter()
             .filter_map(|entry| {
                 let is_file = entry.file_type()
@@ -109,13 +143,13 @@ impl Dir {
                     true => {
                         let path = entry.path();
 
-                        path.get_extension().ok()
+                        path.get_file_ext().ok()
                             .zip(path.get_file_stem().ok())
                             .map(|(file_ext, file_stem)| {
                                 DirEntryInfo {
-                                    file_kind: get_file_kind(file_ext),
-                                    file_stem: file_stem.replace("¿", "?"),
-                                    path: entry.path()
+                                    path: entry.path(),
+                                    stem: file_stem.replace("¿", "?"),
+                                    file_kind: get_file_kind(file_ext)
                                 }
                             })
                     },
@@ -167,14 +201,14 @@ impl eframe::App for Dir {
                             .into_galley(ui, None, f32::INFINITY, egui::FontSelection::Default);
                         let details_text_edit_width = ui.available_width() - details_label_galley.rect.width();
 
-                        let margin = egui::Margin::symmetric(4.0, 2.0);
+                        let margin = egui::Margin::symmetric(4, 2);
                         let grid = egui::Grid::new("grid").num_columns(2);
                         grid.show(ui, |ui| {
                             ui.label(details_label_galley);
 
                             let details_hint_text = match self.discord_rp_watching {
                                 Watching::TV => self.name.as_str(),
-                                _ => self.valid_entries[self.hovered_valid_entry_index].file_stem.as_str()
+                                _ => self.valid_entries[self.hovered_valid_entry_index].stem.as_str()
                             };
                             let details_hint_galley = egui::WidgetText::from(details_hint_text)
                                 .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
@@ -190,7 +224,7 @@ impl eframe::App for Dir {
                             if self.discord_rp_watching == Watching::TV {
                                 ui.label("State");
 
-                                let state_hint_text = self.valid_entries[self.hovered_valid_entry_index].file_stem.as_str();
+                                let state_hint_text = self.valid_entries[self.hovered_valid_entry_index].stem.as_str();
                                 let state_hint_galley = egui::WidgetText::from(state_hint_text)
                                     .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
                                 let state_text_edit = egui::TextEdit::singleline(&mut self.discord_rp_state)
@@ -217,7 +251,7 @@ impl eframe::App for Dir {
                 self.valid_entries.iter()
                     .enumerate()
                     .try_for_each(|(i, valid_entry_info)| -> Res<()> {
-                        let DirEntryInfo { file_kind, file_stem, path} = valid_entry_info;
+                        let DirEntryInfo { path, stem: file_stem, file_kind } = valid_entry_info;
 
                         let button = ui.button(file_stem);
 
@@ -239,11 +273,9 @@ impl eframe::App for Dir {
                                             false => self.discord_rp_details.clone()
                                         },
                                         state: match self.discord_rp_watching == Watching::TV {
-                                            true => {
-                                                match self.discord_rp_state.is_empty() {
-                                                    true => Some(file_stem.into()),
-                                                    false => Some(self.discord_rp_state.clone())
-                                                }
+                                            true => match self.discord_rp_state.is_empty() {
+                                                true => Some(file_stem.into()),
+                                                false => Some(self.discord_rp_state.clone())
                                             },
                                             false => None
                                         },
@@ -283,7 +315,7 @@ impl eframe::App for Dir {
 
                                             match file_kind {
                                                 FileKind::Vid => video::launch_mpv(&path, maintain_sample_rate, use_glsl_shaders)?,
-                                                FileKind::Other => opener::open(&path)?
+                                                _ => opener::open(&path)?
                                             }
 
                                             if let Some(mut ipc_client) = ipc_client {
@@ -314,9 +346,1145 @@ impl eframe::App for Dir {
                             self.entry_errored = true;
                         }
 
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close); //$ hmm
                     });
             });
+        });
+    }
+}
+
+fn sinc(x: f64) -> f64 {
+    if x.abs() < 1e-6 {
+        1.0
+    } else {
+        (PI * x).sin() / (PI * x)
+    }
+}
+
+fn blackman(x: f64) -> f64 {
+    let t = x.abs();
+
+    if t >= 2.0 {
+        0.0
+    } else {
+        let a = 2.0;
+        let w = 0.42
+            + 0.5 * (PI * t / a).cos()
+            + 0.08 * (2.0 * PI * t / a).cos();
+
+        sinc(t) * w
+    }
+}
+
+fn blackman_filter() -> resize::Filter {
+    resize::Filter::new(
+        Box::new(|x: f32| -> f32 {
+            blackman(f64::from(x)) as f32
+        }),
+        2.0
+    )
+}
+
+fn make_colorref(r: u8, g: u8, b: u8) -> COLORREF {
+    COLORREF(u32::from(r) | u32::from(g) << 8 | u32::from(b) << 16)
+}
+
+fn ferry_image(info: ImageFerryInfo) -> Res1<()> {
+    let ImageFerryInfo {
+        src_path,
+        image_state_sx,
+        transform
+    } = info;
+
+    match transform {
+        Some(transform) => {
+            let ImageFerryTransform { dst_path, dst_size } = transform;
+
+            let (color_image, pixels) = load_color_image_sized_pixels(src_path.as_path(), dst_size).unwrap();
+            let color_image_size = color_image.size;
+
+            image_state_sx.send(Ok(color_image)).unwrap();
+
+            let dst_file = fs::File::create(dst_path).unwrap(); //$ err
+            let dst_encoder = image::codecs::webp::WebPEncoder::new_lossless(&dst_file);
+
+            dst_encoder.encode(pixels.as_slice(), color_image_size[0] as u32, color_image_size[1] as u32, image::ExtendedColorType::Rgba8).unwrap();
+        },
+        None => {
+            let color_image = load_color_image(src_path.as_path())?;
+            image_state_sx.send(Ok(color_image)).unwrap(); //$ err
+        }
+    }
+
+    Ok(())
+}
+
+fn load_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
+    let image = image::open(path)?;
+
+    Ok(match image {
+        image::DynamicImage::ImageRgba8(image) => image,
+        _ => image.to_rgba8()
+    })
+}
+
+fn load_color_image(path: &Path) -> ResVar<egui::ColorImage> {
+    let image = load_image(path)?;
+
+    let (src_width, src_height) = image.dimensions();
+    let src_pixels = image.as_raw();
+
+    let color_image = egui::ColorImage::from_rgba_unmultiplied([src_width as usize, src_height as usize], src_pixels);
+
+    Ok(color_image)
+}
+
+//$ Numeric errors
+fn load_color_image_sized_pixels(path: &Path, size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
+    use rgb::FromSlice;
+
+    let image = load_image(path)?;
+
+    let (src_width, src_height) = image.dimensions();
+    let src_pixels = image.as_raw();
+
+    let aspect_ratio_h = f64::from(src_height) / f64::from(src_width);
+
+    let dst_width = size[0] as usize;
+    let dst_height = (f64::from(size[0]) * aspect_ratio_h) as usize;
+
+    let mut tmp_pixels = vec![0_u8; dst_width * src_height as usize * 4];
+    let mut dst_pixels = vec![0_u8; dst_width * dst_height * 4];
+
+    let mut resizer = resize::new(
+        src_width as usize,
+        src_height as usize,
+        dst_width,
+        src_height as usize,
+        resize::Pixel::RGBA8,
+        resize::Type::Custom(blackman_filter())
+    )?;
+    resizer.resize(src_pixels.as_rgba(), tmp_pixels.as_rgba_mut())?;
+
+    let mut resizer = resize::new(
+        dst_width,
+        src_height as usize,
+        dst_width,
+        dst_height,
+        resize::Pixel::RGBA8,
+        resize::Type::Custom(blackman_filter())
+    )?;
+    resizer.resize(tmp_pixels.as_rgba(), dst_pixels.as_rgba_mut())?;
+
+    let color_image = egui::ColorImage::from_rgba_unmultiplied([dst_width, dst_height], dst_pixels.as_ref());
+
+    Ok((color_image, dst_pixels))
+}
+
+fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, mut discord_rp_info: Option<DiscordRichPresenceInfo>) {
+    thread::spawn(move || {
+        (|| -> Res<()> {
+            let ipc_client = discord_rp_info.as_mut().map(|discord_rp_info| -> Res<_> {
+                let mut ipc_client = DiscordIpcClient::new(discord_rp_info.client_id.as_ref())?;
+
+                discord::begin(&mut ipc_client, discord_rp_info)?;
+
+                Ok(ipc_client)
+            })
+            .transpose()?;
+
+            match file_kind {
+                FileKind::Vid => unsafe { video::launch_mpv(path.as_path(), maintain_sample_rate.into(), use_glsl_shaders)? },
+                _ => opener::open(path.as_path())?
+            }
+
+            if let Some(mut ipc_client) = ipc_client {
+                ipc_client.close()?;
+            }
+
+            Ok(())
+        })()
+        .unwrap_or_else(|err| {
+            error!("{}: failed to launch media: {}", module_path!(), err);
+        });
+    });
+}
+
+fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle) -> egui::Response {
+    let image = egui::Image::new(tex).sense(egui::Sense::click_and_drag()).fit_to_exact_size(tex.size_vec2());
+
+    ui.add(image)
+}
+
+fn add_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+
+        let label = egui::Label::new(text);
+        ui.add(label).on_hover_cursor(egui::CursorIcon::Default)
+    })
+    .inner
+}
+
+fn alloc_hover_response(ui: &mut egui::Ui) -> egui::Response {
+    ui.allocate_response(ui.available_size(), egui::Sense::hover())
+}
+
+fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, name_tex: &str, label: &str) -> egui::Response {
+    match image_state {
+        ImageState::Ready(tex) => add_image(ui, tex),
+        ImageState::Pending(rx) => {
+            match rx.try_recv() {
+                Ok(color_image) => {
+                    let tex = ui.ctx().load_texture(name_tex, color_image.unwrap(), default!()); //$ err
+                    let image_resp = add_image(ui, &tex);
+                    *image_state = ImageState::Ready(tex);
+
+                    image_resp
+                },
+                Err(TryRecvError::Empty) => alloc_hover_response(ui),
+                Err(TryRecvError::Closed) => add_label(ui, label) //$
+            }
+        }
+        _ => alloc_hover_response(ui)
+    }
+}
+
+fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect) {
+    ui.painter().rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
+}
+
+fn stroke_rect_painter(painter: egui::Painter, rect: egui::Rect) {
+    painter.rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
+}
+
+fn update_active_view(active_view: &mut Vec<usize>, set: &BTreeSet<usize>) {
+    active_view.clear();
+    active_view.extend(set.iter().cloned());
+}
+
+#[derive(Default)]
+enum ImageState {
+    #[default]
+    None,
+    Pending(oneshot::Receiver<ResVar<egui::ColorImage>>),
+    Ready(egui::TextureHandle),
+    Failed
+}
+
+#[derive(Default)]
+enum ViewKind {
+    #[default]
+    Grid,
+    Details
+}
+
+#[derive(Serialize, Deserialize)]
+struct CacheEntryInfo {
+    #[serde(rename = "image")]
+    image_file_name_i: Option<usize>,
+    hash: Option<Arc<str>>,
+    #[serde(default)]
+    tags: Vec<usize>
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct Cache {
+    #[serde(default)]
+    images: IndexSet<String>,
+    #[serde(default)]
+    tags: Vec<Rc<str>>,
+    entries: HashMap<PathBuf, CacheEntryInfo>
+}
+
+#[derive(Default)]
+struct DetailsInfo {
+    image_file_name: Option<Arc<str>>,
+    dir_name: Rc<str>,
+    dir_entry_infos: Vec<DirEntryInfo>
+}
+
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct GridEntryInfo {
+    path: PathBuf,
+    stem: Rc<str>,
+    image_file_name_i: Option<usize>,
+    hash: Option<Arc<str>>
+}
+
+#[derive(Default)]
+struct ImageStates {
+    grid_state: ImageState,
+    details_state: ImageState
+}
+
+struct ImageFerryTransform {
+    dst_path: PathBuf,
+    dst_size: egui::Vec2
+}
+
+struct ImageFerryInfo {
+    src_path: PathBuf,
+    image_state_sx: oneshot::Sender<ResVar<egui::ColorImage>>,
+    transform: Option<ImageFerryTransform>
+}
+
+#[derive(Default)]
+struct PointerContained(bool);
+
+struct MenuPointerState {
+    pointer_contained: bool,
+    entry_clicked: bool
+}
+
+struct Lib {
+    _thread_pool: Arc<rayon::ThreadPool>,
+    images: IndexMap<Arc<str>, ImageStates>,
+    hash_rx: mpsc::Receiver<(usize, Arc<str>)>,
+    cache_path: PathBuf,
+    cache: Cache,
+    fixed_win_background: bool,
+    frame: egui::Frame,
+    view_kind: ViewKind,
+    grid_entries: Vec<GridEntryInfo>,
+    tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
+    active_tag: Option<Rc<str>>,
+    active_view: Vec<usize>, // Indices into grid_entries
+    removed_entry_from_active_view: bool,
+    selected_cell: Option<usize>,
+    tag_edit: String,
+    show_filter_win: bool,
+    filter_win_stamp: Option<Instant>,
+    filter_win_cursor_checked: bool,
+    details_info: DetailsInfo,
+    details_button_resps: Vec<egui::Response>,
+    hovered_details_entry_i: usize,
+    maintain_sample_rate: bool,
+    use_glsl_shaders: bool,
+    discord_app_ids: config::DiscordAppIds,
+    discord_rp_enable: bool,
+    discord_rp_watching: Watching,
+    discord_rp_details: String,
+    discord_rp_state: String
+}
+impl eframe::App for Lib {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if !self.fixed_win_background && let win_hnd = frame.window_handle().unwrap() && let raw_window_handle::RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
+            let hwnd = HWND(hnd.hwnd.get() as *mut c_void);
+            unsafe {
+                let new_brush = CreateSolidBrush(make_colorref(27, 27, 27));
+                SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, new_brush.0 as isize); //$ err
+            }
+
+            self.fixed_win_background = true;
+        }
+
+        egui::CentralPanel::default()
+            .frame(self.frame)
+            .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
+
+        if ctx.input(|state| state.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+
+            self.cache.tags = self.tags.keys().cloned().collect();
+            self.cache.images = self.images.keys().map(|key| key.to_string()).collect();
+
+            let mut grid_entry_tags = vec![Some(Vec::with_capacity(self.tags.len())); self.grid_entries.len()];
+            for (tag_i, (_, set)) in self.tags.iter().enumerate() {
+                for grid_entry_i in set {
+                    grid_entry_tags[*grid_entry_i].as_mut().unwrap().push(tag_i);
+                }
+            }
+
+            for (grid_entry_i, hash) in self.hash_rx.iter() {
+                self.grid_entries[grid_entry_i].hash = Some(hash);
+            }
+
+            for (i, info) in self.grid_entries.drain(..).enumerate() {
+                self.cache.entries.insert(
+                    info.path,
+                    CacheEntryInfo {
+                        image_file_name_i: info.image_file_name_i,
+                        hash: info.hash,
+                        tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
+                    }
+                );
+            }
+
+            let cache_file = File::options()
+                .truncate(true)
+                .write(true)
+                .open(self.cache_path.as_path()).unwrap();
+            serde_json::to_writer_pretty(cache_file, &self.cache).unwrap();
+        }
+    }
+}
+impl Lib {
+    fn new(ctx: &egui::Context, discord_app_ids: DiscordAppIds) -> Res<Self> {
+        // let now = now!();
+
+        // let elapsed = now.elapsed();
+        // info!("elapsed = {}", elapsed.as_micros());
+
+        let thread_pool = Arc::new(rayon::ThreadPoolBuilder::new()
+            .num_threads(thread::available_parallelism()?.get())
+            .build()?);
+        let (hash_sx, hash_rx) = mpsc::channel();
+        let (ferry_sx, ferry_rx) = mpsc::channel();
+
+        let current_exe_dir = CURRENT_EXE_PARENT_PATH.get().unwrap();
+        let media_dirs = [r"D:\books", r"B:\vids", r"C:\vids", r"D:\vids", r"Z:\vids"]; //$ Config
+        let image_dir = Arc::new(current_exe_dir.join("images"));
+
+        let cache_path = image_dir.join("cache").with_extension("json");
+        let cache_slc = fs::read(&cache_path)?;
+        let mut cache: Cache = serde_json::from_slice(&cache_slc)?;
+
+        let mut tags = cache.tags.iter()
+            .map(|tag| (tag.clone(), default!())) // Clone these - cache entries need to reference them later
+            .collect::<BTreeMap::<Rc<str>, BTreeSet<_>>>();
+
+        let mut images = image_dir.read_dir()?
+            .filter_map(|dir_entry| {
+                dir_entry.map_err(ErrLoc::from).and_then(|dir_entry| -> Res<_> {
+                    let path = dir_entry.path();
+                    let file_name = path.get_file_name()?;
+                    let file_kind = path.get_file_kind()?;
+
+                    match file_kind {
+                        FileKind::Image => Ok(Some((Arc::from(file_name), default!()))),
+                        _ => Ok(None)
+                    }
+                })
+                .transpose()
+            })
+            .collect::<Res<IndexMap::<Arc<str>, ImageStates>>>()?;
+
+        let mut grid_entry_infos = media_dirs.into_iter()
+            .map(|dir| Path::new(dir).read_dir())
+            .filter_map(|read_dir| match read_dir {
+                Ok(read_dir) => Some(read_dir),
+                Err(err) => {
+                    error!("{}: failed to read dir: {}", module_path!(), err);
+
+                    None
+                }
+            })
+            .flatten()
+            .filter_map(|dir_entry| {
+                dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
+                    let path = dir_entry.path();
+
+                    if let Some(ext) = path.extension() && ext == "ini" {
+                        return Ok(None)
+                    }
+
+                    let stem = Rc::from(path.get_file_stem()?);
+                    let cache_entry_info = cache.entries.get_mut(&path);
+                    let image_file_name_i = cache_entry_info.as_ref()
+                        .and_then(|info| info.image_file_name_i)
+                        .and_then(|image_file_name_i| cache.images.get_index(image_file_name_i))
+                        .and_then(|image_file_name| images.get_index_of(image_file_name.as_str()))
+                        .or_else(|| {
+                            let exts = [ ".jpg", ".jpeg", ".png", ".webp"];
+
+                            for ext in exts {
+                                let attempt = concat_string!(stem, ext);
+
+                                if let Some(image_file_name_i) = images.get_index_of(attempt.as_str()) {
+                                    return Some(image_file_name_i)
+                                }
+                            }
+
+                            None
+                        });
+                    let hash = cache_entry_info.and_then(|info| info.hash.clone());
+
+                    Ok(Some(GridEntryInfo { path, stem, image_file_name_i, hash }))
+                })
+                .unwrap_or_else(|err| {
+                    error!("{}: failed to read dir entry: {}", module_path!(), err);
+
+                    None
+                })
+            })
+            .collect::<Vec<_>>();
+        grid_entry_infos.sort_by(|a, b| a.stem.cmp(&b.stem));
+
+        for (entry_i, info) in grid_entry_infos.iter().enumerate() {
+            // Fill tags
+            if let Some(CacheEntryInfo { tags: tag_is, .. }) = cache.entries.get_mut(&info.path) {
+                for tag_i in tag_is {
+                    let tag = &cache.tags[*tag_i];
+                    let set = tags.get_mut(tag);
+
+                    if let Some(set) = set {
+                        set.insert(entry_i); // Grid entries are sorted / indices are stable
+                    }
+                }
+            }
+
+            // Load/resize images
+            if let Some(image_file_name_i) = info.image_file_name_i {
+                let ctx = ctx.clone();
+                let hash_sx = hash_sx.clone();
+                let ferry_sx = ferry_sx.clone();
+                let image_dir = image_dir.clone();
+                let (image_file_name, ImageStates { grid_state, details_state }) = images.get_index_mut(image_file_name_i).unwrap();
+                let image_file_name = image_file_name.clone();
+                let expected_hash = info.hash.clone();
+                let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+                let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                *grid_state = ImageState::Pending(grid_image_state_rx);
+                *details_state = ImageState::Pending(details_image_state_rx);
+
+                thread_pool.spawn_fifo(move || {
+                    (|| -> Res<()> {
+                        let image_path = image_dir.join(image_file_name.as_ref());
+                        let grid_image_path = image_dir.join("grid").join(image_file_name.as_ref()).with_extension("webp");
+                        let details_image_path = image_dir.join("details").join(image_file_name.as_ref()).with_extension("webp");
+
+                        // Compute hash on chunk
+                        let mut image_file = File::open(image_path.as_path())?;
+                        let mut hasher = blake3::Hasher::new();
+                        let mut chunk = [0_u8; CHUNK_BYTE_COUNT as usize];
+                        image_file.read(&mut chunk)?;
+                        let computed_hash = Arc::from(hasher.update(&chunk).finalize().to_hex().as_str());
+
+                        // Compare hashes
+                        match expected_hash.is_none_or(|expected_hash| expected_hash != computed_hash) {
+                            true => {
+                                let (grid_image, grid_pixels) = load_color_image_sized_pixels(image_path.as_path(), GRID_IMAGE_SIZE)?;
+                                let grid_image_width = grid_image.width() as u32;
+                                let grid_image_height = grid_image.height() as u32;
+
+                                grid_image_state_sx.send(Ok(grid_image)).unwrap();
+
+                                let grid_image_file = fs::File::create(grid_image_path)?;
+                                let grid_encoder = image::codecs::webp::WebPEncoder::new_lossless(grid_image_file);
+                                grid_encoder.encode(grid_pixels.as_slice(), grid_image_width, grid_image_height, image::ExtendedColorType::Rgba8)?;
+
+                                hash_sx.send((entry_i, computed_hash)).unwrap();
+                                ctx.request_repaint();
+
+                                ferry_sx.send((
+                                    image_file_name.clone(),
+                                    ImageFerryInfo {
+                                        src_path: image_path,
+                                        image_state_sx: details_image_state_sx,
+                                        transform: Some(ImageFerryTransform {
+                                            dst_path: details_image_path,
+                                            dst_size: DETAILS_IMAGE_SIZE
+                                        })
+                                    }
+                                ))
+                                .unwrap();
+                            },
+                            false => {
+                                let grid_image = load_color_image(grid_image_path.as_path())?;
+
+                                grid_image_state_sx.send(Ok(grid_image)).unwrap();
+
+                                ferry_sx.send((
+                                    image_file_name.clone(),
+                                    ImageFerryInfo {
+                                        src_path: details_image_path,
+                                        image_state_sx: details_image_state_sx,
+                                        transform: None
+                                    }
+                                ))
+                                .unwrap();
+                            }
+                        }
+
+                        Ok(())
+                    })()
+                    .unwrap_or_else(|err| {
+                        error!("{}: failed to ferry image: {}: {}", module_path!(), image_file_name, err);
+                    });
+                });
+            }
+        }
+
+        drop(ferry_sx);
+        let thread_pool_ = thread_pool.clone();
+        thread::spawn(move || {
+            for (image_file_name, info) in ferry_rx {
+                thread_pool_.spawn_fifo(move || {
+                    ferry_image(info).unwrap_or_else(|err| {
+                        error!("{}: failed to ferry image: {}: {}", module_path!(), image_file_name, err);
+                    });
+                });
+            }
+        });
+
+        let frame = egui::Frame::central_panel(&ctx.style()).inner_margin(
+            egui::Margin::symmetric(FRAME_MARGIN as i8, FRAME_MARGIN as i8)
+        );
+
+        Ok(Self {
+            _thread_pool: thread_pool,
+            images,
+            hash_rx,
+            cache_path,
+            cache,
+            fixed_win_background: default!(),
+            frame,
+            view_kind: ViewKind::Grid,
+            grid_entries: grid_entry_infos,
+            tags,
+            active_tag: default!(),
+            active_view: default!(),
+            removed_entry_from_active_view: default!(),
+            selected_cell: default!(),
+            tag_edit: default!(),
+            show_filter_win: default!(),
+            filter_win_stamp: default!(),
+            filter_win_cursor_checked: default!(),
+            details_info: default!(),
+            details_button_resps: Vec::with_capacity(24),
+            hovered_details_entry_i: default!(),
+            maintain_sample_rate: default!(),
+            use_glsl_shaders: default!(),
+            discord_app_ids,
+            discord_rp_enable: default!(),
+            discord_rp_watching: default!(),
+            discord_rp_details: default!(),
+            discord_rp_state: default!()
+        })
+    }
+
+    fn central_panel(&mut self, ui: &mut egui::Ui) {
+        match self.view_kind {
+            ViewKind::Grid => {
+                self.filter_win(ui);
+                self.grid_view(ui);
+            },
+            ViewKind::Details => self.details_view(ui)
+        }
+    }
+
+    fn filter_win(&mut self, ui: &mut egui::Ui) {
+        let max_rect = ui.max_rect();
+        let filter_win_rect = egui::Rect::from_min_size(
+            max_rect.min,
+            [250.0, (max_rect.height() - FRAME_MARGIN).max(0.0)].into()
+        );
+
+        let filter_win_resp = egui::Window::new("filter_win")
+            .fixed_rect(filter_win_rect)
+            .title_bar(false)
+            .fade_in(true)
+            .fade_out(true)
+            .open(&mut self.show_filter_win)
+            .show(ui.ctx(), |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                    ui.heading("Tags");
+
+                    ui.separator();
+
+                    let all_button_resp = ui.button("All");
+
+                    if all_button_resp.clicked() {
+                        self.active_tag = None;
+                    }
+                    if self.active_tag.is_none() {
+                        all_button_resp.highlight();
+                    }
+
+                    for (tag, set) in self.tags.iter() {
+                        if !set.is_empty() {
+                            let tag_button_resp = ui.button(tag.as_ref());
+
+                            if tag_button_resp.clicked() {
+                                update_active_view(&mut self.active_view, set);
+
+                                self.active_tag = Some(tag.clone());
+                                self.selected_cell = None;
+                            }
+                            if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
+                                tag_button_resp.highlight();
+                            }
+                        }
+                    }
+
+                    ui.take_available_space();
+                });
+            });
+
+        let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
+        match hover_pos {
+            Some(hover_pos) => {
+                self.filter_win_cursor_checked = false;
+
+                if let Some(resp) = filter_win_resp.as_ref() {
+                    match resp.response.contains_pointer() {
+                        true => self.filter_win_stamp = Some(now!()),
+                        false => {
+                            if hover_pos.x > resp.response.rect.right() {
+                                self.filter_win_stamp = None;
+                                self.show_filter_win = false;
+                            }
+                        }
+                    }
+                }
+            }
+            None => {
+                if !self.filter_win_cursor_checked {
+                    let mut cursor_pos = POINT::default();
+                    unsafe {
+                        if GetCursorPos(&mut cursor_pos).is_err() {
+                            return
+                        }
+                    }
+                    #[allow(clippy::cast_precision_loss)]
+                    let cursor_pos = egui::pos2(cursor_pos.x as f32, cursor_pos.y as f32);
+
+                    if let Some(inner_rect) = ui.ctx().input(|state| state.viewport().inner_rect) {
+                        let cursor_catch_rect = egui::Rect::everything_left_of(inner_rect.left());
+
+                        if cursor_catch_rect.contains(cursor_pos) {
+                            self.filter_win_stamp = Some(now!());
+                            self.show_filter_win = true;
+                        }
+
+                        self.filter_win_cursor_checked = true;
+                    }
+                }
+            }
+        }
+
+        if let Some(filter_win_stamp) = self.filter_win_stamp && filter_win_stamp.elapsed() > Duration::from_secs(3) {
+            self.filter_win_stamp = None;
+            self.show_filter_win = false;
+        }
+    }
+
+    fn grid_view(&mut self, ui: &mut egui::Ui) {
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            egui::ScrollArea::new([false, true])
+                .auto_shrink(false)
+                .scroll_source(egui::scroll_area::ScrollSource::SCROLL_BAR | egui::scroll_area::ScrollSource::MOUSE_WHEEL)
+                .wheel_scroll_multiplier([1.0, 2.0].into())
+                .show(ui, |ui| {
+                    ui.add_space(FRAME_MARGIN);
+
+                    ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
+
+                    let cell_space_x = GRID_IMAGE_WIDTH + GRID_IMAGE_SPACING.x;
+                    let cell_space_y = GRID_IMAGE_HEIGHT + GRID_IMAGE_SPACING.y;
+
+                    let table_cell_count = match self.active_tag.as_ref() {
+                        Some(_) => self.active_view.len(),
+                        None => self.grid_entries.len()
+                    };
+                    let row_cell_count = (ui.available_width().div_euclid(cell_space_x) as usize)
+                        .clamp(1, table_cell_count);
+                    let table_row_count = table_cell_count.div_ceil(row_cell_count);
+
+                    #[allow(clippy::cast_precision_loss)]
+                    let (table_width,table_height) = (
+                        row_cell_count as f32 * cell_space_x - GRID_IMAGE_SPACING.x, // First cell isn't initially offset by item spacing
+                        table_row_count as f32 * cell_space_y - GRID_IMAGE_SPACING.y
+                    );
+                    let remaining_space = (ui.available_height() - table_height).max(0.0);
+                    let top_padding = remaining_space / 2.0;
+
+                    let available_rect = ui.available_rect_before_wrap();
+                    let table_rect_min_x = (available_rect.center().x - table_width / 2.0).floor();
+                    let table_rect = egui::Rect::from_min_size(
+                        [table_rect_min_x, available_rect.top() + top_padding].into(),
+                        [table_width, table_height].into(),
+                    );
+
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(table_rect), |ui| {
+                        self.table(ui, table_cell_count, table_row_count, row_cell_count);
+                    });
+
+                    ui.ctx().input(|state| {
+                        if state.pointer.button_released(egui::PointerButton::Extra1) {
+                            self.active_tag = None;
+                        }
+                    });
+                });
+        });
+    }
+
+    fn table(&mut self, ui: &mut egui::Ui, mut table_cell_count: usize, table_row_count: usize, row_cell_count: usize) {
+        egui_extras::TableBuilder::new(ui)
+            .striped(false)
+            .vscroll(false)
+            .cell_layout(egui::Layout::top_down(egui::Align::Center))
+            .columns(egui_extras::Column::initial(GRID_IMAGE_WIDTH).at_most(GRID_IMAGE_WIDTH), row_cell_count)
+            .body(|body| {
+                body.rows(GRID_IMAGE_HEIGHT, table_row_count, |mut row| {
+                    let mut cell_i = row.index() * row_cell_count + row.col_index();
+
+                    while row.col_index() < row_cell_count && cell_i < table_cell_count {
+                        row.col(|ui| {
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                self.cell(ui, cell_i);
+                            });
+                        });
+
+                        // Cell entry might have its tag removed while view is active and table is still being updated
+                        match self.removed_entry_from_active_view {
+                            true => {
+                                table_cell_count -= 1;
+                                self.removed_entry_from_active_view = false;
+                            },
+                            false => cell_i += 1
+                        }
+                    }
+                });
+            });
+    }
+
+    fn cell(&mut self, ui: &mut egui::Ui, cell_i: usize) {
+        let grid_entry_i = self.active_tag.as_ref().map(|_| self.active_view[cell_i]).unwrap_or(cell_i);
+        let grid_entry_info = &self.grid_entries[grid_entry_i];
+        let mut image_info = grid_entry_info.image_file_name_i.and_then(|image_file_name_i| self.images.get_index_mut(image_file_name_i));
+
+        let cell_resp = match image_info.as_mut() {
+            Some((image_file_name, ImageStates { grid_state, .. })) => {
+                try_add_image(ui, grid_state, image_file_name.as_ref(), grid_entry_info.stem.as_ref())
+            },
+            None => add_label(ui, grid_entry_info.stem.as_ref())
+        };
+
+        if cell_resp.clicked() && grid_entry_info.path.is_dir() {
+            let dir_entry_infos = || -> Res<_> {
+                let read_dir = grid_entry_info.path.read_dir()
+                    .inspect_err(|err| error!("{}: failed to read dir: {}", module_path!(), err))?;
+
+                Ok(read_dir.filter_map(|dir_entry| {
+                    dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
+                        let path = dir_entry.path();
+                        let stem = path.get_file_stem()?.to_string();
+                        let file_kind = path.get_file_kind()?;
+
+                        Ok(DirEntryInfo { path, stem, file_kind })
+                    })
+                    .inspect_err(|err|  error!("{}: failed to read dir entry: {}", module_path!(), err))
+                    .ok()
+                })
+                .collect::<Vec<_>>())
+            };
+
+            self.details_info = DetailsInfo {
+                image_file_name: image_info.map(|info| info.0.clone()),
+                dir_name: self.grid_entries[grid_entry_i].stem.clone(),
+                dir_entry_infos: dir_entry_infos().unwrap_or_default()
+            };
+            self.view_kind = ViewKind::Details;
+        }
+
+        let cell_context_menu_resp = self.cell_context_menu(ui, grid_entry_i, cell_i, &cell_resp);
+
+        match self.selected_cell {
+            Some(cell_i_) => if cell_i_ == cell_i { // Cell was secondary clicked
+                stroke_rect(ui, cell_resp.rect);
+
+                match cell_context_menu_resp {
+                    Some(resp) => { // Context menu is open
+                        if resp.inner.entry_clicked ||
+                            !resp.inner.pointer_contained && ui.input(|state| state.pointer.primary_clicked()) // Clicked outside the menu
+                        {
+                            egui::Popup::close_all(ui.ctx());
+                        }
+                    },
+                    None => self.selected_cell = None // Context menu was closed - deselect cell
+                }
+            },
+            // No context menu
+            None => if cell_resp.hovered() {
+                stroke_rect(ui, cell_resp.rect);
+            }
+        }
+    }
+
+    fn cell_context_menu(&mut self, cell_ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize, cell_resp: &egui::Response) -> Option<egui::InnerResponse<MenuPointerState>> {
+        egui::Popup::context_menu(cell_resp)
+            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks) // Close manually to avoid close/show flash on right click cell while menu is open
+            .show(|ui| {
+                let tags_menu_resp = self.tags_menu(ui, grid_entry_i, cell_i);
+
+                let painter = ui.painter().clone().with_layer_id(cell_ui.layer_id());
+                stroke_rect_painter(painter, cell_resp.rect);
+
+                self.selected_cell = Some(cell_i);
+
+                MenuPointerState {
+                    pointer_contained: ui.ui_contains_pointer() || tags_menu_resp.inner.unwrap_or_default().0,
+                    entry_clicked: tags_menu_resp.response.clicked() || tags_menu_resp.response.secondary_clicked()
+                }
+            })
+    }
+
+    fn tags_menu(&mut self, ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize) -> egui::InnerResponse<Option<PointerContained>> {
+        ui.menu_button("Tags", |ui| {
+            // Add tag
+            let tag_edit_resp = egui::TextEdit::singleline(&mut self.tag_edit)
+                .hint_text("Add")
+                .show(ui)
+                .response;
+
+            if tag_edit_resp.lost_focus() && ui.input(|state| state.key_pressed(egui::Key::Enter)) {
+                self.tags.entry(Rc::from(self.tag_edit.as_str()))
+                    .and_modify(|set| _ = set.insert(cell_i))
+                    .or_insert([cell_i].into_iter().collect());
+
+                self.tag_edit.clear();
+                tag_edit_resp.request_focus();
+            }
+
+            ui.separator();
+
+            // Select from existing tags
+            for (tag, set) in self.tags.iter_mut() { if !set.is_empty() {
+                let tag_button_resp = ui.button(tag.as_ref());
+
+                match (tag_button_resp.clicked(), set.contains(&grid_entry_i)) {
+                    (_tag_button_clicked @ true, _entry_is_tagged @ true) => {
+                        set.remove(&grid_entry_i);
+
+                        let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or_default();
+                        if tag_is_active {
+                            match set.is_empty() {
+                                true => self.active_tag = None,
+                                false => {
+                                    update_active_view(&mut self.active_view, set);
+
+                                    self.removed_entry_from_active_view = true;
+                                }
+                            }
+
+                            ui.close();
+                        }
+                    },
+                    (_tag_button_clicked @ true, _entry_is_tagged @ false) => _ = set.insert(grid_entry_i),
+                    (_tag_button_clicked @ false, _entry_is_tagged @ true) => _ = tag_button_resp.highlight(),
+                    _ => ()
+                }
+            } }
+
+            PointerContained(ui.ui_contains_pointer())
+        })
+    }
+
+    fn details_view(&mut self, ui: &mut egui::Ui) {
+        // Subdivisions
+        let middle_subd_width = 2.0 * FRAME_MARGIN + SEPARATOR_WIDTH;
+        let side_subd_width = ((ui.available_width() - middle_subd_width) / 2.0).floor();
+        let subd_height = ui.available_height();
+
+        let (total_alloc_rect,
+            total_alloc_resp
+        ) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+
+        // Image
+        let left_subd_rect = egui::Rect::from_min_max(
+            total_alloc_rect.left_top(),
+            total_alloc_rect.left_top() + [side_subd_width, subd_height].into()
+        );
+        let image_rect = egui::Rect::from_center_size(
+            left_subd_rect.center(),
+            DETAILS_IMAGE_SIZE
+        );
+
+        ui.scope_builder(egui::UiBuilder::new().max_rect(image_rect), |ui| {
+            let dir_name = &self.details_info.dir_name;
+            let image_file_name = &self.details_info.image_file_name;
+
+            let details_state = image_file_name.as_ref()
+                .and_then(|image_file_name| self.images.get_mut(image_file_name.as_ref()))
+                .map(|info|&mut info.details_state );
+
+            match details_state {
+                Some(details_state) => try_add_image(ui, details_state, image_file_name.as_ref().unwrap().as_ref(), dir_name.as_ref()),
+                None => add_label(ui, dir_name.as_ref())
+            }
+        });
+
+        // Separator
+        let middle_subd_rect = egui::Rect::from_min_max(
+            left_subd_rect.right_top(),
+            left_subd_rect.right_top() + [middle_subd_width, subd_height].into()
+        );
+
+        ui.scope_builder(egui::UiBuilder::new().max_rect(middle_subd_rect), |ui| {
+            ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
+                ui.separator();
+            });
+        });
+
+        // Dir entries
+        let right_subd_rect = egui::Rect::from_min_max(
+            middle_subd_rect.right_top(),
+            middle_subd_rect.right_top() + [side_subd_width, subd_height].into()
+        );
+
+        ui.scope_builder(egui::UiBuilder::new().max_rect(right_subd_rect), |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let button_height = ui.spacing().interact_size.y;
+                let button_spacing = ui.spacing().item_spacing[1];
+                #[allow(clippy::cast_precision_loss)]
+                let button_count = self.details_info.dir_entry_infos.len() as f32;
+                let buttons_height = button_count * (button_height + button_spacing);
+
+                let remaining_space = ui.available_height() - buttons_height;
+                let top_padding = (remaining_space / 2.0).floor().max(0.0);
+
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                    ui.add_space(top_padding);
+
+                    self.dir_entries(ui);
+                });
+            });
+        });
+
+        self.details_context_menu(&total_alloc_resp);
+
+        ui.ctx().input(|state| {
+            if state.pointer.button_released(egui::PointerButton::Extra1) {
+                self.view_kind = ViewKind::Grid;
+            }
+        });
+    }
+
+    fn dir_entries(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style())
+            .stroke(egui::Stroke::NONE)
+            .inner_margin(egui::Margin::ZERO)
+            .show(ui, |ui| {
+                self.details_button_resps.clear();
+                self.details_button_resps.extend(
+                    self.details_info.dir_entry_infos.iter()
+                        .map(|info| ui.button(info.stem.as_str()).interact(egui::Sense::click()))
+                );
+
+                for (i, resp) in self.details_button_resps.iter().enumerate() {
+                    if resp.hovered() {
+                        self.hovered_details_entry_i = i;
+                    }
+
+                    if resp.clicked() {
+                        let discord_rp_info = self.discord_rp_enable.then_some(self.make_discord_rp_info(i));
+
+                        open_media(
+                            self.details_info.dir_entry_infos[i].path.clone(),
+                            self.details_info.dir_entry_infos[i].file_kind,
+                            self.maintain_sample_rate,
+                            self.use_glsl_shaders,
+                            discord_rp_info
+                        );
+                    }
+                }
+            });
+    }
+
+    fn make_discord_rp_info(&self, i: usize) -> config::DiscordRichPresenceInfo {
+        config::DiscordRichPresenceInfo {
+            client_id: match self.discord_rp_watching {
+                Watching::Movie => self.discord_app_ids.movies.clone().unwrap(),
+                Watching::TV => self.discord_app_ids.tv.clone().unwrap(),
+                Watching::Words => self.discord_app_ids.words.clone().unwrap()
+            },
+            activity: config::DiscordActivity::Watching,
+            details: match self.discord_rp_details.is_empty() {
+                true => match self.discord_rp_watching {
+                    Watching::TV => self.details_info.dir_name.to_string(),
+                    _ => self.details_info.dir_entry_infos[i].stem.clone()
+                },
+                false => self.discord_rp_details.clone()
+            },
+            state: self.discord_rp_watching.eq(&Watching::TV).then(|| {
+                match self.discord_rp_state.is_empty() {
+                    true => self.details_info.dir_entry_infos[i].stem.clone(),
+                    false => self.discord_rp_state.clone()
+                }
+            }),
+            large_image: match self.discord_rp_watching {
+                Watching::TV => Some(to_discord_rp_asset_name(self.details_info.dir_name.as_ref())),
+                _ => Some(to_discord_rp_asset_name(self.details_info.dir_entry_infos[i].stem.as_str()))
+            },
+            chess_username: None
+        }
+    }
+
+    fn details_context_menu(&mut self, total_alloc_resp: &egui::Response) {
+        egui::Popup::context_menu(total_alloc_resp)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.add_enabled_ui(!self.details_info.dir_entry_infos.is_empty(), |ui| {
+                    ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
+                    ui.checkbox(&mut self.use_glsl_shaders, "Use glsl shaders");
+                    ui.menu_button("Discord Rich Presence", |ui| self.discord_rp_menu(ui));
+                });
+            });
+    }
+
+    fn discord_rp_menu(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let can_enable_discord_rp = match self.discord_rp_watching {
+                Watching::Movie => self.discord_app_ids.movies.is_some(),
+                Watching::TV => self.discord_app_ids.tv.is_some(),
+                Watching::Words => self.discord_app_ids.words.is_some()
+            };
+            self.discord_rp_enable &= can_enable_discord_rp;
+
+            ui.add_enabled(can_enable_discord_rp, egui::Checkbox::new(&mut self.discord_rp_enable, "Enable"));
+
+            ui.separator();
+
+            if ui.add_enabled(self.discord_app_ids.tv.is_some(), egui::RadioButton::new(self.discord_rp_watching == Watching::TV, "TV")).clicked() {
+                self.discord_rp_watching = Watching::TV;
+            };
+            if ui.add_enabled(self.discord_app_ids.movies.is_some(), egui::RadioButton::new(self.discord_rp_watching == Watching::Movie, "Movie")).clicked() {
+                self.discord_rp_watching = Watching::Movie;
+            };
+            if ui.add_enabled(self.discord_app_ids.words.is_some(), egui::RadioButton::new(self.discord_rp_watching == Watching::Words, "Words")).clicked() {
+                self.discord_rp_watching = Watching::Words;
+            };
+        });
+
+        ui.shrink_width_to_current();
+
+        let details_label_galley = egui::WidgetText::from("Details")
+            .into_galley(ui, None, f32::INFINITY, egui::FontSelection::Default);
+        let details_text_edit_width = ui.available_width() - details_label_galley.rect.width();
+
+        let margin = egui::Margin::symmetric(4, 2);
+        let grid = egui::Grid::new("grid").num_columns(2);
+        grid.show(ui, |ui| {
+            ui.label(details_label_galley);
+
+            let details_hint_text = match self.discord_rp_watching {
+                Watching::TV => self.details_info.dir_name.as_ref(),
+                _ => self.details_info.dir_entry_infos[self.hovered_details_entry_i].stem.as_str()
+            };
+            let details_hint_galley = egui::WidgetText::from(details_hint_text)
+                .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
+            let details_text_edit = egui::TextEdit::singleline(&mut self.discord_rp_details)
+                .desired_width(details_text_edit_width)
+                .hint_text(details_hint_galley);
+
+            ui.add(details_text_edit);
+
+            ui.end_row();
+
+            if self.discord_rp_watching == Watching::TV {
+                ui.label("State");
+
+                let state_hint_text = self.details_info.dir_entry_infos[self.hovered_details_entry_i].stem.as_str();
+                let state_hint_galley = egui::WidgetText::from(state_hint_text)
+                    .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
+                let state_text_edit = egui::TextEdit::singleline(&mut self.discord_rp_state)
+                    .hint_text(state_hint_galley)
+                    .desired_width(details_text_edit_width);
+
+                ui.add(state_text_edit);
+            }
         });
     }
 }
@@ -324,18 +1492,32 @@ impl eframe::App for Dir {
 pub(crate) fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([100.0, 100.0])
-            .with_maximize_button(false)
-            .with_active(true),
+            .with_inner_size(WINDOW_INNER_SIZE)
+            .with_maximize_button(false),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
-            supported_backends: wgpu::Backends::VULKAN,
-            present_mode: wgpu::PresentMode::Mailbox,
+            present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: Some(1),
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(
+                egui_wgpu::WgpuSetupCreateNew {
+                    instance_descriptor: wgpu::InstanceDescriptor {
+                        backends: wgpu::Backends::DX12,
+                        backend_options: wgpu::BackendOptions {
+                            dx12: wgpu::Dx12BackendOptions {
+                                presentation_system: wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual,
+                                ..default!()
+                            },
+                            ..default!()
+                        },
+                        ..default!()
+                    },
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    ..default!()
+                }
+            ),
             ..default!()
         },
-        follow_system_theme: true,
+        centered: true,
         ..default!()
     };
 
@@ -343,10 +1525,29 @@ pub(crate) fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
         "Ogos",
         native_options,
         Box::new(|cctx| {
+            cctx.egui_ctx.set_pixels_per_point(1.0);
+
+            let mut style = (*cctx.egui_ctx.style()).clone();
+            let factor = 1.5;
+
+            style.spacing.interact_size = (style.spacing.interact_size * factor).round();
+            style.spacing.button_padding = (style.spacing.button_padding * factor).round();
+            style.spacing.item_spacing = (style.spacing.item_spacing * factor).round();
+            style.spacing.icon_spacing = (style.spacing.icon_spacing * factor).round();
+            style.spacing.icon_width = (style.spacing.icon_width * factor).round();
+            style.spacing.icon_width_inner = (style.spacing.icon_width_inner * factor).round();
+
+            for (_, font_id) in style.text_styles.iter_mut() {
+                font_id.size = (font_id.size * factor).round();
+            }
+
+            cctx.egui_ctx.set_style(style);
+
             Ok(
                 match kind {
                     Kind::Discord { name, rp_info } => Box::new(Discord::new(cctx, name, rp_info)),
-                    Kind::Dir { name, entries, discord_app_ids } => Box::new(Dir::new(cctx, name, entries, discord_app_ids))
+                    Kind::Dir { name, entries, discord_app_ids } => Box::new(Dir::new(&cctx.egui_ctx, name, entries, discord_app_ids)),
+                    Kind::Lib { discord_app_ids } => Box::new(Lib::new(&cctx.egui_ctx, discord_app_ids)?)
                 }
             )
         })

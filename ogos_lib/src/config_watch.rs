@@ -13,7 +13,7 @@ use log::*;
 use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
 use std::{
     ffi::*,
-    os::windows::ffi::*,
+    os::windows::ffi::OsStringExt,
     slice,
     thread::{self, *}
 };

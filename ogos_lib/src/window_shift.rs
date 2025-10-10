@@ -428,8 +428,7 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
 
     let win_info = match constraints.get(&win_exe) {
         Some(constraints) => {
-            let (
-                anchor_rel,
+            let (anchor_rel,
                 anchor_abs,
                 anchor_is_constrained
             ) = constraints.anchor.as_ref()
@@ -462,8 +461,7 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
                 })
                 .unwrap_or_default();
 
-            let (
-                border_disable,
+            let (border_disable,
                 round_corners_disable
             ) = constraints.attributes.as_ref()
                 .filter(|&attributes_constraint| {

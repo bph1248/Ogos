@@ -26,6 +26,7 @@ use windows::{
         Foundation::*,
         UI::{
             Accessibility::*,
+            Input::KeyboardAndMouse::*,
             WindowsAndMessaging::*
         }
     }
@@ -224,6 +225,36 @@ unsafe fn handle_wm_display_change(tb: &mut Taskbar, lparam: LPARAM) {
     tb.screen_extent_changed = true;
 }
 
+unsafe fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) -> windows::core::Result<()> {
+    const NORM: i64 = 65535;
+
+    let x = i64::from(x);
+    let screen_width = i64::from(screen_extent.width - 1);
+    let num = x * NORM + screen_width / 2;
+    let dx = (num / screen_width) as i32;
+
+    let y = i64::from(y);
+    let screen_height = i64::from(screen_extent.height - 1);
+    let num = y * NORM + screen_height / 2;
+    let dy = (num / screen_height) as i32;
+
+    let mut input_0 = INPUT_0::default();
+    input_0.mi = MOUSEINPUT {
+        dx,
+        dy,
+        mouseData: 0,
+        dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+        time: 0,
+        dwExtraInfo: 0
+    };
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: input_0
+    };
+
+    SendInput(&[input], size_of::<INPUT>() as i32).win32_core_ok().map(|_| ())
+}
+
 unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, lparam: LPARAM, stamp: Instant) -> Res1<()> {
     if let Some(anchor) = tb.hitbox_mouse_move_anchor &&
         stamp.duration_since(anchor).is_zero() // WM_MOUSEMOVE msg is too old
@@ -231,56 +262,55 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, lparam: LPARAM, stamp: Instant)
         return  Ok(())
     }
 
+    let cursor_pos_x = (lparam.0 & 0xFFFF) as i32;
+    let cursor_pos_y = (lparam.0 >> 16) as i32;
+
     match tb.hitbox_state {
         HitboxState::Entry => {
             match tb.hitbox_entry_side {
                 Side::Left => {
                     match tb.taskbar_side {
-                        Side::Top | Side::Bottom => SetCursorPos(tb.start_menu_rect.left + tb.hitbox_entry_cursor_snap_offset_px, tb.start_menu_rect.top + tb.start_menu_rect.height() / 2)?,
-                        Side::Right => {
-                            let cursor_pos_y = (lparam.0 >> 16) as i32;
-
-                            SetCursorPos(tb.start_menu_rect.right, cursor_pos_y)?;
-                        },
+                        Side::Top | Side::Bottom => send_cursor_pos(tb.start_menu_rect.left + tb.hitbox_entry_cursor_snap_offset_px, tb.start_menu_rect.top + tb.start_menu_rect.height() / 2, tb.screen_extent)?,
+                        Side::Right => send_cursor_pos(tb.start_menu_rect.right, cursor_pos_y, tb.screen_extent)?,
                         _ => ()
                     }
                 },
                 Side::Top => {
                     match tb.taskbar_side {
-                        Side::Left | Side::Right => SetCursorPos(tb.start_menu_rect.left + tb.start_menu_rect.width() / 2, tb.start_menu_rect.top + tb.hitbox_entry_cursor_snap_offset_px)?,
+                        Side::Left | Side::Right => send_cursor_pos(tb.start_menu_rect.left + tb.start_menu_rect.width() / 2, tb.start_menu_rect.top + tb.hitbox_entry_cursor_snap_offset_px, tb.screen_extent)?,
                         Side::Bottom => {
                             let cursor_pos_x = (lparam.0 & 0xFFFF) as i32;
 
-                            SetCursorPos(cursor_pos_x, tb.start_menu_rect.bottom)?;
+                            send_cursor_pos(cursor_pos_x, tb.start_menu_rect.bottom, tb.screen_extent)?;
                         },
                         _ => ()
                     }
                 }
                 Side::Right => {
                     match tb.taskbar_side {
-                        Side::Top | Side::Bottom => SetCursorPos(tb.start_menu_rect.left + tb.hitbox_entry_cursor_snap_offset_px, tb.start_menu_rect.top + tb.start_menu_rect.height() / 2)?,
+                        Side::Top | Side::Bottom => send_cursor_pos(tb.start_menu_rect.left + tb.hitbox_entry_cursor_snap_offset_px, tb.start_menu_rect.top + tb.start_menu_rect.height() / 2, tb.screen_extent)?,
                         Side::Left => {
                             let cursor_pos_y = (lparam.0 >> 16) as i32;
 
-                            SetCursorPos(tb.start_menu_rect.left, cursor_pos_y)?;
+                            send_cursor_pos(tb.start_menu_rect.left, cursor_pos_y, tb.screen_extent)?;
                         },
                         _ => ()
                     }
                 },
                 Side::Bottom => {
                     match tb.taskbar_side {
-                        Side::Left | Side::Right => SetCursorPos(tb.start_menu_rect.left + tb.start_menu_rect.width() / 2, tb.start_menu_rect.top + tb.hitbox_entry_cursor_snap_offset_px)?,
+                        Side::Left | Side::Right => send_cursor_pos(tb.start_menu_rect.left + tb.start_menu_rect.width() / 2, tb.start_menu_rect.top + tb.hitbox_entry_cursor_snap_offset_px, tb.screen_extent)?,
                         Side::Top => {
                             let cursor_pos_x = (lparam.0 & 0xFFFF) as i32;
 
-                            SetCursorPos(cursor_pos_x, tb.start_menu_rect.top)?;
+                            send_cursor_pos(cursor_pos_x, tb.start_menu_rect.top, tb.screen_extent)?;
                         },
                         _ => ()
                     }
                 }
             }
 
-            SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.exit.x, tb.hitbox_pos.exit.y, 0, 0, SWP_NOSIZE)?;
+            SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.exit.x, tb.hitbox_pos.exit.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
             tb.hitbox_mouse_move_anchor = Some(now!());
             tb.taskbar_hwnd.show_na();
 
@@ -291,38 +321,23 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, lparam: LPARAM, stamp: Instant)
                 Some(snap_ordinate) => {
                     match tb.hitbox_exit_cursor_should_have_snapped {
                         true => {
-                            let mut cursor_pos = POINT::default();
-                            GetCursorPos(&mut cursor_pos)?;
+                            SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
+                            tb.hitbox_mouse_move_anchor = Some(now!());
+                            tb.hitbox_state = HitboxState::Entry;
+                            tb.hitbox_exit_cursor_should_have_snapped = false;
 
-                            // Sometimes, when a window is transitioning to the foregroud, SetCursorPos succeeds but doesn't snap the cursor.
-                            // In this case, forgo moving the hitbox and let mouse movement continue to generate WM_MOUSEMOVE messages.
-                            // Once the cursor snaps, move the hitbox.
-                            match tb.taskbar_side {
-                                Side::Left if cursor_pos.x < snap_ordinate => SetCursorPos(snap_ordinate, cursor_pos.y)?,
-                                Side::Top if cursor_pos.y < snap_ordinate => SetCursorPos(cursor_pos.x, snap_ordinate)?,
-                                Side::Right if cursor_pos.x > snap_ordinate => SetCursorPos(snap_ordinate, cursor_pos.y)?,
-                                Side::Bottom if cursor_pos.y > snap_ordinate => SetCursorPos(cursor_pos.x, snap_ordinate)?,
-                                _ => {
-                                    SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOSIZE)?;
-                                    tb.hitbox_mouse_move_anchor = Some(now!());
-                                    tb.taskbar_hwnd.hide();
-
-                                    tb.hitbox_state = HitboxState::Entry;
-                                    tb.hitbox_exit_cursor_should_have_snapped = false;
-                                }
-                            }
+                            tb.taskbar_hwnd.hide();
                         },
-                        false => { // Snap the cursor given the snap ordinate. Landing on the hitbox will create another event whereby the hitbox will be moved.
+                        false => { // Snap the cursor. Landing on the hitbox will create another event whereby the hitbox will be moved.
                             match tb.taskbar_side {
                                 Side::Top | Side::Bottom => {
-                                    let cursor_pos_x = (lparam.0 & 0xFFFF) as i32;
-
-                                    SetCursorPos(cursor_pos_x, snap_ordinate)?;
+                                    tb.hitbox_mouse_move_anchor = Some(now!());
+                                    send_cursor_pos(cursor_pos_x, snap_ordinate, tb.screen_extent)?; // May get 'eaten' when a new window is transitioning to the foreground.
                                 },
                                 Side::Left | Side::Right => {
                                     let cursor_pos_y = (lparam.0 >> 16) as i32;
 
-                                    SetCursorPos(snap_ordinate, cursor_pos_y)?;
+                                    send_cursor_pos(snap_ordinate, cursor_pos_y, tb.screen_extent)?;
                                 }
                             };
 
@@ -331,11 +346,11 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, lparam: LPARAM, stamp: Instant)
                     }
                 },
                 None => {
-                    SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOSIZE)?;
+                    SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
                     tb.hitbox_mouse_move_anchor = Some(now!());
-                    tb.taskbar_hwnd.hide();
-
                     tb.hitbox_state = HitboxState::Entry;
+
+                    tb.taskbar_hwnd.hide();
                 }
             }
         }
@@ -524,7 +539,7 @@ unsafe fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: 
                 let taskbar_side = get_taskbar_side(taskbar_rect, tb.screen_extent);
                 let hitbox_pos = get_hitbox_pos(taskbar_rect, taskbar_side, tb.hitbox_entry_side, tb.hitbox_entry_inset_px, tb.hitbox_exit_taskbar_offset_px, tb.screen_extent);
 
-                SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, hitbox_pos.entry.x, hitbox_pos.entry.y, tb.screen_extent.width, tb.screen_extent.height, SWP_NOACTIVATE)?;
+                SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, hitbox_pos.entry.x, hitbox_pos.entry.y, tb.screen_extent.width, tb.screen_extent.height, SWP_NOACTIVATE | SWP_NOCOPYBITS)?;
                 tb.hitbox_hwnd.show_na();
                 tb.taskbar_hwnd.hide();
 
@@ -679,7 +694,7 @@ unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND)
                 false => {
                     tb.hitbox_hwnd.show_na();
 
-                    SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, 0,0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)?;
+                    SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, 0,0, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOSIZE)?;
                 }
             }
         }
@@ -764,7 +779,7 @@ unsafe fn move_hitbox_about_jump_list(tb: &Taskbar, jump_list_hwnd: HWND) -> Res
         let jump_list_rect = jump_list_hwnd.get_rect()?;
         let hitbox_pos_exit_y = jump_list_rect.top - tb.screen_extent.height - tb.hitbox_exit_jump_list_offset_px;
 
-        SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.exit.x, hitbox_pos_exit_y, 0, 0, SWP_NOSIZE)?;
+        SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.exit.x, hitbox_pos_exit_y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
     }
 
     Ok(())
@@ -890,7 +905,7 @@ unsafe fn begin(enable: WindowForegroundEnable, receiver: Receiver<WindowForegro
                     if let ErrVar::WinCore(inner) = *err.var &&
                         win_errored.hresults.insert(inner.code())
                     {
-                        err.var = Box::new(ErrVar::FailedWmMouseMouse { inner, fg_hwnd, fg_exe: fg_hwnd.get_exe_or_err() });
+                        err.var = Box::new(ErrVar::FailedWmMouseMouse { inner, fg_hwnd: SafeHwnd(fg_hwnd), fg_exe: fg_hwnd.get_exe_or_err() });
                         Err(err)?;
                     }
                 }

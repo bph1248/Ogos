@@ -112,7 +112,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         let mut cmd;
         match cli.gaming.use_special_k {
             true => {
-                let skif_path = find_app(App::SKIF, config.app_paths.skif.as_ref())?;
+                let skif_path = find_or_confirm_app(App::SKIF, config.app_paths.skif.as_ref())?;
 
                 cmd = Command::new(skif_path);
                 cmd.arg(launcher_or_game_path);
@@ -277,7 +277,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
                 info!("{}: waiting for process to terminate...", module_path!());
 
                 let proc_hnd = OpenProcess(PROCESS_SYNCHRONIZE, false, pid.as_u32())?;
-                WaitForSingleObject(proc_hnd, INFINITE).win32_gle_ok()?;
+                WaitForSingleObject(proc_hnd, INFINITE).win32_core_ok()?;
 
                 info!("{}: process no longer exists", module_path!());
                 CloseHandle(proc_hnd)?;

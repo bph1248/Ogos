@@ -45,6 +45,9 @@ pub(crate) struct Cli {
     )]
     pub(crate) path: Option<String>,
 
+    #[arg(long)]
+    pub(crate) lib: bool,
+
     #[arg(long, help = "Prevent setting the sample rate of the default audio endpoint to match video metadata")]
     pub(crate) maintain_sample_rate: bool,
     #[arg(long = ENDPOINT, name = ENDPOINT, help = "Set the default audio endpoint")]

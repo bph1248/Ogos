@@ -420,7 +420,7 @@ unsafe fn begin(enable: WindowForegroundEnable, senders: Senders, send_ready: Se
                         };
 
                         let hook = SetWinEventHook(info.eventmin, info.eventmax, None, Some(callback), info.idprocess, info.idthread, WINEVENT_OUTOFCONTEXT)
-                            .win32_gle_ok()
+                            .win32_core_ok()
                             .map_err(|err| {
                                 cleanup_hooks(&hooks);
 

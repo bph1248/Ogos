@@ -13,6 +13,7 @@ anyhow = "1.0.92"
 argfile = "0.1.5"
 bincode = "1.3.3"
 bitflags = "2.9.1"
+blake3 = { version = "1.8.2", features = ["rayon"] }
 castaway = "0.2.2"
 cfg-if = "1.0.3"
 clap = { version = "4.3.0", features = ["derive"] }
@@ -21,15 +22,16 @@ concat-string = "1.0.1"
 const_format = "0.2.34"
 ddc-hi = "0.4.1"
 discord-rich-presence = "0.2.5"
-eframe = { version = "0.28.1", features = [
-    # "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
-    "default_fonts", # Embed the default egui fonts.
-    "wgpu",          # Use the glow rendering backend. Alternative: "wgpu".
-    "persistence",   # Enable restoring app state when restarting the app.
+eframe = { version = "0.33.0", features = [
+    "default_fonts",
+    "wgpu"
 ] }
+egui_extras = "0.33.0"
 ffprobe = "0.4.0"
 fraction = "0.15.3"
-json5 = "0.4.1"
+image = { version = "0.25", features = ["jpeg", "png", "webp"] }
+indexmap = { version = "2.12.1", features = ["serde"] }
+libm = "0.2.15"
 log = { workspace = true }
 log-panics = { workspace = true }
 mki = { path = "../../mki-rust" }
@@ -42,12 +44,16 @@ opener = "0.7.2"
 qmk-via-api = { path = "../../qmk-via-api" }
 quick-xml = "0.37.1"
 rand = "0.8.5"
+rayon = "1.11.0"
+raw-window-handle = "0.6.2"
+resize = "0.8.8"
+rgb = "0.8.52"
 rust-ini = "0.21.1"
-serde = "1.0.204"
+serde = { version = "1.0.204", features = ["rc"] }
 serde_json = "1.0.121"
+serde_json5 = "0.2.1"
 simplelog = { workspace = true }
 strum = { version = "0.27.1", features = ["derive"] }
-strum_macros = "0.27.1"
 subenum = "1.1.2"
 sysinfo = "0.29.0"
 thiserror = "1.0.60"

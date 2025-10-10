@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "ogos",
-    "ogos_cdylib",
     "ogos_lib",
     "ogos_proc_macros"
 ]

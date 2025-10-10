@@ -350,8 +350,7 @@ fn make_novideo_srgb_apply_info(info: &NovideoSrgbInfo) -> Res1<(NovideoSrgbAppl
         gamma_target,
         gamma_value,
         black_output_offset,
-    } = info.gamma.map(|gamma| gamma.as_ffi())
-        .unwrap_or_default();
+    } = info.gamma.as_ffi();
 
     Ok((
         NovideoSrgbApplyInfo {
@@ -388,7 +387,7 @@ pub(crate) fn control_wallpaper_engine(arg: WallpaperEngineArg) -> Res1<()> {
 
     if get_first_process(App::WALLPAPER_ENGINE, &mut system).is_some() {
         let config = config::get()?.read()?;
-        let wallpaper_engine_path = find_app(App::WALLPAPER_ENGINE, config.app_paths.wallpaper_engine.as_ref())?;
+        let wallpaper_engine_path = find_or_confirm_app(App::WALLPAPER_ENGINE, config.app_paths.wallpaper_engine.as_ref())?;
 
         drop(config);
 

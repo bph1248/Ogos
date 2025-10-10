@@ -1,5 +1,6 @@
 use crate::{
     common::*,
+    win32::*,
     window_watch::*
 };
 
@@ -125,9 +126,9 @@ pub enum ErrVar {
     Ffprobe(#[from] ffprobe::FfProbeError),
     FromUtf16(#[from] string::FromUtf16Error),
     FromUtf8(#[from] string::FromUtf8Error),
+    Image(#[from] image::error::ImageError),
     Ini(#[from] ini::Error),
     Io(#[from] io::Error),
-    Json5(#[from] json5::Error),
     NetCoreHostContainsNul(#[from] netcorehost::pdcstring::ContainsNul),
     NetCoreHostGetManagedFunction(#[from] netcorehost::hostfxr::GetManagedFunctionError),
     NetCoreHostHosting(#[from ] netcorehost::error::HostingError),
@@ -143,12 +144,15 @@ pub enum ErrVar {
     Recv(#[from] sync::mpsc::RecvError),
     RecvOneshot(#[from] oneshot::error::RecvError),
     RecvTimeout(#[from] sync::mpsc::RecvTimeoutError),
+    Resize(#[from] resize::Error),
     SendMsg(#[from] sync::mpsc::SendError<Msg>),
     SendReadyMsg(#[from] sync::mpsc::SendError<ReadyMsg>),
     SendWindowForegroundMsg2(#[from] sync::mpsc::SendError<WindowForegroundMsg>),
     SendWindowShiftMsg2(#[from] sync::mpsc::SendError<WindowShiftMsg>),
     SerdeJson(#[from] serde_json::Error),
+    SerdeJson5(#[from] serde_json5::Error),
     SystemTime(#[from] time::SystemTimeError),
+    ThreadPoolBuild(#[from] rayon::ThreadPoolBuildError),
     TryFromInt(#[from] num::TryFromIntError),
     Which(#[from] which::Error),
     WidestringContainsNul(#[from] widestring::error::ContainsNul<u16>),
@@ -176,7 +180,7 @@ pub enum ErrVar {
     FailedSetWinEventHooks { inner: windows::core::Error, ctx: WinEventHookContext },
     FailedSpawnCommand { inner: io::Error, cmd: String },
     FailedToStr,
-    FailedWmMouseMouse { inner: windows::core::Error, fg_hwnd: HWND, fg_exe: String },
+    FailedWmMouseMouse { inner: windows::core::Error, fg_hwnd: SafeHwnd, fg_exe: String },
     FailedWriteFile { inner: io::Error, path: String },
     InvalidDisplayCount,
     InvalidDisplayModelName,
@@ -191,6 +195,7 @@ pub enum ErrVar {
     MissingClickMap,
     MissingConfigKey { name: &'static str },
     MissingFile { path: PathBuf },
+    MissingFileExt,
     MissingNovideoSrgbFfi,
     MissingNvApiBackedDisplay,
     MissingProcess { name: String },
@@ -231,9 +236,9 @@ impl Display for ErrVar {
             Eframe(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             FromUtf16(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             FromUtf8(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
+            Image(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Ini(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Io(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            Json5(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             NetCoreHostContainsNul(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             NetCoreHostGetManagedFunction(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             NetCoreHostHosting(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
@@ -249,12 +254,15 @@ impl Display for ErrVar {
             Recv(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             RecvOneshot(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             RecvTimeout(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
+            Resize(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SendMsg(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SendReadyMsg(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SendWindowForegroundMsg2(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SendWindowShiftMsg2(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SerdeJson(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
+            SerdeJson5(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SystemTime(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
+            ThreadPoolBuild(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             TryFromInt(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Which(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             WidestringContainsNul(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
@@ -282,7 +290,7 @@ impl Display for ErrVar {
             FailedSetWinEventHooks { inner, ctx } => write!(f, "failed to set win event hooks: {}: {}", ctx, inner),
             FailedSpawnCommand { inner, cmd } => write!(f, "failed to spawn command: {}: {}", cmd, inner),
             FailedToStr => write!(f, "failed to convert value to str"),
-            FailedWmMouseMouse { inner, fg_hwnd, fg_exe} => write!(f, "failed on wm mouse move: fg_hwnd: {:p}, fg_exe: {}: {}", fg_hwnd.0, fg_exe, inner),
+            FailedWmMouseMouse { inner, fg_hwnd, fg_exe} => write!(f, "failed on wm mouse move: fg_hwnd: {:p}, fg_exe: {}: {}", **fg_hwnd, fg_exe, inner),
             FailedWriteFile { inner, path } => write!(f, "failed to write file: path: {}: {}", path, inner),
             InvalidDisplayCount => write!(f, "invalid display count - only 1 display is supported"),
             InvalidDisplayModelName => write!(f, "invalid display model name"),
@@ -297,6 +305,7 @@ impl Display for ErrVar {
             MissingClickMap => write!(f, "missing click map"),
             MissingConfigKey { name } => write!(f, "missing config key: {}", name),
             MissingFile { path } => write!(f, "missing file: {}", path.display()),
+            MissingFileExt => write!(f, "missing file extension"),
             MissingNovideoSrgbFfi => write!(f, "missing novideo_srgb ffi"),
             MissingNvApiBackedDisplay => write!(f, "missing NvApi backed display"),
             MissingProcess { name } => write!(f, "missing process: {}", name),
@@ -316,6 +325,9 @@ impl Display for ErrVar {
     }
 }
 
+unsafe impl Send for ErrVar {}
+unsafe impl Sync for ErrVar {}
+
 impl From<&mut simplelog::ConfigBuilder> for ErrVar {
     fn from(_: &mut simplelog::ConfigBuilder) -> Self {
         Self::FailedBuildLoggerConfig
@@ -329,6 +341,11 @@ impl<T> From<sync::PoisonError<sync::RwLockReadGuard<'_, T>>> for ErrVar {
 impl<T> From<sync::PoisonError<sync::RwLockWriteGuard<'_, T>>> for ErrVar {
     fn from(_: sync::PoisonError<sync::RwLockWriteGuard<'_, T>>) -> Self {
         Self::PoisonedLock
+    }
+}
+impl From<WIN32_ERROR> for ErrVar {
+    fn from(value: WIN32_ERROR) -> Self {
+        Self::WinCore(value.into())
     }
 }
 
@@ -373,36 +390,53 @@ impl NvApiOk for NvAPI_Status {
     }
 }
 
-pub(crate) trait Win32GleOk<T> {
-    fn win32_gle_ok(self) -> windows::core::Result<T>;
+pub(crate) trait Win32CoreOk<T> {
+    fn win32_core_ok(self) -> windows::core::Result<T>;
 }
-impl Win32GleOk<Self> for u32 {
-    fn win32_gle_ok(self) -> windows::core::Result<Self> {
-        if self == 0 {
-            unsafe { GetLastError().ok()? }
-        }
+macro_rules! impl_Win32CoreOk {
+    (if self == 0 = { $($ty:ty),+ }) => {
+        $(
+            impl Win32CoreOk<Self> for $ty {
+                fn win32_core_ok(self) -> windows::core::Result<Self> {
+                    if self == 0 {
+                        unsafe { return Err(GetLastError().into()) }
+                    }
 
-        Ok(self)
-    }
-}
-impl Win32GleOk<Self> for HWINEVENTHOOK {
-    fn win32_gle_ok(self) -> windows::core::Result<Self> {
-        if self.is_invalid() {
-            unsafe { GetLastError().ok()? }
-        }
+                    Ok(self)
+                }
+            }
+        )+
+    };
+    (if self.is_invalid() = { $($ty:ty),+ }) => {
+        $(
+            impl Win32CoreOk<Self> for $ty {
+                fn win32_core_ok(self) -> windows::core::Result<Self> {
+                    if self.is_invalid() {
+                        unsafe { return Err(GetLastError().into()) }
+                    }
 
-        Ok(self)
-    }
-}
-impl Win32GleOk<Self> for WAIT_EVENT {
-    fn win32_gle_ok(self) -> windows::core::Result<Self> {
-        if self.0 == WAIT_FAILED {
-            unsafe { GetLastError().ok()? }
-        }
+                    Ok(self)
+                }
+            }
+        )+
+    };
+    (if self.0 == WAIT_FAILED = { $($ty:ty),+ }) => {
+        $(
+            impl Win32CoreOk<Self> for $ty {
+                fn win32_core_ok(self) -> windows::core::Result<Self> {
+                    if self.0 == WAIT_FAILED {
+                        unsafe { return Err(GetLastError().into()) }
+                    }
 
-        Ok(self)
-    }
+                    Ok(self)
+                }
+            }
+        )+
+    };
 }
+impl_Win32CoreOk!(if self == 0             = { u32 });
+impl_Win32CoreOk!(if self.is_invalid()     = { HWINEVENTHOOK });
+impl_Win32CoreOk!(if self.0 == WAIT_FAILED = { WAIT_EVENT });
 
 pub(crate) trait Win32ErrorOk<T> {
     fn win32_err_ok(self) -> windows::core::Result<()>;
@@ -416,14 +450,13 @@ impl Win32ErrorOk<()> for i32 {
 pub(crate) trait Win32VarOk<T> {
     fn win32_var_ok(self) -> ResVar<T>;
 }
-
 macro_rules! impl_Win32VarOk {
     (if self == 0 = { $($ty:ty),+ }) => {
         $(
             impl Win32VarOk<Self> for $ty {
                 fn win32_var_ok(self) -> ResVar<Self> {
                     if self == 0 {
-                        unsafe { GetLastError().ok()? }
+                        unsafe { return Err(GetLastError().into()) }
                     }
 
                     Ok(self)
@@ -436,7 +469,7 @@ macro_rules! impl_Win32VarOk {
             impl Win32VarOk<Self> for $ty {
                 fn win32_var_ok(self) -> ResVar<Self> {
                     if self.is_invalid() {
-                        unsafe { GetLastError().ok()? }
+                        unsafe { return Err(GetLastError().into()) }
                     }
 
                     Ok(self)
@@ -451,7 +484,7 @@ impl_Win32VarOk!(if self.is_invalid() = { HANDLE, HWINEVENTHOOK, HWND });
 impl Win32VarOk<Self> for DISP_CHANGE {
     fn win32_var_ok(self) -> ResVar<Self> {
         if self != DISP_CHANGE_SUCCESSFUL {
-            Err(ErrVar::Win32DispChange { disp_change: self })?;
+            return Err(ErrVar::Win32DispChange { disp_change: self });
         }
 
         Ok(self)
@@ -460,7 +493,7 @@ impl Win32VarOk<Self> for DISP_CHANGE {
 impl Win32VarOk<Self> for LRESULT {
     fn win32_var_ok(self) -> ResVar<Self> {
         if self.0 != 0 {
-            Err(ErrVar::Win32LResult { lresult: self })?;
+            return Err(ErrVar::Win32LResult { lresult: self });
         }
 
         Ok(self)

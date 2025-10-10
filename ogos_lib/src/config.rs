@@ -138,49 +138,48 @@ fn make_input_event_map(from: String, to: String, click_dur_ms: Option<u64>) -> 
     })
 }
 
-fn deserialize_click_params<'de, D>(deserializer: D) -> Result<InputEventMap, D::Error> where
+fn deserialize_click_map<'de, D>(deserializer: D) -> Result<InputEventMap, D::Error> where
     D: Deserializer<'de>
 {
-    struct ClickParamsVisitor;
+    struct ClickMapVisitor;
 
-    impl<'de> Visitor<'de> for ClickParamsVisitor {
+    impl<'de> Visitor<'de> for ClickMapVisitor {
         type Value = InputEventMap;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a map of click parameters")
+            formatter.write_str("a click map")
         }
 
         fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where
             A: serde::de::MapAccess<'de>
         {
-            match map.next_entry::<String, String>()? {
-                Some((from_str, to_str)) => {
-                    let dur = match map.next_entry::<String, u64>()? {
-                        Some((key, val)) if key.as_str() == "dur" => {
-                            Some(val)
-                        },
-                        _ => default!()
-                    };
-
-                    make_input_event_map(from_str, to_str, dur).map_err(A::Error::custom)
-                },
-                None => Err(A::Error::custom(ErrVar::MissingClickMap))
+            if map.size_hint().is_none_or(|hint| hint > 2) {
+                return Err(A::Error::custom(ErrVar::MissingClickMap))
             }
+
+            let mut dur = None;
+            let (mut from, mut to) = (String::new(), String::new());
+
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "dur" => dur = Some(map.next_value::<u64>()?),
+                    from_ => {
+                        from = from_.to_string();
+                        to = map.next_value::<String>()?;
+                    }
+                }
+            }
+
+            make_input_event_map(from, to, dur).map_err(A::Error::custom)
         }
     }
 
-    let click_map = deserializer.deserialize_map(ClickParamsVisitor)?;
+    let click_map = deserializer.deserialize_map(ClickMapVisitor)?;
 
     Ok(click_map)
 }
 
-#[derive(Deserialize)]
-struct ClickMap(
-    #[serde(deserialize_with = "deserialize_click_params")]
-    InputEventMap
-);
-
-fn deserialize_input_event_maps2<'de, D>(deserializer: D) -> Result<Vec<InputEventMap>, D::Error> where
+fn deserialize_input_event_maps<'de, D>(deserializer: D) -> Result<Vec<InputEventMap>, D::Error> where
     D: Deserializer<'de>
 {
     struct InputEventMapsVisitor;
@@ -220,21 +219,21 @@ fn deserialize_input_event_maps2<'de, D>(deserializer: D) -> Result<Vec<InputEve
     Ok(input_event_maps)
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Op {
     Equals,
     Contains
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Against {
     Caption,
     Class
 }
 
-#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WindowRelation {
     #[default]
@@ -244,6 +243,7 @@ pub(crate) enum WindowRelation {
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Criteria {
     #[serde(default)]
     pub(crate) relation: WindowRelation,
@@ -253,16 +253,19 @@ pub(crate) struct Criteria {
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ShiftConstraint {
     pub(crate) criteria: Criteria
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CenterConstraint {
     pub(crate) criteria: Criteria
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AttributesConstraint {
     pub(crate) criteria: Criteria,
     pub(crate) border_disable: bool,
@@ -270,12 +273,14 @@ pub(crate) struct AttributesConstraint {
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AnchorConstraint {
     pub(crate) criteria: Criteria,
     pub(crate) relative: AnchorRelative
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Constraints {
     pub(crate) anchor: Option<AnchorConstraint>,
     pub(crate) attributes: Option<AttributesConstraint>,
@@ -283,13 +288,15 @@ pub(crate) struct Constraints {
     pub(crate) shift: Option<ShiftConstraint>
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Stride {
     pub(crate) x: u32,
     pub(crate) y: u32
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WindowShift {
     pub(crate) immersive_dark_mode_enable: bool,
     #[serde(rename = "interval_s")]
@@ -310,46 +317,12 @@ impl WindowShift {
 }
 impl_name!(WindowShift);
 
-fn reshade_layer_path() -> String { r"C:\ProgramData\ReShade\ReShade64.json".into() }
-
-#[derive(Clone, Deserialize)]
-pub(crate) struct Reshade {
-    pub(crate) profile: String,
-    #[serde(default = "reshade_layer_path")]
-    pub(crate) layer_path: String,
-    pub(crate) preset_path: String,
-    pub(crate) settings_path: String
-}
-
-#[derive(Clone, Deserialize)]
-pub(crate) struct Mpv {
-    pub(crate) sdr_profile: String,
-    pub(crate) hdr_profile: String,
-    pub(crate) glsl_shaders: Option<String>,
-    pub(crate) reshade: Option<Reshade>
-}
-impl_name!(Mpv);
-
-#[derive(Clone, Default, Deserialize)]
-pub(crate) struct AppPaths {
-    #[serde(default = "epic")]
-    pub(crate) epic: String,
-    pub(crate) ffprobe: Option<String>,
-    #[serde(default = "gog")]
-    pub(crate) gog: String,
-    pub(crate) mpv: Option<String>,
-    pub(crate) novideo_srgb: Option<String>,
-    pub(crate) skif: Option<String>,
-    #[serde(default = "steam")]
-    pub(crate) steam: String,
-    pub(crate) wallpaper_engine: Option<String>
-}
-
 fn hitbox_entry_inset_px() -> u16 { 10 }
 fn hitbox_exit_taskbar_offset_px() -> u16 { 100 }
 fn hitbox_exit_jump_list_offset_px() -> u16 { 60 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct HitboxEntry {
     pub(crate) side: Option<Side>,
     #[serde(default = "hitbox_entry_inset_px")]
@@ -358,6 +331,7 @@ pub(crate) struct HitboxEntry {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct HitboxExit {
     #[serde(default = "hitbox_exit_taskbar_offset_px")]
     pub(crate) taskbar_offset_px: u16,
@@ -367,17 +341,41 @@ pub(crate) struct HitboxExit {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Taskbar {
     pub(crate) hitbox_entry: HitboxEntry,
     pub(crate) hitbox_exit: HitboxExit
 }
 impl_name!(Taskbar);
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BindName {
-    Underscore
+#[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PixelCleaning {
+    pub(crate) let_walk_away: bool,
+    pub(crate) pause_wallpaper_engine: bool
 }
+
+fn reshade_layer_path() -> String { r"C:\ProgramData\ReShade\ReShade64.json".into() }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Reshade {
+    pub(crate) profile: String,
+    #[serde(default = "reshade_layer_path")]
+    pub(crate) layer_path: String,
+    pub(crate) preset_path: String,
+    pub(crate) settings_path: String
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Mpv {
+    pub(crate) sdr_profile: String,
+    pub(crate) hdr_profile: String,
+    pub(crate) glsl_shaders: Option<String>,
+    pub(crate) reshade: Option<Reshade>
+}
+impl_name!(Mpv);
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -399,6 +397,7 @@ impl Into<drpa::ActivityType> for DiscordActivity {
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DiscordRichPresenceInfo {
     pub(crate) client_id: String,
     pub(crate) activity: DiscordActivity,
@@ -408,7 +407,14 @@ pub(crate) struct DiscordRichPresenceInfo {
     pub(crate) chess_username: Option<String>
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BindName {
+    Underscore
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct GameInfo {
     pub(crate) proc: String,
     pub(crate) url: Option<String>,
@@ -420,21 +426,31 @@ pub(crate) struct GameInfo {
 }
 
 #[derive(Deserialize)]
+#[serde(transparent)]
 pub(crate) struct Games(pub(crate) HashMap<String, GameInfo>);
 impl_name!(Games);
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Intent {
     Absolute,
     Relative
 }
 
-#[derive(Clone, Copy, Deserialize)]
-#[serde(tag = "target")]
+#[derive(Default)]
+pub(crate) struct GammaFfi {
+    pub(crate) calibrate_gamma: bool,
+    pub(crate) gamma_target: i32,
+    pub(crate) gamma_value: f64,
+    pub(crate) black_output_offset: f64
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) enum Gamma {
     #[serde(rename = "srgb")]
     Srgb,
+    #[default]
     #[serde(rename = "bt.1886")]
     Bt1886,
     #[serde(rename = "custom")]
@@ -478,30 +494,6 @@ impl Gamma {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct GammaFfi {
-    pub(crate) calibrate_gamma: bool,
-    pub(crate) gamma_target: i32,
-    pub(crate) gamma_value: f64,
-    pub(crate) black_output_offset: f64
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(rename = "primaries", rename_all = "snake_case", tag = "source")]
-pub(crate) enum PrimariesSource {
-    #[default]
-    Edid,
-    Profile { path: String }
-}
-impl PrimariesSource {
-    pub(crate) fn as_i32(&self) -> i32 {
-        match self {
-            Self::Edid => 0,
-            Self::Profile { .. } => 1
-        }
-    }
-}
-
 #[derive(Clone, Copy, Default, Deserialize)]
 #[repr(i32)]
 pub(crate) enum ColorSpaceTarget {
@@ -516,20 +508,39 @@ pub(crate) enum ColorSpaceTarget {
     Bt2020
 }
 
+#[derive(Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields, rename = "primaries", rename_all = "snake_case")]
+pub(crate) enum PrimariesSource {
+    #[default]
+    Edid,
+    Profile { path: String }
+}
+impl PrimariesSource {
+    pub(crate) fn as_i32(&self) -> i32 {
+        match self {
+            Self::Edid => 0,
+            Self::Profile { .. } => 1
+        }
+    }
+}
+
 fn novideo_srgb_enable_clamp() -> bool { true }
 
 #[derive(Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NovideoSrgbInfo {
     #[serde(default = "novideo_srgb_enable_clamp")]
     pub(crate) enable_clamp: bool,
     #[serde(rename = "primaries")]
     pub(crate) primaries_source: PrimariesSource,
     pub(crate) color_space_target: ColorSpaceTarget,
-    pub(crate) gamma: Option<Gamma>,
+    #[serde(default)]
+    pub(crate) gamma: Gamma,
     pub(crate) enable_optimization: bool
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DitherInfo {
     pub(crate) bit_depth: DitherBitDepth,
     pub(crate) state: DitherState,
@@ -537,6 +548,7 @@ pub(crate) struct DitherInfo {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DisplayModeInfo {
     pub(crate) color_bit_depth: ColorBitDepth,
     pub(crate) dither: DitherInfo,
@@ -544,19 +556,15 @@ pub(crate) struct DisplayModeInfo {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DisplayModes {
     pub(crate) sdr: DisplayModeInfo,
     pub(crate) hdr: DisplayModeInfo
 }
 impl_name!(DisplayModes);
 
-#[derive(Clone, Copy, Deserialize)]
-pub(crate) struct PixelCleaning {
-    pub(crate) let_walk_away: bool,
-    pub(crate) pause_wallpaper_engine: bool
-}
-
 #[derive(Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DiscordAppIds {
     pub(crate) movies: Option<String>,
     pub(crate) tv: Option<String>,
@@ -564,12 +572,14 @@ pub(crate) struct DiscordAppIds {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Qmk {
     pub(crate) layer: u8,
     pub(crate) layout_path: String
 }
 
 #[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Underscore {
     #[serde(deserialize_with = "deserialize_key")]
     pub(crate) act_on: Key,
@@ -577,19 +587,27 @@ pub(crate) struct Underscore {
     pub(crate) while_pressed: Key
 }
 
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct ClickMap(
+    #[serde(deserialize_with = "deserialize_click_map")]
+    InputEventMap
+);
+
 #[derive(Clone, Copy)]
 pub(crate) enum InputEventMap {
     PressMirror { from: InputEvent, to: InputEvent },
     WheelClick { from: InputEvent, to: InputEvent, dur: Duration }
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Deserialize)]
+#[serde(transparent)]
 pub(crate) struct InputEventMaps(
-    #[serde(deserialize_with = "deserialize_input_event_maps2")]
+    #[serde(deserialize_with = "deserialize_input_event_maps")]
     pub(crate) Vec<InputEventMap>
 );
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Task {
     BeginPixelCleaning,
@@ -601,7 +619,8 @@ pub(crate) enum Task {
     GetForegroundInfo
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Hotkeys {
     #[serde(deserialize_with = "deserialize_keys")]
     pub(crate) prefix: Vec<Key>,
@@ -610,6 +629,7 @@ pub(crate) struct Hotkeys {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Binds {
     pub(crate) hotkeys: Option<Hotkeys>,
     pub(crate) maps: Option<HashMap<String, InputEventMaps>>,
@@ -621,6 +641,7 @@ impl_name!(Binds);
 fn eq_apo_master_config_path() -> String { r"C:\Program Files\EqualizerAPO\config\config.txt".into() }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct EqApo {
     #[serde(default = "eq_apo_master_config_path")]
     pub(crate) master_config_path: String,
@@ -629,6 +650,7 @@ pub(crate) struct EqApo {
 impl_name!(EqApo);
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct App {
     #[serde(rename = "app")]
     pub(crate) path: String,
@@ -643,10 +665,12 @@ impl App {
 }
 
 #[derive(Deserialize)]
+#[serde(transparent)]
 pub(crate) struct Endpoints(pub(crate) HashMap<String, App>);
 impl_name!(Endpoints);
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Audio {
     pub(crate) endpoints: Option<Endpoints>,
     pub(crate) eq_apo: Option<EqApo>
@@ -666,7 +690,24 @@ fn app_paths() -> AppPaths {
     }
 }
 
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AppPaths {
+    #[serde(default = "epic")]
+    pub(crate) epic: String,
+    pub(crate) ffprobe: Option<String>,
+    #[serde(default = "gog")]
+    pub(crate) gog: String,
+    pub(crate) mpv: Option<String>,
+    pub(crate) novideo_srgb: Option<String>,
+    pub(crate) skif: Option<String>,
+    #[serde(default = "steam")]
+    pub(crate) steam: String,
+    pub(crate) wallpaper_engine: Option<String>
+}
+
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Config {
     #[serde(default = "app_paths", rename = "apps")]
     pub(crate) app_paths: AppPaths,
@@ -685,7 +726,8 @@ pub(crate) unsafe fn load() -> Res1<Config> {
     let current_exe_parent_path = CURRENT_EXE_PARENT_PATH.get_unchecked();
 
     let config_str = fs::read_to_string(current_exe_parent_path.join(CONFIG_FILE_NAME))?;
-    let config = json5::from_str::<Config>(&config_str)?;
+    let config_val = serde_json5::from_str::<serde_json::Value>(&config_str)?;
+    let config = serde_json::from_value::<Config>(config_val)?;
 
     Ok(config)
 }
@@ -699,7 +741,7 @@ pub(crate) fn get() -> ResVar<&'static RwLock<Config>> {
             .inspect_err(|err| {
                 error!("{}: failed to load config: {} ", module_path!(), err);
             })
-            .ok() // In case of failure, can init with None (and then throw error)
+            .ok() // In case of failure, init with None and throw error
         })
         .as_ref()
         .ok_or(ErrVar::FailedGetConfig)

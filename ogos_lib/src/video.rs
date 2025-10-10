@@ -9,21 +9,18 @@ use crate::{
 use log::*;
 use ini::*;
 use serde::{
-    de::{Error, *},
+    de::*,
     *
 };
 use std::{
-    collections::*,
     fmt,
     fs::{self, *},
     io,
-    mem,
     os::{self, windows::process::CommandExt},
     path::*,
     process::*,
     string::*
 };
-use strum::*;
 use windows::Win32::Foundation::*;
 
 const MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME: &str = "maintain_sample_rate.guard";
@@ -31,13 +28,13 @@ const MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME: &str = "maintain_sample_rate.guard";
 fn deserialize_side_data_list<'de, D>(deserializer: D) -> Result<SideData, D::Error> where
     D: Deserializer<'de>
 {
-    struct SideDataListElementVisitor;
+    struct SideDataListVisitor;
 
-    impl<'de> Visitor<'de> for SideDataListElementVisitor {
+    impl<'de> Visitor<'de> for SideDataListVisitor {
         type Value = SideData;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a side data list element sequence")
+            formatter.write_str("side_data_list")
         }
 
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> where
@@ -45,16 +42,11 @@ fn deserialize_side_data_list<'de, D>(deserializer: D) -> Result<SideData, D::Er
         {
             let mut side_data = SideData::default();
             loop {
-                if let Ok(element) = seq.next_element::<SideDataListElement>() {
-                    match element {
-                        Some(side_data_list_element) => {
-                            match side_data_list_element {
-                                SideDataListElement::ContentLightLevel { max_content } => side_data.max_content = Some(max_content),
-                                SideDataListElement::DolbyVision => side_data.is_dolby_vision = true
-                            }
-                        },
-                        None => break
-                    }
+                match seq.next_element::<SideDataListElement>() {
+                    Ok(Some(SideDataListElement::ContentLightLevel { max_content })) => side_data.max_content = Some(max_content),
+                    Ok(Some(SideDataListElement::DolbyVision)) => side_data.is_dolby_vision = true,
+                    Ok(None) => break,
+                    _ => ()
                 }
             }
 
@@ -62,21 +54,21 @@ fn deserialize_side_data_list<'de, D>(deserializer: D) -> Result<SideData, D::Er
         }
     }
 
-    let side_data = deserializer.deserialize_seq(SideDataListElementVisitor {})?;
+    let side_data = deserializer.deserialize_seq(SideDataListVisitor {})?;
 
     Ok(side_data)
 }
 
-fn deserialize_frames<'de, D>(deserializer: D) -> Result<SideData, D::Error> where
+fn deserialize_packets_and_frames<'de, D>(deserializer: D) -> Result<SideData, D::Error> where
     D: Deserializer<'de>
 {
-    struct PacketFrameVisitor;
+    struct PacketsAndFramesVisitor;
 
-    impl<'de> Visitor<'de> for PacketFrameVisitor {
+    impl<'de> Visitor<'de> for PacketsAndFramesVisitor {
         type Value = SideData;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a packet/frame sequence")
+            formatter.write_str("packets_and_frames")
         }
 
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> where
@@ -85,16 +77,9 @@ fn deserialize_frames<'de, D>(deserializer: D) -> Result<SideData, D::Error> whe
             let mut side_data = SideData::default();
             loop {
                 match seq.next_element::<PacketFrame>() {
-                    Ok(element) => match element {
-                        Some(packet_frame) => {
-                            match packet_frame {
-                                PacketFrame::Frame { side_data: side_data_ } => side_data = side_data_,
-                                PacketFrame::Packet => ()
-                            }
-                        },
-                        None => break
-                    },
-                    Err(err) => warn!("{}: serde: {}", module_path!(), err)
+                    Ok(Some(PacketFrame::Frame { side_data: side_data_ })) => side_data = side_data_,
+                    Ok(None) => break,
+                    _ => ()
                 }
             }
 
@@ -102,7 +87,7 @@ fn deserialize_frames<'de, D>(deserializer: D) -> Result<SideData, D::Error> whe
         }
     }
 
-    let side_data = deserializer.deserialize_seq(PacketFrameVisitor {})?;
+    let side_data = deserializer.deserialize_seq(PacketsAndFramesVisitor {})?;
 
     Ok(side_data)
 }
@@ -110,52 +95,33 @@ fn deserialize_frames<'de, D>(deserializer: D) -> Result<SideData, D::Error> whe
 fn deserialize_streams<'de, D>(deserializer: D) -> Result<Streams, D::Error> where
     D: Deserializer<'de>
 {
-    struct StreamVisitor;
+    struct StreamsVisitor;
 
-    impl<'de> Visitor<'de> for StreamVisitor {
+    impl<'de> Visitor<'de> for StreamsVisitor {
         type Value = Streams;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a stream sequence")
+            formatter.write_str("streams")
         }
 
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> where
             A: SeqAccess<'de>
         {
             let mut streams = Streams::default();
-            let mut seen = HashSet::with_capacity(RequiredStream::COUNT);
             loop {
-                // Deserializing against an enum moves the cursor forward even if next_element() returns an Err - avoids infinite loop where Ok(None) is never returned
                 match seq.next_element::<Stream>() {
-                    Ok(element) => match element {
-                        Some(stream) => {
-                            if let Ok(req_stream) = RequiredStream::try_from(&stream) &&
-                                !seen.insert(mem::discriminant::<RequiredStream>(&req_stream))
-                            {
-                                continue // Already have a video or audio stream
-                            }
-
-                            match stream {
-                                Stream::Video(video_stream) => streams.video = video_stream,
-                                Stream::Audio(audio_stream) => streams.audio = audio_stream,
-                                _ => ()
-                            }
-                        },
-                        None => break // End of sequence
-                    },
-                    Err(err) => warn!("{}: serde: {}", module_path!(), err)
+                    Ok(Some(Stream::Video(video_stream))) => streams.video = video_stream,
+                    Ok(Some(Stream::Audio(audio_stream))) => streams.audio = audio_stream,
+                    Ok(None) => break,
+                    _ => ()
                 }
-            }
-
-            if seen.len() != RequiredStream::COUNT {
-                Err(A::Error::custom(ErrVar::MissingStreamMetadata))?;
             }
 
             Ok(streams)
         }
     }
 
-    let streams = deserializer.deserialize_seq(StreamVisitor {})?;
+    let streams = deserializer.deserialize_seq(StreamsVisitor {})?;
 
     Ok(streams)
 }
@@ -188,7 +154,7 @@ struct Streams {
 
 #[derive(Deserialize)]
 struct Ffprobe {
-    #[serde(rename = "packets_and_frames", deserialize_with = "deserialize_frames")]
+    #[serde(rename = "packets_and_frames", deserialize_with = "deserialize_packets_and_frames")]
     side_data: SideData,
     #[serde(deserialize_with = "deserialize_streams")]
     streams: Streams
@@ -204,7 +170,7 @@ enum PacketFrame {
     }
 }
 
-#[derive(Deserialize, EnumCount)]
+#[derive(Deserialize)]
 #[serde(tag = "side_data_type")]
 enum SideDataListElement {
     #[serde(rename = "Content light level metadata")]
@@ -213,32 +179,11 @@ enum SideDataListElement {
     DolbyVision
 }
 
-#[derive(Deserialize, EnumCount)]
+#[derive(Deserialize)]
 #[serde(rename_all = "lowercase", tag = "codec_type")]
 enum Stream {
     Video(VideoStream),
-    Audio(AudioStream),
-    Subtitle,
-    Attachment
-}
-
-#[derive(EnumCount)]
-enum RequiredStream {
-    Video,
-    Audio
-}
-impl TryFrom<&Stream> for RequiredStream {
-    type Error = ErrVar;
-
-    fn try_from(value: &Stream) -> Result<Self, Self::Error> {
-        Ok(
-            match value {
-                Stream::Video(_) => Self::Video,
-                Stream::Audio(_) => Self::Audio,
-                _ => Err(ErrVar::FailedAsRequiredStream)?
-            }
-        )
-    }
+    Audio(AudioStream)
 }
 
 #[derive(PartialEq)]
@@ -296,8 +241,8 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
         let config = config::get()?.read()?;
         let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Mpv::NAME })?;
 
-        let ffprobe_path = find_app(App::FFPROBE, config.app_paths.ffprobe.as_ref())?;
-        let mpv_path = find_app(App::MPV, config.app_paths.mpv.as_ref())?;
+        let ffprobe_path = find_or_confirm_app(App::FFPROBE, config.app_paths.ffprobe.as_ref())?;
+        let mpv_path = find_or_confirm_app(App::MPV, config.app_paths.mpv.as_ref())?;
 
         let mut cmd = Command::new(mpv_path.as_path());
         let mut args = vec![];
@@ -308,6 +253,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
             .creation_flags(CREATE_NO_WINDOW);
         let output = output_command(&mut ffprobe_cmd)?;
         let output = String::from_utf8(output.stdout)?;
+        info!("{}", output);
         let ffprobe = serde_json::from_str::<Ffprobe>(output.as_ref())?;
 
         // Sample rate
@@ -318,7 +264,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
             MaintainSampleRate::CheckGuard => File::open(&guard_path).is_ok()
         };
 
-        let vid_sample_rate = &ffprobe.streams.audio.sample_rate;
+        let vid_sample_rate = &ffprobe.streams.audio.sample_rate; //$ None?
         info!("{}: sample rate: {}", module_path!(), vid_sample_rate);
 
         if !maintain_sample_rate {
@@ -337,6 +283,8 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
             let Some(glsl_shaders) = mpv_config.glsl_shaders.as_ref()
         {
             cmd.arg(MpvArg::GlslShaders(glsl_shaders).to_arg_string());
+        } else {
+            cmd.arg(MpvArg::GlslShaders(&"~~/shaders/ravu-zoom-ar-r3.hook".into()).to_arg_string()); //$
         }
 
         // Display mode

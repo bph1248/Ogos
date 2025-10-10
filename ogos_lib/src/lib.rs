@@ -6,6 +6,7 @@
 #![allow(clippy::just_underscores_and_digits)]
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::uninlined_format_args)]
+#![allow(clippy::unused_io_amount)]
 // #![allow(clippy::struct_excessive_bools)]
 // #![allow(clippy::too_many_lines)]
 // #![allow(clippy::uninlined_format_args)]
@@ -157,7 +158,7 @@ unsafe fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf
         Ok(())
     };
 
-    let path = find_app(App::NOVIDEO_SRGB, config.app_paths.novideo_srgb.as_ref())?;
+    let path = find_or_confirm_app(App::NOVIDEO_SRGB, config.app_paths.novideo_srgb.as_ref())?;
     confirm_deps(path.as_ref())?;
 
     Ok(path)
@@ -260,40 +261,56 @@ unsafe fn begin() -> Res<()> {
         });
     }
 
-    if let Some(path_string) = cli.path.as_ref() {
-        let path = Path::new(path_string);
+    if let Some(path_str) = cli.path.as_ref() &&
+        let CliPathKind::Media = cli_path_kind
+    {
+        (|| -> Res<()> {
+            let path = Path::new(path_str).confirm()?;
 
-        if let CliPathKind::Media = cli_path_kind {
-            (|| -> Res<()> {
-                if path.is_file() {
-                    let ext = path.extension()
-                        .and_then(|ext| ext.to_str())
-                        .ok_or(ErrVar::InvalidFileExt)?;
+            if path.is_file() {
+                let ext = path.extension()
+                    .and_then(|ext| ext.to_str())
+                    .ok_or(ErrVar::InvalidFileExt)?;
 
-                    match get_file_kind(ext) {
-                        FileKind::Vid => video::launch_mpv(path, video::MaintainSampleRate::CheckGuard, false)?,
-                        _ => opener::open(path)?
-                    }
+                match get_file_kind(ext) {
+                    FileKind::Vid => video::launch_mpv(path, video::MaintainSampleRate::CheckGuard, false)?,
+                    _ => opener::open(path)?
                 }
+            }
 
-                if path.is_dir() {
-                    let dir_name = path.get_file_name()?;
-                    let dir_entries = path.read_dir()?.collect::<Result<Vec<_>, _>>()?;
+            if path.is_dir() {
+                let dir_name = path.get_file_name()?;
+                let dir_entries = path.read_dir()?.collect::<Result<Vec<_>, _>>()?;
 
-                    let config = config::get()?.read()?;
-                    let discord_rp_client_ids = config.discord_app_ids.clone().unwrap_or_default();
+                let config = config::get()?.read()?;
+                let discord_rp_client_ids = config.discord_app_ids.clone().unwrap_or_default(); //$ Name?
 
-                    drop(config);
+                drop(config);
 
-                    gui::begin(gui::Kind::Dir { name: dir_name.into(), entries: dir_entries, discord_app_ids: discord_rp_client_ids })?;
-                }
+                gui::begin(gui::Kind::Dir { name: dir_name.into(), entries: dir_entries, discord_app_ids: discord_rp_client_ids })?;
+            }
 
-                Ok(())
-            })()
-            .unwrap_or_else(|err| {
-                error!("{}: failed to handle media path: {}", module_path!(), err);
-            });
-        }
+            Ok(())
+        })()
+        .unwrap_or_else(|err| {
+            error!("{}: failed to handle media path: {}", module_path!(), err);
+        });
+    }
+
+    if cli.lib {
+        (|| -> Res<()> {
+            let config = config::get()?.read()?;
+            let discord_app_ids = config.discord_app_ids.clone().unwrap_or_default();
+
+            drop(config);
+
+            gui::begin(gui::Kind::Lib { discord_app_ids })?;
+
+            Ok(())
+        })()
+        .unwrap_or_else(|err| {
+            error!("{}: failed to handle image: {}", module_path!(), err);
+        });
     }
 
     // Long-lived tasks
@@ -446,6 +463,10 @@ unsafe fn init() -> Res<()> {
             .open(log_path)?;
 
         let logger_config = ConfigBuilder::new()
+            // .add_filter_allow_str("ogos_lib")
+            // .add_filter_allow_str("log_panics")
+            .add_filter_ignore_str("eframe")
+            .add_filter_ignore_str("wgpu")
             .set_thread_mode(ThreadLogMode::IDs)
             .set_thread_level(LevelFilter::Error)
             .set_thread_padding(ThreadPadding::Left(2))

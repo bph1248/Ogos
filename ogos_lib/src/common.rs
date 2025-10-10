@@ -88,8 +88,10 @@ impl Display for Tpids {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum FileKind {
+    Dir,
+    Image,
     Vid,
     Other
 }
@@ -151,7 +153,7 @@ pub enum Msg {
     WmReloadConfig
 }
 impl Name for BroadcastMsg {
-    fn name(&self) -> &'static str{
+    fn name(&self) -> &'static str {
         self.into()
     }
 }
@@ -161,7 +163,7 @@ impl Name for WindowForegroundMsg {
     }
 }
 impl Name for WindowShiftMsg {
-    fn name(&self) -> &'static str{
+    fn name(&self) -> &'static str {
         self.into()
     }
 }
@@ -197,12 +199,18 @@ macro_rules! default {
         std::default::Default::default()
     };
 }
+macro_rules! into {
+    () => {
+        |x| x.into()
+    };
+}
 macro_rules! now {
     () => {
         std::time::Instant::now()
     };
 }
 pub(crate) use default;
+pub(crate) use into;
 pub(crate) use now;
 
 pub(crate) trait BoolExt {
@@ -238,26 +246,38 @@ pub(crate) trait Name {
 }
 
 pub(crate) trait PathExt {
-    fn confirm(&self) -> ResVar<()>;
-    fn get_extension(&self) -> ResVar<&str>;
+    fn confirm(&self) -> ResVar<&Self>;
+    fn get_file_ext(&self) -> ResVar<&str>;
+    fn get_file_kind(&self) -> ResVar<FileKind>;
     fn get_file_name(&self) -> ResVar<&str>; // With extension
     fn get_file_stem(&self) -> ResVar<&str>; // Without extension
     fn get_parent(&self) -> ResVar<&Path>;
 }
 impl PathExt for Path {
-    fn confirm(&self) -> ResVar<()> {
+    fn confirm(&self) -> ResVar<&Self> {
         if !self.try_exists()? {
             return Err(ErrVar::MissingFile { path: self.into() })
         }
 
-        Ok(())
+        Ok(self)
     }
 
-    fn get_extension(&self) -> ResVar<&str> {
+    fn get_file_ext(&self) -> ResVar<&str> {
         self.extension()
             .ok_or(ErrVar::InvalidFileExt)?
             .to_str()
             .ok_or(ErrVar::FailedToStr)
+    }
+
+    fn get_file_kind(&self) -> ResVar<FileKind> {
+        Ok(match self.is_dir() {
+            true => FileKind::Dir,
+            false => {
+                let ext = self.get_file_ext()?;
+
+                get_file_kind(ext)
+            }
+        })
     }
 
     fn get_file_name(&self) -> ResVar<&str> {
@@ -268,8 +288,12 @@ impl PathExt for Path {
     }
 
     fn get_file_stem(&self) -> ResVar<&str> {
-        self.file_stem()
-            .ok_or(ErrVar::InvalidFileStem)?
+        let stem = match self.is_dir() {
+            true => self.file_name(),
+            false => self.file_stem()
+        };
+
+        stem.ok_or(ErrVar::InvalidFileStem)?
             .to_str()
             .ok_or(ErrVar::FailedToStr)
     }
@@ -400,24 +424,30 @@ pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, slee
     f()
 }
 
-pub(crate) fn find_app<T>(name: &str, check_path: Option<T>) -> ResVar<PathBuf> where
+pub(crate) fn find_or_confirm_app<T>(name: &str, confirm: Option<T>) -> ResVar<PathBuf> where
     PathBuf: From<T>
 {
-    if let Some(path) = check_path {
-        let path = PathBuf::from(path);
-
-        match path.confirm() {
-            Ok(path) => return Ok(path),
-            Err(ErrVar::MissingFile { .. }) => (),
-            err => return err
+    let inner = |name, confirm: Option<PathBuf>| -> ResVar<PathBuf> {
+        if let Some(path) = confirm {
+            match path.confirm() {
+                Ok(path) => return Ok(path),
+                Err(ErrVar::MissingFile { .. }) => (),
+                err => return err
+            }
         }
-    }
 
-    Ok(which::which(name)?)
+        Ok(which::which(name)?)
+    };
+
+    inner(name, confirm.map(|path| path.into()))
 }
 
 pub(crate) fn get_file_kind(ext: &str) -> FileKind {
     match ext {
+        "jpg" |
+        "jpeg" |
+        "png" |
+        "webp" => FileKind::Image,
         "m2ts" |
         "mkv" |
         "mp4" |

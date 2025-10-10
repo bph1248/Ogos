@@ -30,6 +30,18 @@ use windows::{
 pub        const ERR_STR: &str = "<err>";
 pub(crate) const MAX_CLASS_NAME_LEN: usize = 256;
 
+#[derive(Debug)]
+pub struct SafeHwnd(pub(crate) HWND);
+impl Deref for SafeHwnd {
+    type Target = *mut c_void;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.0
+    }
+}
+unsafe impl Send for SafeHwnd {}
+unsafe impl Sync for SafeHwnd {}
+
 pub(crate) struct WinStr {
     _wide: U16CString,
     pcwstr: PCWSTR
@@ -140,7 +152,11 @@ impl HwndExt for HWND {
     unsafe fn get_caption(&self) -> Res1<String> {
         SetLastError(NO_ERROR);
 
-        let text_len = GetWindowTextLengthW(*self).win32_var_ok()?;
+        let text_len = GetWindowTextLengthW(*self);
+        if text_len == 0 {
+            return Ok("".into())
+        }
+
         let mut text = vec![0_u16; text_len as usize + 1];
         GetWindowTextW(*self, &mut text).win32_var_ok()?;
 
@@ -238,7 +254,7 @@ impl HwndExt for HWND {
 
     unsafe fn get_thread_proc_ids(&self) -> windows::core::Result<Tpids> {
         let mut proc_id = 0;
-        let thread_id = GetWindowThreadProcessId(*self, Some(&mut proc_id)).win32_gle_ok()?;
+        let thread_id = GetWindowThreadProcessId(*self, Some(&mut proc_id)).win32_core_ok()?;
 
         Ok(Tpids { thread: thread_id, proc: proc_id })
     }
