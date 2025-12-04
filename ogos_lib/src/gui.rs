@@ -1338,7 +1338,11 @@ impl Lib {
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
                     ui.add_space(top_padding);
 
-                    self.dir_entries(ui);
+                    if self.details_info.dir_entry_infos.is_empty() {
+                        ui.take_available_space();
+                    } else {
+                        self.dir_entries(ui);
+                    }
                 });
             });
         });
