@@ -255,15 +255,15 @@ unsafe fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) -> windows::c
     SendInput(&[input], size_of::<INPUT>() as i32).win32_core_ok().map(|_| ())
 }
 
-unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, lparam: LPARAM, stamp: Instant) -> Res1<()> {
+unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant) -> Res1<()> {
     if let Some(anchor) = tb.hitbox_mouse_move_anchor &&
         stamp.duration_since(anchor).is_zero() // WM_MOUSEMOVE msg is too old
     {
         return  Ok(())
     }
 
-    let cursor_pos_x = (lparam.0 & 0xFFFF) as i32;
-    let cursor_pos_y = (lparam.0 >> 16) as i32;
+    let mut cursor_pos = POINT::default();
+    GetCursorPos(&mut cursor_pos)?;
 
     match tb.hitbox_state {
         HitboxState::Entry => {
@@ -271,40 +271,28 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, lparam: LPARAM, stamp: Instant)
                 Side::Left => {
                     match tb.taskbar_side {
                         Side::Top | Side::Bottom => send_cursor_pos(tb.start_menu_rect.left + tb.hitbox_entry_cursor_snap_offset_px, tb.start_menu_rect.top + tb.start_menu_rect.height() / 2, tb.screen_extent)?,
-                        Side::Right => send_cursor_pos(tb.start_menu_rect.right, cursor_pos_y, tb.screen_extent)?,
+                        Side::Right => send_cursor_pos(tb.start_menu_rect.right, cursor_pos.y, tb.screen_extent)?,
                         _ => ()
                     }
                 },
                 Side::Top => {
                     match tb.taskbar_side {
                         Side::Left | Side::Right => send_cursor_pos(tb.start_menu_rect.left + tb.start_menu_rect.width() / 2, tb.start_menu_rect.top + tb.hitbox_entry_cursor_snap_offset_px, tb.screen_extent)?,
-                        Side::Bottom => {
-                            let cursor_pos_x = (lparam.0 & 0xFFFF) as i32;
-
-                            send_cursor_pos(cursor_pos_x, tb.start_menu_rect.bottom, tb.screen_extent)?;
-                        },
+                        Side::Bottom => send_cursor_pos(cursor_pos.x, tb.start_menu_rect.bottom, tb.screen_extent)?,
                         _ => ()
                     }
                 }
                 Side::Right => {
                     match tb.taskbar_side {
                         Side::Top | Side::Bottom => send_cursor_pos(tb.start_menu_rect.left + tb.hitbox_entry_cursor_snap_offset_px, tb.start_menu_rect.top + tb.start_menu_rect.height() / 2, tb.screen_extent)?,
-                        Side::Left => {
-                            let cursor_pos_y = (lparam.0 >> 16) as i32;
-
-                            send_cursor_pos(tb.start_menu_rect.left, cursor_pos_y, tb.screen_extent)?;
-                        },
+                        Side::Left => send_cursor_pos(tb.start_menu_rect.left, cursor_pos.y, tb.screen_extent)?,
                         _ => ()
                     }
                 },
                 Side::Bottom => {
                     match tb.taskbar_side {
                         Side::Left | Side::Right => send_cursor_pos(tb.start_menu_rect.left + tb.start_menu_rect.width() / 2, tb.start_menu_rect.top + tb.hitbox_entry_cursor_snap_offset_px, tb.screen_extent)?,
-                        Side::Top => {
-                            let cursor_pos_x = (lparam.0 & 0xFFFF) as i32;
-
-                            send_cursor_pos(cursor_pos_x, tb.start_menu_rect.top, tb.screen_extent)?;
-                        },
+                        Side::Top => send_cursor_pos(cursor_pos.x, tb.start_menu_rect.top, tb.screen_extent)?,
                         _ => ()
                     }
                 }
@@ -332,13 +320,9 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, lparam: LPARAM, stamp: Instant)
                             match tb.taskbar_side {
                                 Side::Top | Side::Bottom => {
                                     tb.hitbox_mouse_move_anchor = Some(now!());
-                                    send_cursor_pos(cursor_pos_x, snap_ordinate, tb.screen_extent)?; // May get 'eaten' when a new window is transitioning to the foreground.
+                                    send_cursor_pos(cursor_pos.x, snap_ordinate, tb.screen_extent)?; // May get 'eaten' when a new window is transitioning to the foreground.
                                 },
-                                Side::Left | Side::Right => {
-                                    let cursor_pos_y = (lparam.0 >> 16) as i32;
-
-                                    send_cursor_pos(snap_ordinate, cursor_pos_y, tb.screen_extent)?;
-                                }
+                                Side::Left | Side::Right => send_cursor_pos(snap_ordinate, cursor_pos.y, tb.screen_extent)?
                             };
 
                             tb.hitbox_exit_cursor_should_have_snapped = true;
