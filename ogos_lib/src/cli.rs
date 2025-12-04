@@ -36,17 +36,15 @@ pub(crate) struct Cli {
     pub(crate) help: bool,
 
     #[arg(help =
-        "Launch a file, open the media launcher, or parse an arg file.\n\
+        "Parse an arg file or launch a video file.\n\
         \n\
-        If PATH is a video file, launch it with Mpv, else forward it to its default file handler. Valid video file extensions are m2ts, mkv, mp4, mts, ts, and webm.\n\
-        If ffprobe is available, switch display mode and set the sample rate of the default audio endpoint to match video metadata.\n\
-        \n\
-        If PATH is a directory, open the media launcher on that directory."
+        If PATH is a video file, launch it with Mpv. Valid video file extensions are m2ts, mkv, mp4, mts, ts, and webm.\n\
+        If ffprobe is available, set display mode and default audio endpoint sample rate to match video metadata."
     )]
     pub(crate) path: Option<String>,
 
     #[arg(long)]
-    pub(crate) lib: bool,
+    pub(crate) media_browser: bool,
 
     #[arg(long, help = "Prevent setting the sample rate of the default audio endpoint to match video metadata")]
     pub(crate) maintain_sample_rate: bool,

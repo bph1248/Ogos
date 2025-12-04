@@ -268,43 +268,29 @@ unsafe fn begin() -> Res<()> {
             let path = Path::new(path_str).confirm()?;
 
             if path.is_file() {
-                let ext = path.extension()
-                    .and_then(|ext| ext.to_str())
-                    .ok_or(ErrVar::InvalidFileExt)?;
+                let ext = path.get_file_ext()?;
 
                 match get_file_kind(ext) {
                     FileKind::Vid => video::launch_mpv(path, video::MaintainSampleRate::CheckGuard, false)?,
-                    _ => opener::open(path)?
+                    _ => return Err(ErrVar::InvalidFileExt.into())
                 }
-            }
-
-            if path.is_dir() {
-                let dir_name = path.get_file_name()?;
-                let dir_entries = path.read_dir()?.collect::<Result<Vec<_>, _>>()?;
-
-                let config = config::get()?.read()?;
-                let discord_rp_client_ids = config.discord_app_ids.clone().unwrap_or_default(); //$ Name?
-
-                drop(config);
-
-                gui::begin(gui::Kind::Dir { name: dir_name.into(), entries: dir_entries, discord_app_ids: discord_rp_client_ids })?;
             }
 
             Ok(())
         })()
         .unwrap_or_else(|err| {
-            error!("{}: failed to handle media path: {}", module_path!(), err);
+            error!("{}: failed to handle path: {}: {}", module_path!(), path_str, err);
         });
     }
 
-    if cli.lib {
+    if cli.media_browser {
         (|| -> Res<()> {
             let config = config::get()?.read()?;
             let discord_app_ids = config.discord_app_ids.clone().unwrap_or_default();
 
             drop(config);
 
-            gui::begin(gui::Kind::Lib { discord_app_ids })?;
+            gui::begin(gui::Kind::MediaBrowser { discord_app_ids })?;
 
             Ok(())
         })()
