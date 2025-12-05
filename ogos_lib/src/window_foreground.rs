@@ -95,7 +95,7 @@ pub(crate) struct EnabledChannels {
     pub(crate) receivers: Receivers
 }
 impl EnabledChannels {
-    pub fn with_window_foreground(mut self, channel: (Sender<WindowForegroundMsg>, Receiver<WindowForegroundMsg>)) -> Self {
+    pub(crate) fn with_window_foreground(mut self, channel: (Sender<WindowForegroundMsg>, Receiver<WindowForegroundMsg>)) -> Self {
         self.enable |= ChannelEnable::WINDOW_FOREGROUND;
         self.senders.window_foreground = Some(channel.0);
         self.receivers.window_foreground = Some(channel.1);
@@ -103,7 +103,7 @@ impl EnabledChannels {
         self
     }
 
-    pub fn with_window_shift(mut self, channel: (Sender<WindowShiftMsg>, Receiver<WindowShiftMsg>)) -> Self {
+    pub(crate) fn with_window_shift(mut self, channel: (Sender<WindowShiftMsg>, Receiver<WindowShiftMsg>)) -> Self {
         self.enable |= ChannelEnable::WINDOW_SHIFT;
         self.senders.window_shift = Some(channel.0);
         self.receivers.window_shift = Some(channel.1);
@@ -113,7 +113,7 @@ impl EnabledChannels {
 }
 
 #[derive(Default)]
-pub struct Taskbar {
+pub(crate) struct Taskbar {
     pub(crate) progman_class_name: WinStr,
     pub(crate) progman_hwnd: HWND,
     pub(crate) progman_tpids: Tpids,

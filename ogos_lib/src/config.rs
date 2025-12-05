@@ -409,7 +409,7 @@ pub(crate) struct DiscordRichPresenceInfo {
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BindName {
+pub(crate) enum BindName {
     Underscore
 }
 
@@ -528,7 +528,7 @@ fn novideo_srgb_enable_clamp() -> bool { true }
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct NovideoSrgbInfo {
+pub(crate) struct NovideoSrgbInfo {
     #[serde(default = "novideo_srgb_enable_clamp")]
     pub(crate) enable_clamp: bool,
     #[serde(rename = "primaries")]

@@ -207,7 +207,7 @@ pub fn err_loc_sets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     quote! {
         // stringify! {
             #[repr(u32)]
-            pub enum #loc_var_ty {
+            pub(crate) enum #loc_var_ty {
                 #loc_var_changeling,
                 #loc_var_idents
             }

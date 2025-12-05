@@ -60,7 +60,7 @@ pub(crate) const NV_DITHER_CONTROL_VER: NvU32 = make_nvapi_version::<NV_GPU_DITH
            const VCP_VALUE_PIXEL_CLEANING_OFF_HDR: u16 = 0x01;
 
 #[repr(C)]
-pub struct NovideoSrgbApplyInfo {
+pub(crate) struct NovideoSrgbApplyInfo {
     pub(crate) enable_clamp: bool,
     pub(crate) color_space_target: i32,
     pub(crate) primaries_source: i32,
@@ -166,7 +166,7 @@ impl Display for ControlWindowsArg {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum DisplayMode {
+pub(crate) enum DisplayMode {
     Sdr,
     Hdr
 }

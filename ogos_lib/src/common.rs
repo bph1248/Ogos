@@ -28,17 +28,15 @@ use windows::Win32::{
     UI::WindowsAndMessaging::*
 };
 
-pub        const MAX_PATH_WITH_NULL_BUF: [u16; MAX_PATH_WITH_NULL_LEN] = [0_u16; MAX_PATH_WITH_NULL_LEN];
-pub(crate) const MAX_PATH_WITH_NULL_LEN: usize = (MAX_PATH + 1) as usize;
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Clone, Copy, Default)]
-pub struct Extent2d {
-    pub width: i32,
-    pub height: i32
+pub(crate) struct Extent2d {
+    pub(crate) width: i32,
+    pub(crate) height: i32
 }
 impl Extent2d {
-    pub fn into_rect(self) -> RECT {
+    pub(crate) fn into_rect(self) -> RECT {
         RECT {
             left: 0,
             top: 0,
@@ -64,13 +62,13 @@ impl Into<RECT> for Extent2d {
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
-pub struct Extent2dU {
+pub(crate) struct Extent2dU {
     pub(crate) width: u32,
     pub(crate) height: u32
 }
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct Tid(pub(crate) u32);
+pub(crate) struct Tid(pub(crate) u32);
 impl From<u32> for Tid {
     fn from(value: u32) -> Self {
         Self(value)
@@ -78,9 +76,9 @@ impl From<u32> for Tid {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Tpids {
-    pub thread: u32,
-    pub proc: u32
+pub(crate) struct Tpids {
+    pub(crate) thread: u32,
+    pub(crate) proc: u32
 }
 impl Display for Tpids {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -104,7 +102,7 @@ pub(crate) enum FileKind {
     WindowForegroundMsg(derive(Display, IntoStaticStr)),
     WindowShiftMsg(derive(IntoStaticStr))
 )]
-pub enum Msg {
+pub(crate) enum Msg {
     #[subenum(PipeMsg)]
     Ack,
     #[subenum(BindMsg)]
@@ -169,7 +167,7 @@ impl Name for WindowShiftMsg {
 }
 
 #[subenum(VideoSetting)]
-pub enum Setting {
+pub(crate) enum Setting {
     Bind(BindName),
     CursorSize(usize),
     Discord(DiscordIpcClient),
@@ -427,7 +425,7 @@ pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, slee
 pub(crate) fn find_or_confirm_app<T>(name: &str, confirm: Option<T>) -> ResVar<PathBuf> where
     PathBuf: From<T>
 {
-    let inner = |name, confirm: Option<PathBuf>| -> ResVar<PathBuf> {
+    fn inner(name: &str, confirm: Option<PathBuf>) -> ResVar<PathBuf> {
         if let Some(path) = confirm {
             match path.confirm() {
                 Ok(path) => return Ok(path),
@@ -437,7 +435,7 @@ pub(crate) fn find_or_confirm_app<T>(name: &str, confirm: Option<T>) -> ResVar<P
         }
 
         Ok(which::which(name)?)
-    };
+    }
 
     inner(name, confirm.map(|path| path.into()))
 }

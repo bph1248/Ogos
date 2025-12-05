@@ -21,7 +21,7 @@ use windows_052::{
 };
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
-pub enum Hz {
+pub(crate) enum Hz {
     N44100,
     N48000,
     N88200,

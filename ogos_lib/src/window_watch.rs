@@ -86,7 +86,7 @@ pub(crate) struct WinEventUnhookRequest {
 }
 
 #[derive(Clone, Copy, Debug, IntoStaticStr)]
-pub enum WinEventHookContext {
+pub(crate) enum WinEventHookContext {
     AllOtherForegroundDestroy { hwnd: usize },
     ExplorerDestroy,
     ForegroundLocationChange,

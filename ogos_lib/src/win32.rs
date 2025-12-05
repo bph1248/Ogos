@@ -27,11 +27,11 @@ use windows::{
     }
 };
 
-pub        const ERR_STR: &str = "<err>";
+pub(crate) const ERR_STR: &str = "<err>";
 pub(crate) const MAX_CLASS_NAME_LEN: usize = 256;
 
 #[derive(Debug)]
-pub struct SafeHwnd(pub(crate) HWND);
+pub(crate) struct SafeHwnd(pub(crate) HWND);
 impl Deref for SafeHwnd {
     type Target = *mut c_void;
 
@@ -89,13 +89,13 @@ impl From<&PathBuf> for WinStr {
     }
 }
 
-pub struct WindowText {
-    pub caption: String,
-    pub class: String
+pub(crate) struct WindowText {
+    pub(crate) caption: String,
+    pub(crate) class: String
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum WindowPlacement {
+pub(crate) enum WindowPlacement {
     Windowed,
     Maximised,
     Fullscreen
@@ -119,15 +119,15 @@ impl AsHwnd for usize {
     }
 }
 
-pub trait HwndExt {
+pub(crate) trait HwndExt {
     fn as_usize(&self) -> usize;
     unsafe fn get_caption(&self) -> Res1<String>;
     unsafe fn get_caption_or_err(&self) -> String;
     unsafe fn get_class(&self) -> Res1<String>;
-    unsafe fn get_class_or_err(&self) -> String;
+    unsafe fn _get_class_or_err(&self) -> String;
     unsafe fn get_exe(&self) -> Res1<String>;
     unsafe fn get_exe_or_err(&self) -> String;
-    unsafe fn get_last_visible_active_popup(&self) -> HWND;
+    unsafe fn _get_last_visible_active_popup(&self) -> HWND;
     unsafe fn get_parent(&self) -> windows::core::Result<HWND>;
     unsafe fn get_placement(&self, screen_extent: Extent2d) -> Res1<WindowPlacement>;
     unsafe fn get_rect(&self) -> windows::core::Result<RECT>;
@@ -135,7 +135,7 @@ pub trait HwndExt {
     unsafe fn get_thread_proc_ids(&self) -> windows::core::Result<Tpids>;
     unsafe fn has_parent(&self) -> bool;
     unsafe fn hide(&self);
-    unsafe fn is_alt_tab_window(&self) -> bool;
+    unsafe fn _is_alt_tab_window(&self) -> bool;
     unsafe fn is_cloaked(&self) -> windows::core::Result<bool>;
     unsafe fn is_eligible_for_shift(&self, screen_extent: Extent2d) -> Res2<bool>;
     unsafe fn is_fullscreen(&self, screen_extent: Extent2d) -> windows::core::Result<bool>;
@@ -174,7 +174,7 @@ impl HwndExt for HWND {
         Ok(String::from_utf16(&class_name[..class_name_len as usize])?)
     }
 
-    unsafe fn get_class_or_err(&self) -> String {
+    unsafe fn _get_class_or_err(&self) -> String {
         self.get_class().unwrap_or_else(|_| ERR_STR.into())
     }
 
@@ -197,7 +197,7 @@ impl HwndExt for HWND {
         self.get_exe().unwrap_or_else(|_| ERR_STR.into())
     }
 
-    unsafe fn get_last_visible_active_popup(&self) -> Self { // "Popup" is a bit of a misnomer and doesn't strictly refer to windows with the WS_POPUP style
+    unsafe fn _get_last_visible_active_popup(&self) -> Self { // "Popup" is a bit of a misnomer and doesn't strictly refer to windows with the WS_POPUP style
         let last_active_popup = GetLastActivePopup(*self);
 
         if IsWindowVisible(last_active_popup).as_bool() {
@@ -208,7 +208,7 @@ impl HwndExt for HWND {
             return default!()
         }
 
-        last_active_popup.get_last_visible_active_popup()
+        last_active_popup._get_last_visible_active_popup()
     }
 
     unsafe fn get_parent(&self) -> windows::core::Result<HWND> {
@@ -267,10 +267,10 @@ impl HwndExt for HWND {
         _ = ShowWindow(*self, SW_HIDE);
     }
 
-    unsafe fn is_alt_tab_window(&self) -> bool {
+    unsafe fn _is_alt_tab_window(&self) -> bool {
         let root_owner = GetAncestor(*self, GA_ROOTOWNER);
 
-        root_owner.get_last_visible_active_popup() == *self
+        root_owner._get_last_visible_active_popup() == *self
     }
 
     unsafe fn is_cloaked(&self) -> windows::core::Result<bool> {
@@ -328,7 +328,7 @@ macro_rules! impl_ConstString {
     };
 }
 
-pub trait ConstString {
+pub(crate) trait ConstString {
     fn _to_dbt_string(&self) -> String;
     fn to_event_string(&self) -> String;
     fn to_wm_string(&self) -> String;

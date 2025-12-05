@@ -29,7 +29,7 @@
 pub(crate) mod audio;
 pub(crate) mod binds;
 pub(crate) mod cli;
-pub mod common;
+pub(crate) mod common;
 pub(crate) mod config;
 pub(crate) mod config_watch;
 pub(crate) mod discord;
@@ -41,7 +41,7 @@ pub(crate) mod nvapi_shadow;
 pub(crate) mod pipe_client;
 pub(crate) mod pipe_server;
 pub(crate) mod video;
-pub mod win32;
+pub(crate) mod win32;
 pub(crate) mod window_foreground;
 pub(crate) mod window_shift;
 pub(crate) mod window_watch;

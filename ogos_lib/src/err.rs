@@ -4,7 +4,6 @@ use crate::{
     window_watch::*
 };
 
-use castaway::*;
 use mki::*;
 use nvapi_sys as nvapi;
 use nvapi::NvAPI_Status;
@@ -45,9 +44,9 @@ pub(crate) struct Errored {
 
 #[derive(Debug, Error)]
 pub struct ErrLoc<const ID: u32 = { LocVar::Default as u32 }> {
-    pub var: Box<ErrVar>,
-    pub trail: Option<Vec<Loc>>,
-    pub x: Loc
+    pub(crate) var: Box<ErrVar>,
+    pub(crate) trail: Option<Vec<Loc>>,
+    pub(crate) x: Loc
 }
 impl<const ID: u32> Display for ErrLoc<ID> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -79,9 +78,9 @@ impl<E, const ID: u32> From<E> for ErrLoc<ID> where
 }
 
 #[derive(Debug, Default)]
-pub struct Loc {
-    pub file: &'static str,
-    pub line: u32
+pub(crate) struct Loc {
+    pub(crate) file: &'static str,
+    pub(crate) line: u32
 }
 impl Display for Loc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -111,23 +110,21 @@ macro_rules! loc_var {
 }
 pub(crate) use loc_var;
 
-pub type Res<T, const ID: u32 = { LocVar::Default as u32 }> = Result<T, ErrLoc<ID>>;
-pub type Res1<T, const ID: u32 = { LocVar::Res1 as u32 }> = Result<T, ErrLoc<ID>>;
-pub type Res2<T, const ID: u32 = { LocVar::Res2 as u32 }> = Result<T, ErrLoc<ID>>;
-pub type ResVar<T> = Result<T, ErrVar>;
+pub        type Res<T, const ID: u32 = { LocVar::Default as u32 }> = Result<T, ErrLoc<ID>>;
+pub(crate) type Res1<T, const ID: u32 = { LocVar::Res1 as u32 }> = Result<T, ErrLoc<ID>>;
+pub(crate) type Res2<T, const ID: u32 = { LocVar::Res2 as u32 }> = Result<T, ErrLoc<ID>>;
+pub(crate) type ResVar<T> = Result<T, ErrVar>;
 
 #[derive(AsRefStr, Debug, Error)]
-pub enum ErrVar {
+pub(crate) enum ErrVar {
     Anyhow(#[from] anyhow::Error),
     Bincode(#[from] bincode::Error),
     Clap(#[from] clap::Error),
     DiscordRichPresence(#[from] Box<dyn std::error::Error>),
     Eframe(#[from] eframe::Error),
-    Ffprobe(#[from] ffprobe::FfProbeError),
     FromUtf16(#[from] string::FromUtf16Error),
     FromUtf8(#[from] string::FromUtf8Error),
     Image(#[from] image::error::ImageError),
-    Ini(#[from] ini::Error),
     Io(#[from] io::Error),
     NetCoreHostContainsNul(#[from] netcorehost::pdcstring::ContainsNul),
     NetCoreHostGetManagedFunction(#[from] netcorehost::hostfxr::GetManagedFunctionError),
@@ -136,11 +133,6 @@ pub enum ErrVar {
     LogSetLogger(#[from] log::SetLoggerError),
     NvApi(#[from] nvapi::Status),
     Opener(#[from] opener::OpenError),
-    ParseBool(#[from] str::ParseBoolError),
-    ParseError(#[from] fraction::error::ParseError),
-    ParseInt(#[from] num::ParseIntError),
-    QuickXml(#[from] quick_xml::Error),
-    QuickXmlAttr(#[from] quick_xml::events::attributes::AttrError),
     Recv(#[from] sync::mpsc::RecvError),
     RecvOneshot(#[from] oneshot::error::RecvError),
     RecvTimeout(#[from] sync::mpsc::RecvTimeoutError),
@@ -158,14 +150,10 @@ pub enum ErrVar {
     WidestringContainsNul(#[from] widestring::error::ContainsNul<u16>),
     WinCore(#[from] windows::core::Error),
     WinCore052(#[from] windows_052::core::Error),
-    Wmi(#[from] wmi::utils::WMIError),
-
-    VideoSetting(#[from] VideoSettingConvertError),
 
     FailedAsColorBitDepth { from: u32 },
     FailedAsDitherBitDepth { from: u32 },
     FailedAsHz { from: String },
-    FailedAsRequiredStream,
     FailedBuildLoggerConfig,
     FailedContactHookMgr { inner: windows::core::Error },
     FailedGetConfig,
@@ -195,12 +183,10 @@ pub enum ErrVar {
     MissingClickMap,
     MissingConfigKey { name: &'static str },
     MissingFile { path: PathBuf },
-    MissingFileExt,
     MissingNovideoSrgbFfi,
     MissingNvApiBackedDisplay,
     MissingProcess { name: String },
     MissingReShadeVkLayerDisableEnvKey,
-    MissingStreamMetadata,
     MissingUsername,
     MissingTaskbarRelatedInfo,
     PoisonedLock,
@@ -232,12 +218,10 @@ impl Display for ErrVar {
             Bincode(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Clap(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             DiscordRichPresence(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            Ffprobe(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Eframe(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             FromUtf16(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             FromUtf8(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Image(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            Ini(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Io(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             NetCoreHostContainsNul(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             NetCoreHostGetManagedFunction(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
@@ -246,11 +230,6 @@ impl Display for ErrVar {
             LogSetLogger(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             NvApi(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Opener(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            ParseBool(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            ParseError(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            ParseInt(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            QuickXml(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            QuickXmlAttr(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Recv(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             RecvOneshot(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             RecvTimeout(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
@@ -268,14 +247,10 @@ impl Display for ErrVar {
             WidestringContainsNul(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             WinCore(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             WinCore052(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            Wmi(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-
-            VideoSetting(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
 
             FailedAsColorBitDepth { from } => write!(f, "failed to map color bit depth from: {}", from),
             FailedAsDitherBitDepth { from } => write!(f, "failed to map dither bit depth from: {}", from),
             FailedAsHz { from } => write!(f, "failed to map hz from: {}", from),
-            FailedAsRequiredStream => write!(f, "failed to map required stream from stream"),
             FailedBuildLoggerConfig => write!(f, "failed to build logger config"),
             FailedContactHookMgr { inner } => write!(f, "failed to contact hook manager: {}", inner),
             FailedGetConfig => write!(f, "failed to get config"),
@@ -305,12 +280,10 @@ impl Display for ErrVar {
             MissingClickMap => write!(f, "missing click map"),
             MissingConfigKey { name } => write!(f, "missing config key: {}", name),
             MissingFile { path } => write!(f, "missing file: {}", path.display()),
-            MissingFileExt => write!(f, "missing file extension"),
             MissingNovideoSrgbFfi => write!(f, "missing novideo_srgb ffi"),
             MissingNvApiBackedDisplay => write!(f, "missing NvApi backed display"),
             MissingProcess { name } => write!(f, "missing process: {}", name),
             MissingReShadeVkLayerDisableEnvKey => write!(f, "missing reshade vulkan layer disable environment key"),
-            MissingStreamMetadata => write!(f, "missing video stream metadata"),
             MissingUsername => write!(f, "missing username"),
             MissingTaskbarRelatedInfo => write!(f, "missing taskbar related init info"),
             PoisonedLock => write!(f, "poisoned lock"),
@@ -349,35 +322,17 @@ impl From<WIN32_ERROR> for ErrVar {
     }
 }
 
-pub trait Track<T, E> where
-    E: Into<ErrVar> + 'static
+pub(crate) trait Track<T, E> where
+    ErrVar: From<E>
 {
     fn x(self) -> Res<T>;
 }
 impl<T, E> Track<T, E> for Result<T, E> where
-    E: Into<ErrVar> + 'static
+    ErrVar: From<E>
 {
     #[track_caller]
     fn x(self) -> Res<T> {
-        let x = Loc {
-            file: panic::Location::caller().file(),
-            line: panic::Location::caller().line()
-        };
-
-        self.map_err(|err| {
-            match_type!(err, {
-                ErrLoc as mut existing => {
-                    existing.x = x;
-
-                    existing
-                },
-                other => ErrLoc {
-                    var: Box::new(other.into()),
-                    trail: None,
-                    x
-                }
-            })
-        })
+        self.map_err(into!())
     }
 }
 

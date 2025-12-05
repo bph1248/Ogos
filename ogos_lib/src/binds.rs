@@ -24,7 +24,6 @@ use std::{
     cell::*,
     collections::*,
     fs,
-    panic,
     str::*,
     sync::mpsc,
     thread,
@@ -556,24 +555,6 @@ pub(crate) fn set_bind(binds_config: &Binds, msg: BindMsg)  {
     }
 }
 
-#[track_caller]
-pub fn leak_thread<F, T>(f: F) where
-    F: FnOnce() -> T,
-    F: Send + 'static,
-    T: Send + 'static
-{
-    if let Err(err) = thread::Builder::new()
-        .spawn(f)
-    {
-        let loc = Loc {
-            file: panic::Location::caller().file(),
-            line: panic::Location::caller().line()
-        };
-
-        error!("{}: failed to leak thread: {}, {}", module_path!(), err, loc);
-    }
-}
-
 pub(crate) unsafe fn configure_static_binds() -> Res<()> {
     let config = config::get()?.read()?;
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: Binds::NAME })?;
@@ -587,7 +568,7 @@ pub(crate) unsafe fn configure_static_binds() -> Res<()> {
         // Task dispatch
         let pixel_cleaning_prelude = config.pixel_cleaning;
         let (task_dispatch, receiver) = mpsc::channel::<InputEvent>();
-        leak_thread(move || {
+        thread::spawn(move || {
             for input_event in receiver.iter() { // Breaks when all trigger callbacks are destroyed
                 if let InputEvent::Keyboard(key) = input_event &&
                     let Some(task) = hotkey_tasks.get(&key)
@@ -604,7 +585,7 @@ pub(crate) unsafe fn configure_static_binds() -> Res<()> {
                             });
                         },
                         Task::PauseWallpaperEngine => {
-                            leak_thread(|| {
+                            thread::spawn(|| {
                                 (|| -> Res<()> {
                                     control_wallpaper_engine(WallpaperEngineArg::Stop)?;
                                     thread::sleep(Duration::from_secs(420));

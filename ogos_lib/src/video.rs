@@ -235,9 +235,7 @@ pub(crate) unsafe fn create_maintain_sample_rate_guard() -> io::Result<()> {
 }
 
 pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, use_glsl_shaders: bool) -> Res<(), { loc_var!(Mpv) }> {
-    let mut revert_to: Vec<VideoSetting> = Vec::new();
-
-    let res = (|| -> Res<(), { loc_var!(Mpv) }> {
+    let inner = |revert_to: &mut Vec<VideoSetting>| -> Res<(), { loc_var!(Mpv) }> {
         let config = config::get()?.read()?;
         let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Mpv::NAME })?;
 
@@ -419,7 +417,10 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
         }
 
         Ok(())
-    })();
+    };
+
+    let mut revert_to: Vec<VideoSetting> = Vec::new();
+    let res = inner(&mut revert_to);
 
     for setting in revert_to.into_iter().rev() {
         (|| -> Res<()> {
