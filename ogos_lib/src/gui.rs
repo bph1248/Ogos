@@ -159,7 +159,7 @@ fn ferry_image(info: ImageFerryInfo) -> Res1<()> {
         Some(transform) => {
             let ImageFerryTransform { dst_path, dst_size } = transform;
 
-            let (color_image, pixels) = load_color_image_sized_pixels(src_path.as_path(), dst_size).unwrap();
+            let (color_image, pixels) = load_and_resize_color_image(src_path.as_path(), dst_size).unwrap();
             let color_image_size = color_image.size;
 
             image_state_sx.send(Ok(color_image)).unwrap();
@@ -199,7 +199,7 @@ fn load_color_image(path: &Path) -> ResVar<egui::ColorImage> {
 }
 
 //$ Numeric errors
-fn load_color_image_sized_pixels(path: &Path, size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
+fn load_and_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
     use rgb::FromSlice;
 
     let image = load_image(path)?;
@@ -269,6 +269,14 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
     });
 }
 
+fn save_image(path: PathBuf, pixels: &[u8], width: u32, height: u32) -> Res<()> {
+    let image_file = fs::File::create(path)?;
+    let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
+    encoder.encode(pixels, width, height, image::ExtendedColorType::Rgba8)?;
+
+    Ok(())
+}
+
 fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle) -> egui::Response {
     let image = egui::Image::new(tex).sense(egui::Sense::click_and_drag()).fit_to_exact_size(tex.size_vec2());
 
@@ -293,18 +301,29 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, name_tex: &str
     match image_state {
         ImageState::Ready(tex) => add_image(ui, tex),
         ImageState::Pending(rx) => {
-            match rx.try_recv() {
+            let recvd = match rx.try_recv() {
+                Ok(res) => res,
+                Err(TryRecvError::Empty) => return alloc_hover_response(ui),
+                Err(TryRecvError::Closed) => Err(())
+            };
+
+            match recvd {
                 Ok(color_image) => {
-                    let tex = ui.ctx().load_texture(name_tex, color_image.unwrap(), default!()); //$ err
-                    let image_resp = add_image(ui, &tex);
+                    let tex = ui.ctx().load_texture(name_tex, color_image, default!());
+                    let resp = add_image(ui, &tex);
                     *image_state = ImageState::Ready(tex);
 
-                    image_resp
+                    resp
                 },
-                Err(TryRecvError::Empty) => alloc_hover_response(ui),
-                Err(TryRecvError::Closed) => add_label(ui, label) //$
+                Err(_) => {
+                    let resp = add_label(ui, label);
+                    *image_state = ImageState::Failed;
+
+                    resp
+                }
             }
-        }
+        },
+        ImageState::Failed => add_label(ui, label),
         _ => alloc_hover_response(ui)
     }
 }
@@ -326,7 +345,7 @@ fn update_active_view(active_view: &mut Vec<usize>, set: &BTreeSet<usize>) {
 enum ImageState {
     #[default]
     None,
-    Pending(oneshot::Receiver<ResVar<egui::ColorImage>>),
+    Pending(oneshot::Receiver<Result<egui::ColorImage, ()>>),
     Ready(egui::TextureHandle),
     Failed
 }
@@ -384,7 +403,7 @@ struct ImageFerryTransform {
 
 struct ImageFerryInfo {
     src_path: PathBuf,
-    image_state_sx: oneshot::Sender<ResVar<egui::ColorImage>>,
+    image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>,
     transform: Option<ImageFerryTransform>
 }
 
@@ -611,48 +630,59 @@ impl MediaBrowser {
                         let computed_hash = Arc::from(hasher.update(&chunk).finalize().to_hex().as_str());
 
                         // Compare hashes
-                        match expected_hash.is_none_or(|expected_hash| expected_hash != computed_hash) {
-                            true => {
-                                let (grid_image, grid_pixels) = load_color_image_sized_pixels(image_path.as_path(), GRID_IMAGE_SIZE)?;
-                                let grid_image_width = grid_image.width() as u32;
-                                let grid_image_height = grid_image.height() as u32;
+                        if expected_hash.is_none_or(|expected_hash| expected_hash != computed_hash) {
+                            match load_and_resize_color_image(image_path.as_path(), GRID_IMAGE_SIZE) {
+                                Ok((grid_image, grid_pixels)) => {
+                                    let grid_image_width = grid_image.width() as u32;
+                                    let grid_image_height = grid_image.height() as u32;
 
-                                grid_image_state_sx.send(Ok(grid_image)).unwrap();
+                                    grid_image_state_sx.send(Ok(grid_image)).unwrap();
+                                    ctx.request_repaint();
 
-                                let grid_image_file = fs::File::create(grid_image_path)?;
-                                let grid_encoder = image::codecs::webp::WebPEncoder::new_lossless(grid_image_file);
-                                grid_encoder.encode(grid_pixels.as_slice(), grid_image_width, grid_image_height, image::ExtendedColorType::Rgba8)?;
+                                    hash_sx.send((entry_i, computed_hash)).unwrap();
 
-                                hash_sx.send((entry_i, computed_hash)).unwrap();
-                                ctx.request_repaint();
+                                    ferry_sx.send((
+                                        image_file_name.clone(),
+                                        ImageFerryInfo {
+                                            src_path: image_path,
+                                            image_state_sx: details_image_state_sx,
+                                            transform: Some(ImageFerryTransform {
+                                                dst_path: details_image_path,
+                                                dst_size: DETAILS_IMAGE_SIZE
+                                            })
+                                        }
+                                    ))
+                                    .unwrap();
 
-                                ferry_sx.send((
-                                    image_file_name.clone(),
-                                    ImageFerryInfo {
-                                        src_path: image_path,
-                                        image_state_sx: details_image_state_sx,
-                                        transform: Some(ImageFerryTransform {
-                                            dst_path: details_image_path,
-                                            dst_size: DETAILS_IMAGE_SIZE
-                                        })
-                                    }
-                                ))
-                                .unwrap();
-                            },
-                            false => {
-                                let grid_image = load_color_image(grid_image_path.as_path())?;
+                                    save_image(grid_image_path, grid_pixels.as_slice(), grid_image_width, grid_image_height)
+                                        .unwrap_or_else(|err| error!("{}: failed to save image: {}: {}", module_path!(), image_file_name, err));
+                                },
+                                Err(err) => {
+                                    error!("{}: failed to load and resize image: {}: {}", module_path!(), image_file_name, err);
 
-                                grid_image_state_sx.send(Ok(grid_image)).unwrap();
+                                    grid_image_state_sx.send(Err(())).unwrap();
+                                }
+                            }
+                        } else {
+                            match load_color_image(grid_image_path.as_path()) {
+                                Ok(grid_image) => {
+                                    grid_image_state_sx.send(Ok(grid_image)).unwrap();
 
-                                ferry_sx.send((
-                                    image_file_name.clone(),
-                                    ImageFerryInfo {
-                                        src_path: details_image_path,
-                                        image_state_sx: details_image_state_sx,
-                                        transform: None
-                                    }
-                                ))
-                                .unwrap();
+                                    ferry_sx.send((
+                                        image_file_name.clone(),
+                                        ImageFerryInfo {
+                                            src_path: details_image_path,
+                                            image_state_sx: details_image_state_sx,
+                                            transform: None
+                                        }
+                                    ))
+                                    .unwrap();
+                                },
+                                Err(err) => {
+                                    error!("{}: failed to load image: {}", module_path!(), err);
+
+                                    grid_image_state_sx.send(Err(())).unwrap();
+                                }
                             }
                         }
 
