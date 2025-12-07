@@ -1,24 +1,5 @@
-.bak/
-.idea/
-.obsidian/
-.vs/
-.vscode/
-dormant/
-mki-rust/
+.*/
+scratch/
 target/
 
-*.ogos
-*.code-workspace
-asm_release.txt
-asm.txt
-bugs.txt
 Cargo.lock
-config.json5
-dormant.rs
-keyboard.json
-nvapi_dither_control.h
-regex.txt
-scratch.rs
-snippets.rs
-style.rs
-todo.txt
