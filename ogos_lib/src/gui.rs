@@ -157,14 +157,14 @@ fn ferry_image(info: ImageFerryInfo) -> Res1<()> {
 
             image_state_sx.send(Ok(color_image)).unwrap();
 
-            let dst_file = fs::File::create(dst_path).unwrap(); //$ err
+            let dst_file = fs::File::create(dst_path)?;
             let dst_encoder = image::codecs::webp::WebPEncoder::new_lossless(&dst_file);
 
-            dst_encoder.encode(pixels.as_slice(), color_image_size[0] as u32, color_image_size[1] as u32, image::ExtendedColorType::Rgba8).unwrap();
+            dst_encoder.encode(pixels.as_slice(), color_image_size[0] as u32, color_image_size[1] as u32, image::ExtendedColorType::Rgba8)?;
         },
         None => {
             let color_image = load_color_image(src_path.as_path())?;
-            image_state_sx.send(Ok(color_image)).unwrap(); //$ err
+            image_state_sx.send(Ok(color_image)).unwrap();
         }
     }
 
