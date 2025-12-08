@@ -43,7 +43,6 @@ const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
 const DETAILS_IMAGE_SIZE: egui::Vec2 = egui::vec2(800.0, 1200.0);
 const FRAME_MARGIN: f32 = 15.0;
 const SEPARATOR_WIDTH: f32 = 2.0;
-const WINDOW_INNER_SIZE: egui::Vec2 = egui::vec2(3432.0, 1686.0);
 
 #[derive(Clone)]
 struct DirEntryInfo {
@@ -493,7 +492,6 @@ impl MediaBrowser {
         let (ferry_sx, ferry_rx) = mpsc::channel();
 
         let current_exe_dir = CURRENT_EXE_PARENT_PATH.get().unwrap();
-        let media_dirs = [r"D:\books", r"B:\vids", r"C:\vids", r"D:\vids", r"Z:\vids"]; //$ Config
         let image_dir = Arc::new(current_exe_dir.join("images"));
 
         let cache_path = image_dir.join("cache").with_extension("json");
@@ -520,7 +518,11 @@ impl MediaBrowser {
             })
             .collect::<Res<IndexMap::<Arc<str>, ImageStates>>>()?;
 
-        let mut grid_entry_infos = media_dirs.into_iter()
+        let config = config::get()?.read()?;
+        let media_dirs = config.media_browser.as_ref().map(|media_browser| &media_browser.dirs)
+            .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
+
+        let mut grid_entry_infos = media_dirs.iter()
             .map(|dir| Path::new(dir).read_dir())
             .filter_map(|read_dir| match read_dir {
                 Ok(read_dir) => Some(read_dir),
@@ -570,6 +572,7 @@ impl MediaBrowser {
             })
             .collect::<Vec<_>>();
         grid_entry_infos.sort_by(|a, b| a.stem.cmp(&b.stem));
+        drop(config);
 
         for (entry_i, info) in grid_entry_infos.iter().enumerate() {
             // Fill tags
@@ -1264,10 +1267,21 @@ impl MediaBrowser {
 }
 
 pub(crate) fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_maximize_button(false);
+    if let Kind::MediaBrowser { .. } = kind {
+        let config = config::get()?.read()?;
+
+        if let Some(size) = config.media_browser.as_ref().and_then(|mb| mb.window_inner_size) {
+            #[allow(clippy::cast_precision_loss)]
+            let (width, height) = (size.width as f32, size.height as f32);
+
+            viewport = viewport.with_inner_size([width, height]);
+        }
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size(WINDOW_INNER_SIZE)
-            .with_maximize_button(false),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             present_mode: wgpu::PresentMode::Fifo,

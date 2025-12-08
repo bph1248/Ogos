@@ -19,6 +19,7 @@ use std::{
     collections::*,
     fmt,
     fs,
+    path::*,
     sync::*,
     time::*
 };
@@ -377,6 +378,14 @@ pub(crate) struct Mpv {
 }
 impl_name!(Mpv);
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MediaBrowser {
+    pub(crate) dirs: Vec<PathBuf>,
+    pub(crate) window_inner_size: Option<Extent2dU>
+}
+impl_name!(MediaBrowser);
+
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DiscordActivity {
@@ -716,6 +725,7 @@ pub(crate) struct Config {
     pub(crate) discord_app_ids: Option<DiscordAppIds>,
     pub(crate) display_modes: Option<DisplayModes>,
     pub(crate) games: Option<Games>,
+    pub(crate) media_browser: Option<MediaBrowser>,
     pub(crate) mpv: Option<Mpv>,
     pub(crate) pixel_cleaning: Option<PixelCleaning>,
     pub(crate) taskbar: Option<Taskbar>,

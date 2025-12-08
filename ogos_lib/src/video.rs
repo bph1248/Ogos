@@ -251,7 +251,6 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
             .creation_flags(CREATE_NO_WINDOW);
         let output = output_command(&mut ffprobe_cmd)?;
         let output = String::from_utf8(output.stdout)?;
-        info!("{}", output);
         let ffprobe = serde_json::from_str::<Ffprobe>(output.as_ref())?;
 
         // Sample rate
