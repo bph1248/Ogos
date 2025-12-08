@@ -191,36 +191,36 @@ fn load_color_image(path: &Path) -> ResVar<egui::ColorImage> {
     Ok(color_image)
 }
 
-//$ Numeric errors
 fn load_and_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
     use rgb::FromSlice;
 
     let image = load_image(path)?;
-
     let (src_width, src_height) = image.dimensions();
-    let src_pixels = image.as_raw();
+    #[allow(clippy::cast_precision_loss)]
+    let aspect_ratio_h = src_height as f32 / src_width as f32;
 
-    let aspect_ratio_h = f64::from(src_height) / f64::from(src_width);
-
+    let src_width = src_width as usize;
+    let src_height = src_height as usize;
     let dst_width = size[0] as usize;
-    let dst_height = (f64::from(size[0]) * aspect_ratio_h) as usize;
+    let dst_height = (size[0] * aspect_ratio_h).round() as usize;
 
-    let mut tmp_pixels = vec![0_u8; dst_width * src_height as usize * 4];
+    let mut tmp_pixels = vec![0_u8; dst_width * src_height * 4];
     let mut dst_pixels = vec![0_u8; dst_width * dst_height * 4];
 
     let mut resizer = resize::new(
-        src_width as usize,
-        src_height as usize,
+        src_width,
+        src_height,
         dst_width,
-        src_height as usize,
+        src_height,
         resize::Pixel::RGBA8,
         resize::Type::Custom(blackman_filter())
     )?;
+    let src_pixels = image.as_raw();
     resizer.resize(src_pixels.as_rgba(), tmp_pixels.as_rgba_mut())?;
 
     let mut resizer = resize::new(
         dst_width,
-        src_height as usize,
+        src_height,
         dst_width,
         dst_height,
         resize::Pixel::RGBA8,
