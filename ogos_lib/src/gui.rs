@@ -14,14 +14,12 @@ use eframe::{
     wgpu
 };
 use indexmap::*;
-use raw_window_handle::*;
 use log::*;
 use rayon::*;
 use serde::*;
 use std::{
     collections::*,
     f64::consts::PI,
-    ffi::*,
     fs::{self, *},
     io::Read,
     path::*,
@@ -32,8 +30,7 @@ use std::{
 };
 use tokio::sync::oneshot::{self, error::*};
 use windows::Win32::{
-    Foundation::{COLORREF, HWND, POINT},
-    Graphics::Gdi::*,
+    Foundation::POINT,
     UI::WindowsAndMessaging::*
 };
 
@@ -142,10 +139,6 @@ fn blackman_filter() -> resize::Filter {
         }),
         2.0
     )
-}
-
-fn make_colorref(r: u8, g: u8, b: u8) -> COLORREF {
-    COLORREF(u32::from(r) | u32::from(g) << 8 | u32::from(b) << 16)
 }
 
 fn ferry_image(info: ImageFerryInfo) -> Res1<()> {
@@ -421,7 +414,6 @@ struct MediaBrowser {
     hash_rx: mpsc::Receiver<(usize, Arc<str>)>,
     cache_path: PathBuf,
     cache: Cache,
-    fixed_win_background: bool,
     frame: egui::Frame,
     view_kind: ViewKind,
     grid_entries: Vec<GridEntryInfo>,
@@ -446,17 +438,7 @@ struct MediaBrowser {
     discord_rp_state: String
 }
 impl eframe::App for MediaBrowser {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if !self.fixed_win_background && let win_hnd = frame.window_handle().unwrap() && let raw_window_handle::RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
-            let hwnd = HWND(hnd.hwnd.get() as *mut c_void);
-            unsafe {
-                let new_brush = CreateSolidBrush(make_colorref(27, 27, 27));
-                SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, new_brush.0 as isize); //$ err
-            }
-
-            self.fixed_win_background = true;
-        }
-
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default()
             .frame(self.frame)
             .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
@@ -717,7 +699,6 @@ impl MediaBrowser {
             hash_rx,
             cache_path,
             cache,
-            fixed_win_background: default!(),
             frame,
             view_kind: ViewKind::Grid,
             grid_entries: grid_entry_infos,
