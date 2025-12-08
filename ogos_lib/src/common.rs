@@ -25,7 +25,10 @@ use std::{
 use sysinfo::*;
 use windows::Win32::{
     Foundation::*,
-    UI::WindowsAndMessaging::*
+    UI::{
+        WindowsAndMessaging::*,
+        Input::KeyboardAndMouse::*,
+    }
 };
 
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -97,6 +100,7 @@ pub(crate) enum FileKind {
 #[subenum(
     BindMsg(derive(Deserialize, Serialize)),
     BroadcastMsg(derive(Clone, Copy, IntoStaticStr)),
+    CursorWatchMsg,
     PipeMsg(derive(Deserialize, Display, Serialize)),
     ReadyMsg,
     WindowForegroundMsg(derive(Display, IntoStaticStr)),
@@ -105,6 +109,8 @@ pub(crate) enum FileKind {
 pub(crate) enum Msg {
     #[subenum(PipeMsg)]
     Ack,
+    #[subenum(CursorWatchMsg)]
+    Begin,
     #[subenum(BindMsg)]
     Bind(BindName),
     #[subenum(PipeMsg)]
@@ -115,6 +121,8 @@ pub(crate) enum Msg {
     Close,
     #[subenum(WindowShiftMsg)]
     Destroy(usize),
+    #[subenum(CursorWatchMsg)]
+    DisplayChange(Extent2d),
     #[subenum(PipeMsg)]
     Endpoint(String),
     #[subenum(WindowShiftMsg)]
@@ -490,4 +498,34 @@ pub(crate) fn spawn_command(cmd: &mut Command) -> ResVar<Child> {
         })?;
 
     Ok(output)
+}
+
+pub(crate) unsafe fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) -> windows::core::Result<()> {
+    const NORM: i64 = 65535;
+
+    let x = i64::from(x);
+    let screen_width = i64::from(screen_extent.width - 1);
+    let num = x * NORM + screen_width / 2;
+    let dx = (num / screen_width) as i32;
+
+    let y = i64::from(y);
+    let screen_height = i64::from(screen_extent.height - 1);
+    let num = y * NORM + screen_height / 2;
+    let dy = (num / screen_height) as i32;
+
+    let mut input_0 = INPUT_0::default();
+    input_0.mi = MOUSEINPUT {
+        dx,
+        dy,
+        mouseData: 0,
+        dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+        time: 0,
+        dwExtraInfo: 0
+    };
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: input_0
+    };
+
+    SendInput(&[input], size_of::<INPUT>() as i32).win32_core_ok().map(|_| ())
 }

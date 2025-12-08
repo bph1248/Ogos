@@ -1,6 +1,7 @@
 use crate::{
     common::*,
     config,
+    cursor_watch,
     display::*,
     err::*,
     win32::*,
@@ -277,9 +278,15 @@ unsafe fn init_hitbox(senders: &Senders) -> Res1<HWND> {
     let screen_extent = get_screen_extent(GetDesktopWindow())?;
     let taskbar_rect = taskbar_hwnd.get_rect()?;
     let taskbar_side = get_taskbar_side(taskbar_rect, screen_extent);
-    let hitbox_exit_snap_ordinate = taskbar_config.hitbox_exit.cursor_snap_offset_pc.map(|pc| {
-        get_hitbox_exit_snap_ordinate(taskbar_side, screen_extent, pc)
-    });
+    let (hitbox_exit_snap_ordinate,
+        cursor_watch
+    ) = taskbar_config.hitbox_exit.cursor_snap_offset_pc.map(|pc| {
+        let snap_ordinate = get_hitbox_exit_snap_ordinate(taskbar_side, screen_extent, pc);
+        let cursor_watch = cursor_watch::begin(snap_ordinate, screen_extent);
+
+        (snap_ordinate, cursor_watch)
+    })
+    .unzip();
     let hitbox_entry_side = taskbar_config.hitbox_entry.side.unwrap_or(taskbar_side);
     let hitbox_pos = get_hitbox_pos(taskbar_rect, taskbar_side, hitbox_entry_side, i32::from(taskbar_config.hitbox_entry.inset_px), i32::from(taskbar_config.hitbox_exit.taskbar_offset_px), screen_extent);
 
@@ -334,6 +341,7 @@ unsafe fn init_hitbox(senders: &Senders) -> Res1<HWND> {
         hitbox_exit_jump_list_offset_px: i32::from(taskbar_config.hitbox_exit.jump_list_offset_px),
         hitbox_exit_cursor_snap_offset_pc: taskbar_config.hitbox_exit.cursor_snap_offset_pc,
         hitbox_exit_snap_ordinate,
+        cursor_watch,
         screen_extent,
         ..default!()
     };
