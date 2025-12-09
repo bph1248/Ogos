@@ -547,6 +547,9 @@ pub(crate) struct NovideoSrgbInfo {
     pub(crate) gamma: Gamma,
     pub(crate) enable_optimization: bool
 }
+impl NovideoSrgbInfo {
+    pub(crate) const NAME: &str = "novideo_srgb";
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

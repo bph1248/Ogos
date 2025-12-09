@@ -14,6 +14,12 @@ const CURSOR_SIZE: &str = "cursor-size";
 const ENDPOINT: &str = "endpoint";
 const EQ: &str = "eq";
 const GAME: &str = "game";
+
+#[derive(Clone, ValueEnum)]
+pub(crate) enum NovideoSrgbOp {
+    On,
+    Off
+}
 #[derive(Args)]
 #[group(requires = GAME, multiple = true)]
 pub(crate) struct Gaming {
@@ -54,6 +60,8 @@ pub(crate) struct Cli {
     pub(crate) set_eq: Option<String>,
     #[arg(long, help = "Toggle display mode and set color bit depth, dither state, and novideo_srgb state")]
     pub(crate) toggle_display_mode: bool,
+    #[arg(long, alias = "clamp")]
+    pub(crate) novideo_srgb: Option<NovideoSrgbOp>,
 
     #[arg(long = GAME, name = GAME, help = "Launch a game")]
     pub(crate) launch_game: Option<String>,

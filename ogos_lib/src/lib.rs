@@ -248,6 +248,39 @@ unsafe fn begin() -> Res<()> {
         });
     }
 
+    if let Some(op) = cli.novideo_srgb.as_ref() {
+        let display_path = get_first_display_path()?;
+        let display_mode = get_display_mode(display_path)?;
+
+        if display_mode == DisplayMode::Sdr {
+            let config = config::get()?.read()?;
+            let NovideoSrgbInfo {
+                primaries_source,
+                color_space_target,
+                gamma,
+                enable_optimization,
+                ..
+            } = config.display_modes.as_ref()
+                .and_then(|display_modes| display_modes.sdr.novideo_srgb.clone())
+                .ok_or(ErrVar::MissingConfigKey { name: config::NovideoSrgbInfo::NAME })?;
+
+            let enable_clamp = match op {
+                NovideoSrgbOp::On => true,
+                NovideoSrgbOp::Off => false
+            };
+            let info = NovideoSrgbInfo {
+                enable_clamp,
+                primaries_source,
+                color_space_target,
+                gamma,
+                enable_optimization
+            };
+            control_novideo_srgb(&info)?;
+        } else {
+            return Err(ErrVar::InvalidDisplayMode.into())
+        }
+    }
+
     // Games
     if let Some(name) = cli.launch_game.as_ref() {
         games::launch(name, &cli).unwrap_or_else(|err| {
