@@ -250,7 +250,7 @@ unsafe extern "system" fn message_only_proc(hwnd: HWND, msg: u32, wparam: WPARAM
 unsafe fn init_hitbox(senders: &Senders) -> Res1<HWND> {
     SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(window_foreground_all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
 
-    let config = config::get()?.read()?;
+    let config = config::get().read()?;
     let taskbar_config = config.taskbar.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Taskbar::NAME })?;
 
     // Progman

@@ -386,7 +386,7 @@ pub(crate) fn control_wallpaper_engine(arg: WallpaperEngineArg) -> Res1<()> {
     let mut system = System::new();
 
     if get_first_process(App::WALLPAPER_ENGINE, &mut system).is_some() {
-        let config = config::get()?.read()?;
+        let config = config::get().read()?;
         let wallpaper_engine_path = find_or_confirm_app(App::WALLPAPER_ENGINE, config.app_paths.wallpaper_engine.as_ref())?;
 
         drop(config);
@@ -666,7 +666,7 @@ pub(crate) unsafe fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<Displa
         }
 
         let (gpu_hnd, display_ids) = get_first_gpu_display_ids()?;
-        let config = config::get()?.read()?;
+        let config = config::get().read()?;
         let display_modes_config = config.display_modes.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::DisplayModes::NAME })?;
         let use_novideo_srgb = display_modes_config.sdr.novideo_srgb.is_some() || display_modes_config.hdr.novideo_srgb.is_some();
 

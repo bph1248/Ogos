@@ -84,7 +84,7 @@ impl From<Hz> for u32 {
 }
 
 pub(crate) unsafe fn set_endpoint(name: &str) -> Res1<()> {
-    let config = config::get()?.read()?;
+    let config = config::get().read()?;
     let audio_config = config.audio.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Audio::NAME })?;
 
     let endpoints = audio_config.endpoints.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Endpoints::NAME })?;
@@ -166,7 +166,7 @@ pub(crate) unsafe fn set_sample_rate(hz: Hz) -> Res1<Option<Hz>> {
 }
 
 pub(crate) fn set_eq(name: &str) -> Res1<()> {
-    let config = config::get()?.read()?;
+    let config = config::get().read()?;
     let audio_config = config.audio.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Audio::NAME })?;
     let eq_apo = audio_config.eq_apo.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::EqApo::NAME })?;
 

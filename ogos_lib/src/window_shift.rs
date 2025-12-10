@@ -598,7 +598,7 @@ unsafe fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> 
 unsafe fn begin(receiver: Receiver<WindowShiftMsg>) -> Res<()> {
     info!("{}: begin", module_path!());
 
-    let config = config::get()?.read()?;
+    let config = config::get().read()?;
     let mut window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigKey { name: config::WindowShift::NAME })?;
 
     drop(config);
@@ -674,7 +674,7 @@ unsafe fn begin(receiver: Receiver<WindowShiftMsg>) -> Res<()> {
                     },
                     ErrVar::ReloadConfig => {
                         (|| -> ResVar<()> {
-                            let config = config::get()?.read()?;
+                            let config = config::get().read()?;
                             window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigKey { name: config::WindowShift::NAME })?;
 
                             Ok(())

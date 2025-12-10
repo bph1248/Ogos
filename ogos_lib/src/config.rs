@@ -9,7 +9,6 @@ use crate::{
 
 use const_format::*;
 use discord_rich_presence::activity as drpa;
-use log::*;
 use mki::*;
 use serde::{
     de::*,
@@ -745,18 +744,6 @@ pub(crate) unsafe fn load() -> Res1<Config> {
     Ok(config)
 }
 
-pub(crate) fn get() -> ResVar<&'static RwLock<Config>> {
-    unsafe {
-        CONFIG.get_or_init(|| {
-            load().map(|config| {
-                RwLock::new(config)
-            })
-            .inspect_err(|err| {
-                error!("{}: failed to load config: {} ", module_path!(), err);
-            })
-            .ok() // In case of failure, init with None and throw error
-        })
-        .as_ref()
-        .ok_or(ErrVar::FailedGetConfig)
-    }
+pub(crate) fn get() -> &'static RwLock<Config> {
+    unsafe { CONFIG.get_unchecked() }
 }

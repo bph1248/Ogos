@@ -815,7 +815,7 @@ fn init_binds() -> Res1<Binds> {
     const QMK_PID: u16 = 0x0140;
     const USAGE_PAGE: u16 = 0xff60;
 
-    let config = config::get()?.read()?;
+    let config = config::get().read()?;
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Binds::NAME })?;
     let qmk_config = binds_config.qmk.as_ref();
 

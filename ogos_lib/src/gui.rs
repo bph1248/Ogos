@@ -518,7 +518,7 @@ impl MediaBrowser {
             })
             .collect::<Res<IndexMap::<Arc<str>, ImageStates>>>()?;
 
-        let config = config::get()?.read()?;
+        let config = config::get().read()?;
         let media_dirs = config.media_browser.as_ref().map(|media_browser| &media_browser.dirs)
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
 
@@ -1270,7 +1270,7 @@ pub(crate) fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_maximize_button(false);
     if let Kind::MediaBrowser { .. } = kind {
-        let config = config::get()?.read()?;
+        let config = config::get().read()?;
 
         if let Some(size) = config.media_browser.as_ref().and_then(|mb| mb.window_inner_size) {
             #[allow(clippy::cast_precision_loss)]

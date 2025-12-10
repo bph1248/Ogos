@@ -49,7 +49,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
     let mut revert_to: Vec<Setting> = Vec::new();
 
     let res = (|| -> Res<(), { loc_var!(Games) }> {
-        let config = config::get()?.read()?;
+        let config = config::get().read()?;
         let games_config = config.games.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Games::NAME })?;
         let game_info = games_config.0.get(name).ok_or_else(|| ErrVar::UnknownGame { name: name.into() })?;
         let discord_rp_info = game_info.discord_rp.clone();

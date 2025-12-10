@@ -118,6 +118,7 @@ fn from_body() -> TokenStream {
     quote! {
         Self {
             var: value.var,
+            msg: value.msg,
             trail: {
                 let loc = Loc {
                     file: panic::Location::caller().file(),

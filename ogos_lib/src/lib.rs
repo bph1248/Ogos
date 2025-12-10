@@ -253,7 +253,7 @@ unsafe fn begin() -> Res<()> {
         let display_mode = get_display_mode(display_path)?;
 
         if display_mode == DisplayMode::Sdr {
-            let config = config::get()?.read()?;
+            let config = config::get().read()?;
             let NovideoSrgbInfo {
                 primaries_source,
                 color_space_target,
@@ -319,7 +319,7 @@ unsafe fn begin() -> Res<()> {
 
     if cli.media_browser {
         (|| -> Res<()> {
-            let config = config::get()?.read()?;
+            let config = config::get().read()?;
             let discord_app_ids = config.discord_app_ids.clone().unwrap_or_default();
 
             drop(config);
@@ -504,8 +504,12 @@ unsafe fn init() -> Res<()> {
     // Send panic messages to log
     log_panics::init();
 
+    // Config
+    let config = load().map_err(|err| err.msg("failed to load config"))?;
+    CONFIG.set(RwLock::new(config)).map_err(|_| ErrVar::FailedSetConfig)?;
+
     // NovideoSrgb
-    let config = config::get()?.read()?;
+    let config = config::get().read()?;
     if let Some(display_modes_config) = config.display_modes.as_ref() {
         match display_modes_config.sdr.novideo_srgb.is_some() || display_modes_config.hdr.novideo_srgb.is_some() {
             true => {

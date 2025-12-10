@@ -45,12 +45,20 @@ pub(crate) struct Errored {
 #[derive(Debug, Error)]
 pub struct ErrLoc<const ID: u32 = { LocVar::Default as u32 }> {
     pub(crate) var: Box<ErrVar>,
+    pub(crate) msg: &'static str,
     pub(crate) trail: Option<Vec<Loc>>,
     pub(crate) x: Loc
 }
+impl<const ID: u32> ErrLoc<ID> {
+    pub(crate) fn msg(mut self, msg: &'static str) -> Self {
+        self.msg = msg;
+
+        self
+    }
+}
 impl<const ID: u32> Display for ErrLoc<ID> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}, {}", self.var, self.x)?;
+        write!(f, "{}: {}, {}", self.msg, self.var, self.x)?;
 
         if let Some(trail) = self.trail.as_ref() {
             for loc in trail.iter() {
@@ -68,6 +76,7 @@ impl<E, const ID: u32> From<E> for ErrLoc<ID> where
     fn from(err: E) -> Self {
         Self {
             var: Box::new(err.into()),
+            msg: "",
             trail: None,
             x: Loc {
                 file: panic::Location::caller().file(),
@@ -156,9 +165,9 @@ pub(crate) enum ErrVar {
     FailedAsHz { from: String },
     FailedBuildLoggerConfig,
     FailedContactHookMgr { inner: windows::core::Error },
-    FailedGetConfig,
     FailedIniOp { inner: ini::Error, path: String },
     FailedKeycodeAsKey { from: Keycode },
+    FailedSetConfig,
     FailedStrAsKey { from: String },
     FailedStrAsInputEvent { from: String },
     FailedNovideoSrgbApply,
@@ -254,10 +263,10 @@ impl Display for ErrVar {
             FailedAsHz { from } => write!(f, "failed to map hz from: {}", from),
             FailedBuildLoggerConfig => write!(f, "failed to build logger config"),
             FailedContactHookMgr { inner } => write!(f, "failed to contact hook manager: {}", inner),
-            FailedGetConfig => write!(f, "failed to get config"),
             FailedIniOp { inner, path } => write!(f, "failed .ini op: path: {}: {}", path, inner),
             FailedKeycodeAsKey { from } => write!(f, "failed to map key from keycode: {:#06x}", from.clone() as u16),
             FailedStrAsInputEvent { from } => write!(f, "failed to map input event from str: {}", from),
+            FailedSetConfig => write!(f, "failed to set config"),
             FailedStrAsKey { from} => write!(f, "failed to map key from str: {}", from),
             FailedNovideoSrgbApply => write!(f, "failed to apply novideo_srgb"),
             FailedOutputCommand { inner, cmd } => write!(f, "failed to output command: {}: {}", cmd, inner),

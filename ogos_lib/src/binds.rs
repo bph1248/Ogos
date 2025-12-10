@@ -556,7 +556,7 @@ pub(crate) fn set_bind(binds_config: &Binds, msg: BindMsg)  {
 }
 
 pub(crate) unsafe fn configure_static_binds() -> Res<()> {
-    let config = config::get()?.read()?;
+    let config = config::get().read()?;
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: Binds::NAME })?;
 
     if let Some(hotkeys) = binds_config.hotkeys.as_ref() {

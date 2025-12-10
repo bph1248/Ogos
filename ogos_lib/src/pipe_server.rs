@@ -125,7 +125,7 @@ unsafe fn begin(send_ready: mpsc::Sender<ReadyMsg>) -> Res<()> {
 
         match msg {
             PipeMsg::BindMsg(msg) => {
-                let config = config::get()?.read()?;
+                let config = config::get().read()?;
                 let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Binds::NAME })?;
 
                 binds::set_bind(binds_config, msg);

@@ -197,7 +197,7 @@ pub(crate) enum WmOgos {
     RequestWinEventUnhooks
 }
 
-pub(crate) static CONFIG: OnceCell<Option<RwLock<Config>>> = OnceCell::new();
+pub(crate) static CONFIG: OnceCell<RwLock<Config>> = OnceCell::new();
 pub(crate) static CURRENT_EXE_PARENT_PATH: OnceCell<PathBuf> = OnceCell::new();
 
 macro_rules! default {

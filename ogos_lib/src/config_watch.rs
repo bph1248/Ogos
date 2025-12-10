@@ -84,12 +84,10 @@ unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> 
                 let file_name_slc = slice::from_raw_parts(info.FileName.as_ptr(), file_name_len);
                 let file_name = OsString::from_wide(file_name_slc);
 
-                if info.Action == FILE_ACTION_MODIFIED && file_name == CONFIG_FILE_NAME &&
-                    let Some(current) = CONFIG.get_unchecked()
-                {
+                if info.Action == FILE_ACTION_MODIFIED && file_name == CONFIG_FILE_NAME {
                     match config::load() {
                         Ok(new) => {
-                            *current.write()? = new;
+                            *config::get().write()? = new;
 
                             info!("{}: loaded new config", module_path!());
 
