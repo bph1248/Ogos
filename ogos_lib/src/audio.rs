@@ -42,6 +42,16 @@ impl Display for Hz {
         write!(f, "{}", self.as_str())
     }
 }
+impl From<Hz> for u32 {
+    fn from(value: Hz) -> Self {
+        match value {
+            Hz::N44100 => 44100,
+            Hz::N48000 => 48000,
+            Hz::N88200 => 88200,
+            Hz::N96000 => 96000
+        }
+    }
+}
 impl TryFrom<&str> for Hz {
     type Error = ErrVar;
 
@@ -72,14 +82,15 @@ impl TryFrom<u32> for Hz {
         )
     }
 }
-impl From<Hz> for u32 {
-    fn from(value: Hz) -> Self {
-        match value {
-            Hz::N44100 => 44100,
-            Hz::N48000 => 48000,
-            Hz::N88200 => 88200,
-            Hz::N96000 => 96000
-        }
+
+pub(crate) trait HzExt {
+    fn try_as_hz(&self) -> ResVar<Hz>;
+}
+impl<T> HzExt for T where
+    T: AsRef<str>
+{
+    fn try_as_hz(&self) -> ResVar<Hz> {
+        Hz::try_from(self.as_ref())
     }
 }
 

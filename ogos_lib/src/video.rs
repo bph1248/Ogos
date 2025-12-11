@@ -24,6 +24,7 @@ use std::{
 use windows::Win32::Foundation::*;
 
 const MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME: &str = "maintain_sample_rate.guard";
+const NA_STR: &str = "<n/a>";
 
 fn deserialize_side_data_list<'de, D>(deserializer: D) -> Result<SideData, D::Error> where
     D: Deserializer<'de>
@@ -143,7 +144,7 @@ struct VideoStream {
 
 #[derive(Clone, Default, Deserialize)]
 struct AudioStream {
-    sample_rate: String
+    sample_rate: Option<String>
 }
 
 #[derive(Default, Deserialize)]
@@ -261,15 +262,20 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
             MaintainSampleRate::CheckGuard => File::open(&guard_path).is_ok()
         };
 
-        let vid_sample_rate = &ffprobe.streams.audio.sample_rate; //$ None?
-        info!("{}: sample rate: {}", module_path!(), vid_sample_rate);
+        let vid_sample_rate = match ffprobe.streams.audio.sample_rate.as_ref() {
+            Some(vid_sample_rate) => {
+                if !maintain_sample_rate  {
+                    set_sample_rate(vid_sample_rate.try_as_hz()?)
+                        .inspect(|prev| {
+                            if let Some(prev) = prev { revert_to.push(VideoSetting::SampleRate(*prev)); }
+                        })?;
+                }
 
-        if !maintain_sample_rate {
-            set_sample_rate(vid_sample_rate.as_str().try_into()?)
-                .inspect(|prev| {
-                    if let Some(prev) = prev { revert_to.push(VideoSetting::SampleRate(*prev)); }
-                })?;
-        }
+                vid_sample_rate.as_str()
+            },
+            None => NA_STR
+        };
+        info!("{}: sample rate: {}", module_path!(), vid_sample_rate);
 
         // Color transfer
         let vid_color_transfer = &ffprobe.streams.video.color_transfer;
