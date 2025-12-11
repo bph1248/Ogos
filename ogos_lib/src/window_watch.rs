@@ -141,11 +141,10 @@ unsafe fn error_and_close(msg_name: &str, err: ErrLoc) {
     PostQuitMessage(1);
 }
 
-unsafe fn dispatch<T>(msg: T) where
+unsafe fn dispatch_msg<T>(msg: T) where
     T: Dispatch + Name
 {
     let msg_name = msg.name();
-
     THREAD_STATE.with(|ts| -> Res<()> {
         let sxs = &ts.get().unwrap().senders;
 
@@ -153,50 +152,48 @@ unsafe fn dispatch<T>(msg: T) where
 
         Ok(())
     })
-    .unwrap_or_else(|err| {
-        error_and_close(msg_name, err);
-    });
+    .unwrap_or_else(|err| error_and_close(msg_name, err));
 }
 
 unsafe extern "system" fn all_other_foreground_destroy_proc(hook: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch(WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
+        dispatch_msg(WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn explorer_destroy_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch(WindowForegroundMsg::WinEventHookExplorerDestroy { hwnd: hwnd.as_usize() });
+        dispatch_msg(WindowForegroundMsg::WinEventHookExplorerDestroy { hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn shell_experience_host_destroy_proc(hook: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch(WindowForegroundMsg::WinEventHookShellExperienceHostDestroy { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
+        dispatch_msg(WindowForegroundMsg::WinEventHookShellExperienceHostDestroy { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn foreground_location_change_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch(WindowForegroundMsg::WinEventHookForegroundLocationChange { hwnd: hwnd.as_usize() });
+        dispatch_msg(WindowForegroundMsg::WinEventHookForegroundLocationChange { hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn shell_experience_host_location_change_proc(hook: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch(WindowForegroundMsg::WinEventHookShellExperienceHostLocationChange { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
+        dispatch_msg(WindowForegroundMsg::WinEventHookShellExperienceHostLocationChange { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn taskbar_location_change_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch(WindowForegroundMsg::WinEventHookTaskbarLocationChange { hwnd: hwnd.as_usize() });
+        dispatch_msg(WindowForegroundMsg::WinEventHookTaskbarLocationChange { hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn window_foreground_all_foreground_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
     if !hwnd.is_invalid() {
-        dispatch(WindowForegroundMsg::WinEventHookAllForeground { hwnd: hwnd.as_usize() });
+        dispatch_msg(WindowForegroundMsg::WinEventHookAllForeground { hwnd: hwnd.as_usize() });
     }
 }
 
@@ -210,7 +207,7 @@ unsafe extern "system" fn window_shift_proc(_: HWINEVENTHOOK, event: u32, hwnd: 
         EVENT_SYSTEM_MENUEND => WindowShiftMsg::MenuEnd,
         _ => return
     };
-    dispatch(msg);
+    dispatch_msg(msg);
 }
 
 unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -223,14 +220,14 @@ unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             LRESULT(0)
         },
         WM_DISPLAYCHANGE => {
-            dispatch(BroadcastMsg::WmDisplayChange(lparam));
+            dispatch_msg(BroadcastMsg::WmDisplayChange(lparam));
 
             DefWindowProcW(hwnd, msg, wparam, lparam)
         },
         WM_MOUSEMOVE => {
             let now = now!();
 
-            dispatch(WindowForegroundMsg::WmMouseMove(lparam, now));
+            dispatch_msg(WindowForegroundMsg::WmMouseMove(lparam, now));
 
             LRESULT(0)
         },
@@ -241,7 +238,7 @@ unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
 
 unsafe extern "system" fn message_only_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if msg == WM_DISPLAYCHANGE {
-        dispatch(BroadcastMsg::WmDisplayChange(lparam));
+        dispatch_msg(BroadcastMsg::WmDisplayChange(lparam));
     }
 
     DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -411,7 +408,7 @@ unsafe fn begin(enable: WindowForegroundEnable, senders: Senders, send_ready: Se
     while GetMessageW(&mut msg, None, 0, 0).as_bool() {
         match msg.message {
             WM_OGOS_CLOSE => PostQuitMessage(0),
-            WM_OGOS_RELOAD_CONFIG => dispatch(BroadcastMsg::WmReloadConfig),
+            WM_OGOS_RELOAD_CONFIG => dispatch_msg(BroadcastMsg::WmReloadConfig),
             WM_OGOS_REQUEST_WIN_EVENT_HOOKS => {
                 let (sx, request) = *Box::from_raw(msg.lParam.0 as *mut (Option<WinEventHooksSx>, WinEventHookRequest));
                 let mut hooks = Vec::new();
@@ -434,7 +431,7 @@ unsafe fn begin(enable: WindowForegroundEnable, senders: Senders, send_ready: Se
 
                                 // Notify that hook couldn't be set - undo any state that was set on request
                                 if let WinEventHookContext::AllOtherForegroundDestroy { hwnd } = info.ctx {
-                                    dispatch(WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook: 0, hwnd });
+                                    dispatch_msg(WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook: 0, hwnd });
                                 }
 
                                 ErrVar::FailedSetWinEventHooks { inner: err, ctx: info.ctx }
@@ -452,7 +449,7 @@ unsafe fn begin(enable: WindowForegroundEnable, senders: Senders, send_ready: Se
                 // If a oneshot channel is available, send result. Else report error, if any
                 match sx {
                     Some(sx) => sx.send(res).unwrap_or_else(|_| {
-                        error!("{}: failed to send win event hooks - closing", module_path!()); //$ Offload logging?
+                        error!("{}: failed to send win event hooks - closing", module_path!());
 
                         PostQuitMessage(1);
                     }),

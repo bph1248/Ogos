@@ -750,7 +750,7 @@ fn bind_maps(binds: &mut Binds, exe: &str) {
 }
 
 unsafe fn move_hitbox_about_jump_list(tb: &Taskbar, jump_list_hwnd: HWND) -> Res1<()> {
-    if tb.taskbar_side == Side::Bottom && tb.hitbox_state == HitboxState::Exit && tb.hitbox_exit_snap_ordinate.is_some() { //$ Impl for other taskbar sides
+    if tb.taskbar_side == Side::Bottom && tb.hitbox_state == HitboxState::Exit && tb.hitbox_exit_snap_ordinate.is_some() {
         let jump_list_rect = jump_list_hwnd.get_rect()?;
         let hitbox_pos_exit_y = jump_list_rect.top - tb.screen_extent.height - tb.hitbox_exit_jump_list_offset_px;
 
