@@ -106,7 +106,7 @@ pub(crate) trait AsHwineventhook {
 }
 impl AsHwineventhook for usize {
     fn as_hwineventhook(&self) -> HWINEVENTHOOK {
-        HWINEVENTHOOK(*self as *mut c_void)
+        HWINEVENTHOOK(*self as *mut _)
     }
 }
 
@@ -115,7 +115,7 @@ pub(crate) trait AsHwnd {
 }
 impl AsHwnd for usize {
     fn as_hwnd(&self) -> HWND {
-        HWND(*self as *mut c_void)
+        HWND(*self as *mut _)
     }
 }
 
@@ -275,7 +275,7 @@ impl HwndExt for HWND {
 
     unsafe fn is_cloaked(&self) -> windows::core::Result<bool> {
         let mut cloak_kind = 0_u32;
-        DwmGetWindowAttribute(*self, DWMWA_CLOAKED, &mut cloak_kind as *mut _ as *mut c_void, size_of_val(&cloak_kind) as u32)?;
+        DwmGetWindowAttribute(*self, DWMWA_CLOAKED, &mut cloak_kind as *mut _ as *mut _, size_of_val(&cloak_kind) as u32)?;
 
         Ok(cloak_kind > 0)
     }
@@ -420,7 +420,7 @@ pub(crate) unsafe fn display_message_box(msg: &str) -> ResVar<()> {
 }
 
 pub(crate) unsafe fn set_cursor_size(size: usize) -> windows::core::Result<()> {
-    SystemParametersInfoW(SYSTEM_PARAMETERS_INFO_ACTION(0x2029), 0, Some(size as *mut c_void), default!())?; // Yes, pvparam is encoding size as *mut c_void
+    SystemParametersInfoW(SYSTEM_PARAMETERS_INFO_ACTION(0x2029), 0, Some(size as *mut _), default!())?;
 
     info!("{}: cursor size: {}", module_path!(), size);
 

@@ -42,7 +42,7 @@ unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> 
         None
     )?;
 
-    let event_close = HANDLE(event_close as *mut c_void);
+    let event_close = HANDLE(event_close as *mut _);
     let event_io = CreateEventW(None, true, false, None)?;
 
     let mut buf = [0_u8; 1024];

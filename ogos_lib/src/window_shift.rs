@@ -245,7 +245,7 @@ unsafe extern "system" fn enum_desktop_windows_proc(hwnd: HWND, lparam: LPARAM) 
 }
 
 unsafe extern "system" fn enum_thread_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    let TopLevelSiblingsInfo { tid_of, siblings } = &mut *(lparam.0 as *mut TopLevelSiblingsInfo);
+    let TopLevelSiblingsInfo { tid_of, siblings } = &mut *(lparam.0 as *mut _);
 
     if hwnd != *tid_of && hwnd.is_visible() {
         siblings.push(hwnd);
@@ -328,7 +328,7 @@ unsafe fn top_level_window_relation_found(tid_of: HWND, owned_by: Option<HWND>, 
         tid_of,
         siblings: Vec::new()
     };
-    EnumThreadWindows(tid, Some(enum_thread_windows_proc), LPARAM(&mut tl_siblings_info as *mut _ as isize)).ok()?;
+    EnumThreadWindows(tid, Some(enum_thread_windows_proc), LPARAM(&mut tl_siblings_info as *mut _ as _)).ok()?;
 
     let relation_found = criteria_matches(&tl_siblings_info.siblings)?;
 
@@ -621,7 +621,7 @@ unsafe fn begin(receiver: Receiver<WindowShiftMsg>) -> Res<()> {
                     continue
                 }
 
-                EnumDesktopWindows(current_desktop_hnd, Some(enum_desktop_windows_proc), LPARAM(&mut ts as *mut _ as isize))?;
+                EnumDesktopWindows(current_desktop_hnd, Some(enum_desktop_windows_proc), LPARAM(&mut ts as *mut _ as _))?;
 
                 let config::WindowShift { stride, .. } = &window_shift_config;
                 let shift_by = {

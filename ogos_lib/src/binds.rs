@@ -373,7 +373,7 @@ impl TryAsKey for Keycode {
 
 cfg_if! { if #[cfg(feature = "dbg_window_info")] {
     unsafe extern "system" fn enum_windows_eligible_for_shift_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let EligibleForShiftInfo { eligible, screen_extent } = &mut *(lparam.0 as *mut EligibleForShiftInfo);
+        let EligibleForShiftInfo { eligible, screen_extent } = &mut *(lparam.0 as *mut _);
 
         if hwnd.is_eligible_for_shift(*screen_extent).unwrap_or_default() {
             eligible.push(hwnd);
@@ -390,7 +390,7 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
     }
 
     unsafe extern "system" fn enum_windows_tl_siblings_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let TopLevelSiblingsInfo { fg_pid, siblings } = &mut *(lparam.0 as *mut TopLevelSiblingsInfo);
+        let TopLevelSiblingsInfo { fg_pid, siblings } = &mut *(lparam.0 as *mut _);
 
         let mut win_pid = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut win_pid));
@@ -419,7 +419,7 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
             eligible: Vec::new(),
             screen_extent
         };
-        EnumWindows(Some(enum_windows_eligible_for_shift_proc), LPARAM(&mut eligible_for_shift_info as *mut _ as isize))?;
+        EnumWindows(Some(enum_windows_eligible_for_shift_proc), LPARAM(&mut eligible_for_shift_info as *mut _ as _))?;
 
         info!("{}: eligible for shift:", module_path!());
         for hwnd in eligible_for_shift_info.eligible {
@@ -451,13 +451,13 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
             module_path!(), fg_hwnd.0, fg_exe, fg_tpids.thread, fg_caption, fg_class, fg_owner.0, fg_parent.0);
 
         let mut children: Vec<HWND> = Vec::new();
-        _ = EnumChildWindows(fg_hwnd, Some(enum_child_windows_proc), LPARAM(&mut children as *mut _ as isize));
+        _ = EnumChildWindows(fg_hwnd, Some(enum_child_windows_proc), LPARAM(&mut children as *mut _ as _));
 
         let mut tl_siblings_info = TopLevelSiblingsInfo {
             fg_pid: fg_tpids.proc,
             siblings: Vec::new()
         };
-        EnumWindows(Some(enum_windows_tl_siblings_proc), LPARAM(&mut tl_siblings_info as *mut _ as isize))?;
+        EnumWindows(Some(enum_windows_tl_siblings_proc), LPARAM(&mut tl_siblings_info as *mut _ as _))?;
 
         info!("{}: fg children:", module_path!());
         for hwnd in children {
