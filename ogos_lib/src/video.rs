@@ -162,6 +162,16 @@ struct Ffprobe {
 }
 
 #[derive(Deserialize)]
+struct Layer {
+    name: String
+}
+
+#[derive(Deserialize)]
+struct ReShadeVkLayerManifest {
+    layer: Layer
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "lowercase", tag = "type")]
 enum PacketFrame {
     Packet,
@@ -295,22 +305,10 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
 
         let mut disable_reshade = || -> Res1<()> {
             if let Some(reshade_config) = reshade_config {
-                let layer_file_string = fs::read_to_string(reshade_config.layer_path.as_str())?;
-                let root_value = serde_json::from_str::<serde_json::Value>(&layer_file_string)?;
+                let manifest_str = fs::read_to_string(reshade_config.layer_path.as_str())?;
+                let manifest = serde_json::from_str::<ReShadeVkLayerManifest>(&manifest_str)?;
 
-                let reshade_vk_layer_disable_env_key = root_value.get("layer")
-                    .and_then(|value| {
-                        value.get("disable_environment")
-                    })
-                    .and_then(|value| {
-                        value.as_object()
-                    })
-                    .and_then(|obj| {
-                        obj.keys().find(|key| key.starts_with("DISABLE_"))
-                    })
-                    .ok_or(ErrVar::MissingReShadeVkLayerDisableEnvKey)?;
-
-                cmd.env(reshade_vk_layer_disable_env_key, "1");
+                cmd.env("VK_LOADER_LAYERS_DISABLE", manifest.layer.name);
             }
 
             Ok(())
