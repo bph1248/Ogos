@@ -1195,7 +1195,7 @@ impl MediaBrowser {
             .show(|ui| {
                 ui.add_enabled_ui(!self.details_info.dir_entry_infos.is_empty(), |ui| {
                     ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
-                    ui.checkbox(&mut self.use_glsl_shaders, "Use glsl shaders");
+                    ui.checkbox(&mut self.use_glsl_shaders, "Override GLSL shaders");
                     ui.menu_button("Discord Rich Presence", |ui| self.discord_rp_menu(ui));
                 });
             });

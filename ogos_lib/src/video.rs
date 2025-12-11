@@ -235,7 +235,7 @@ pub(crate) unsafe fn create_maintain_sample_rate_guard() -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, use_glsl_shaders: bool) -> Res<(), { loc_var!(Mpv) }> {
+pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, override_glsl_shaders: bool) -> Res<(), { loc_var!(Mpv) }> {
     let inner = |revert_to: &mut Vec<VideoSetting>| -> Res<(), { loc_var!(Mpv) }> {
         let config = config::get().read()?;
         let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Mpv::NAME })?;
@@ -282,12 +282,10 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
         info!("{}: color transfer: {}", module_path!(), vid_color_transfer);
 
         // GLSL shaders
-        if use_glsl_shaders &&
-            let Some(glsl_shaders) = mpv_config.glsl_shaders.as_ref()
-        {
+        if override_glsl_shaders && let Some(glsl_shaders) = mpv_config.override_glsl_shaders.as_ref() {
             cmd.arg(MpvArg::GlslShaders(glsl_shaders).to_arg_string());
-        } else {
-            cmd.arg(MpvArg::GlslShaders(&"~~/shaders/ravu-zoom-ar-r3.hook".into()).to_arg_string()); //$
+        } else if let Some(glsl_shaders) = mpv_config.default_glsl_shaders.as_ref() {
+            cmd.arg(MpvArg::GlslShaders(glsl_shaders).to_arg_string());
         }
 
         // Display mode

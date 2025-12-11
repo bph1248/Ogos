@@ -372,7 +372,8 @@ pub(crate) struct Reshade {
 pub(crate) struct Mpv {
     pub(crate) sdr_profile: String,
     pub(crate) hdr_profile: String,
-    pub(crate) glsl_shaders: Option<String>,
+    pub(crate) default_glsl_shaders: Option<String>,
+    pub(crate) override_glsl_shaders: Option<String>,
     pub(crate) reshade: Option<Reshade>
 }
 impl_name!(Mpv);
