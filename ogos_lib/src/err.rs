@@ -158,7 +158,7 @@ pub(crate) enum ErrVar {
     Which(#[from] which::Error),
     WidestringContainsNul(#[from] widestring::error::ContainsNul<u16>),
     WinCore(#[from] windows::core::Error),
-    WinCore052(#[from] windows_052::core::Error),
+    WinCore061(#[from] windows_061::core::Error),
 
     FailedAsColorBitDepth { from: u32 },
     FailedAsDitherBitDepth { from: u32 },
@@ -256,7 +256,7 @@ impl Display for ErrVar {
             Which(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             WidestringContainsNul(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             WinCore(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            WinCore052(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
+            WinCore061(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
 
             FailedAsColorBitDepth { from } => write!(f, "failed to map color bit depth from: {}", from),
             FailedAsDitherBitDepth { from } => write!(f, "failed to map dither bit depth from: {}", from),

@@ -38,9 +38,6 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging"
 ] }
-windows_052 = { version = "0.52", package = "windows", features = [
-    "Win32_Devices_FunctionDiscovery"
-] }
 
 # [profile.release]
 # lto = "thin"

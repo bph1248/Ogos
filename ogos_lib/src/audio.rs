@@ -11,7 +11,7 @@ use std::{
     fs,
     process::Command
 };
-use windows_052::{
+use windows_061::{
     core::*,
     Win32::{
         Devices::FunctionDiscovery::*,
@@ -56,30 +56,26 @@ impl TryFrom<&str> for Hz {
     type Error = ErrVar;
 
     fn try_from(value: &str) -> ResVar<Self> {
-        Ok(
-            match value {
-                "44100" => Self::N44100,
-                "48000" => Self::N48000,
-                "88200" => Self::N88200,
-                "96000" => Self::N96000,
-                _ => Err(ErrVar::FailedAsHz { from: value.into() })?
-            }
-        )
+        Ok(match value {
+            "44100" => Self::N44100,
+            "48000" => Self::N48000,
+            "88200" => Self::N88200,
+            "96000" => Self::N96000,
+            _ => Err(ErrVar::FailedAsHz { from: value.into() })?
+        })
     }
 }
 impl TryFrom<u32> for Hz {
     type Error = ErrVar;
 
     fn try_from(value: u32) -> ResVar<Self> {
-        Ok(
-            match value {
-                44100 => Self::N44100,
-                48000 => Self::N48000,
-                88200 => Self::N88200,
-                96000 => Self::N96000,
-                _ => Err(ErrVar::FailedAsHz { from: value.to_string() })?
-            }
-        )
+        Ok(match value {
+            44100 => Self::N44100,
+            48000 => Self::N48000,
+            88200 => Self::N88200,
+            96000 => Self::N96000,
+            _ => Err(ErrVar::FailedAsHz { from: value.to_string() })?
+        })
     }
 }
 
@@ -94,16 +90,24 @@ impl<T> HzExt for T where
     }
 }
 
+trait PlayNice {
+    unsafe fn set_device_format(&self, device_name: impl Param<PCWSTR>, endpoint_format: *mut WAVEFORMATEX, mix_format: *mut WAVEFORMATEX) -> HRESULT;
+}
+impl PlayNice for IPolicyConfig {
+    unsafe fn set_device_format(&self, device_name: impl Param<PCWSTR>, endpoint_format: *mut WAVEFORMATEX, mix_format: *mut WAVEFORMATEX) -> HRESULT {
+        (Interface::vtable(self).SetDeviceFormat)(Interface::as_raw(self), device_name.param().abi(), endpoint_format, mix_format)
+    }
+}
+
 pub(crate) unsafe fn set_endpoint(name: &str) -> Res1<()> {
     let config = config::get().read()?;
-    let audio_config = config.audio.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Audio::NAME })?;
+    let endpoints = config.audio.as_ref()
+        .and_then(|audio_config| audio_config.endpoints.as_ref())
+        .ok_or(ErrVar::MissingConfigKey { name: config::Endpoints::NAME })?;
 
-    let endpoints = audio_config.endpoints.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Endpoints::NAME })?;
-    let prog = endpoints.0.get(name);
+    CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
-    CoInitializeEx(None, COINIT_MULTITHREADED)?;
-
-    {
+    let inner = || -> Res<()> {
         let device_enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         let device_collection = device_enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
 
@@ -122,13 +126,18 @@ pub(crate) unsafe fn set_endpoint(name: &str) -> Res1<()> {
                 break
             }
         }
-    }
+
+        Ok(())
+    };
+    let res = inner();
 
     CoUninitialize();
 
+    res?;
+
     info!("{}: set endpoint: {}", module_path!(), name);
 
-    if let Some(app) = prog {
+    if let Some(app) = endpoints.0.get(name) {
         let mut cmd = Command::new(&app.path);
         cmd.args(&app.args);
 
@@ -141,9 +150,9 @@ pub(crate) unsafe fn set_endpoint(name: &str) -> Res1<()> {
 }
 
 pub(crate) unsafe fn set_sample_rate(hz: Hz) -> Res1<Option<Hz>> {
-    CoInitializeEx(None, COINIT_MULTITHREADED)?;
+    CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
-    let prev_sample_rate = (|| -> Res<Option<Hz>> {
+    let inner = || -> Res<Option<Hz>> {
         let device_enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         let device = device_enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)?;
         let device_id = PCWSTR(device.GetId()?.0);
@@ -155,33 +164,37 @@ pub(crate) unsafe fn set_sample_rate(hz: Hz) -> Res1<Option<Hz>> {
         let sample_rate = u32::from(hz);
         let prev_sample_rate = device_format.Format.nSamplesPerSec;
 
-        match sample_rate == prev_sample_rate {
-            true => Ok(None),
-            false => {
-                device_format.Format.nSamplesPerSec = sample_rate;
-                device_format.Format.nAvgBytesPerSec = u32::from(device_format.Format.nChannels) * u32::from(hz) * u32::from(device_format.Format.wBitsPerSample) / 8;
+        if sample_rate != prev_sample_rate {
+            let prev_hz = Hz::try_from(prev_sample_rate)?;
 
-                let mix_format_ptr = &mut device_format as *mut _ as *mut WAVEFORMATEX;
-                (Interface::vtable(&policy_config).SetDeviceFormat)(Interface::as_raw(&policy_config), device_id.into_param().abi(), mix_format_ptr, mix_format_ptr).ok()?;
+            device_format.Format.nSamplesPerSec = sample_rate;
+            device_format.Format.nAvgBytesPerSec = u32::from(device_format.Format.nChannels) * u32::from(hz) * u32::from(device_format.Format.wBitsPerSample) / 8;
 
-                info!("{}: set sample rate: {}", module_path!(), hz);
+            let device_format_ptr = &mut device_format as *mut _ as *mut WAVEFORMATEX;
+            let mix_format_ptr = device_format_ptr;
+            policy_config.set_device_format(device_id, device_format_ptr, mix_format_ptr).ok()?;
 
-                Ok(Some(Hz::try_from(prev_sample_rate)?))
-            }
+            info!("{}: set sample rate: {}", module_path!(), hz);
+
+            Ok(Some(prev_hz))
+        } else {
+            Ok(None)
         }
-    })();
+    };
+    let prev_hz = inner();
 
     CoUninitialize();
 
-    Ok(prev_sample_rate?)
+    Ok(prev_hz?)
 }
 
 pub(crate) fn set_eq(name: &str) -> Res1<()> {
     let config = config::get().read()?;
-    let audio_config = config.audio.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Audio::NAME })?;
-    let eq_apo = audio_config.eq_apo.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::EqApo::NAME })?;
+    let eq_apo = config.audio.as_ref()
+        .and_then(|audio_config| audio_config.eq_apo.as_ref())
+        .ok_or(ErrVar::MissingConfigKey { name: config::EqApo::NAME })?;
 
-    let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or_else(|| { ErrVar::UnknownEq { name: name.into() } })?;
+    let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or_else(|| ErrVar::UnknownEq { name: name.into() })?;
 
     fs::copy(custom_config_path, eq_apo.master_config_path.as_str())?;
 

@@ -16,7 +16,7 @@ bitflags = "2.9.1"
 blake3 = { version = "1.8.2", features = ["rayon"] }
 cfg-if = "1.0.3"
 clap = { version = "4.3.0", features = ["derive"] }
-com-policy-config = "0.5.0"
+com-policy-config = "0.6.0"
 concat-string = "1.0.1"
 const_format = "0.2.34"
 ddc-hi = "0.4.1"
@@ -56,7 +56,9 @@ tokio = { version = "1.46.1", features = ["full"] }
 which = "6.0.1"
 widestring = "1.2.0"
 windows = { workspace = true }
-windows_052 = { workspace = true }
+windows_061 = { version = "0.61", package = "windows", features = [
+    "Win32_Devices_FunctionDiscovery"
+] }
 
 [features]
 bug_hunting_cpu_sets = []

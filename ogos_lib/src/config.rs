@@ -687,7 +687,6 @@ pub(crate) struct Audio {
     pub(crate) endpoints: Option<Endpoints>,
     pub(crate) eq_apo: Option<EqApo>
 }
-impl_name!(Audio);
 
 fn epic() -> String { r"C:\Program Files (x86)\Epic Games\Launcher\Portal\Binaries\Win64\EpicGamesLauncher.exe".into() }
 fn gog() -> String { r"C:\Program Files (x86)\GOG Galaxy\GalaxyClient.exe".into() }
