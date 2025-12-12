@@ -174,17 +174,21 @@ impl Name for WindowShiftMsg {
     }
 }
 
-#[subenum(VideoSetting)]
+#[subenum(GamesSetting, VideoSetting)]
 pub(crate) enum Setting {
+    #[subenum(GamesSetting)]
     Bind(BindName),
+    #[subenum(GamesSetting)]
     CursorSize(usize),
+    #[subenum(GamesSetting)]
     Discord(DiscordIpcClient),
-    #[subenum(VideoSetting)]
+    #[subenum(GamesSetting, VideoSetting)]
     DisplayMode(DisplayMode),
     #[subenum(VideoSetting)]
     NovideoSrgb(NovideoSrgbInfo),
     #[subenum(VideoSetting)]
     SampleRate(Hz),
+    #[subenum(GamesSetting)]
     ScreenExtent(Extent2dU)
 }
 

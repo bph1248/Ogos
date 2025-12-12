@@ -46,7 +46,7 @@ impl Launcher {
 }
 
 pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) }> {
-    let mut revert_to: Vec<Setting> = Vec::new();
+    let mut revert_to: Vec<GamesSetting> = Vec::new();
 
     let res = (|| -> Res<(), { loc_var!(Games) }> {
         let config = config::get().read()?;
@@ -57,13 +57,13 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         if let Some(name) = game_info.unbind {
             pipe_msg(PipeMsg::BindMsg(BindMsg::Unbind(BindName::Underscore)))?;
 
-            revert_to.push(Setting::Bind(name));
+            revert_to.push(GamesSetting::Bind(name));
         }
 
         if let Some(cursor_size) = cli.gaming.cursor_size {
             set_cursor_size(cursor_size)?;
 
-            revert_to.push(Setting::CursorSize(32));
+            revert_to.push(GamesSetting::CursorSize(32));
 
         }
 
@@ -73,7 +73,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
             let prev = set_screen_extent(res)?;
 
             if let Some(prev) = prev {
-                revert_to.push(Setting::ScreenExtent(prev));
+                revert_to.push(GamesSetting::ScreenExtent(prev));
             }
         }
 
@@ -81,7 +81,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
             let prev = set_display_mode(SetDisplayModeOp::Set(DisplayMode::Hdr))?;
 
             if let Some(prev) = prev {
-                revert_to.push(Setting::DisplayMode(prev));
+                revert_to.push(GamesSetting::DisplayMode(prev));
             }
         }
 
@@ -271,7 +271,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
                     }
                 }
 
-                revert_to.push(Setting::Discord(ipc_client));
+                revert_to.push(GamesSetting::Discord(ipc_client));
             },
             _ => {
                 info!("{}: waiting for process to terminate...", module_path!());
@@ -290,22 +290,21 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
     while let Some(setting) = revert_to.pop() {
         (|| -> Res<()> {
             match setting {
-                Setting::Bind(name) => {
+                GamesSetting::Bind(name) => {
                     pipe_msg(PipeMsg::BindMsg(BindMsg::Bind(name)))?;
                 },
-                Setting::CursorSize(size) => {
+                GamesSetting::CursorSize(size) => {
                     set_cursor_size(size)?;
                 },
-                Setting::Discord(mut ipc_client) => {
+                GamesSetting::Discord(mut ipc_client) => {
                     ipc_client.close()?;
                 },
-                Setting::DisplayMode(display_mode) => {
+                GamesSetting::DisplayMode(display_mode) => {
                     set_display_mode(SetDisplayModeOp::Set(display_mode))?;
                 },
-                Setting::ScreenExtent(screen_extent) => {
+                GamesSetting::ScreenExtent(screen_extent) => {
                     set_screen_extent(screen_extent)?;
-                },
-                _ => unreachable!()
+                }
             }
 
             Ok(())
