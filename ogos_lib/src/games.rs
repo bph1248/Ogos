@@ -287,7 +287,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         Ok(())
     })();
 
-    for setting in revert_to.into_iter().rev() {
+    while let Some(setting) = revert_to.pop() {
         (|| -> Res<()> {
             match setting {
                 Setting::Bind(name) => {

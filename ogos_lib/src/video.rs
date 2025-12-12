@@ -423,7 +423,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
     let mut revert_to: Vec<VideoSetting> = Vec::new();
     let res = inner(&mut revert_to);
 
-    for setting in revert_to.into_iter().rev() {
+    while let Some(setting) = revert_to.pop() {
         (|| -> Res<()> {
             match setting {
                 VideoSetting::DisplayMode(display_mode) => {

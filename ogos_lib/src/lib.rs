@@ -199,8 +199,8 @@ fn receive_ready(to_close: &mut Vec<LongLivedTask>, ready_receiver: &mpsc::Recei
     window_watch_tid
 }
 
-unsafe fn shutdown(to_close: Vec<LongLivedTask>) {
-    for long_lived_task in to_close.into_iter().rev() {
+unsafe fn shutdown(mut to_close: Vec<LongLivedTask>) {
+    while let Some(long_lived_task) = to_close.pop() {
         (|| -> Res<()> {
             match long_lived_task {
                 LongLivedTask::ConfigWatch(event_close) => SetEvent(event_close)?,
