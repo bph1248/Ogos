@@ -80,8 +80,8 @@ impl Qmk {
         let api = qmk_api::KeyboardApi::new(vid, pid, usage_page)
             .map_err(|_| ErrVar::FailedQmkKeyboardInit { vid, pid, usage_page })?;
 
-        let layout_string = fs::read_to_string(qmk_config.layout_path.as_str())?;
-        let layout_deser = serde_json::from_str::<qmk_deser::Layout>(&layout_string)?;
+        let layout_str = fs::read_to_string(qmk_config.layout_path.as_str())?;
+        let layout_deser = serde_json::from_str::<qmk_deser::Layout>(&layout_str)?;
 
         let mut layout = HashMap::new();
         for key_coord in &layout_deser.layers.get(qmk_config.layer as usize).ok_or(ErrVar::InvalidQmkLayer { index: qmk_config.layer })?.key_coords {
