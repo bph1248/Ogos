@@ -124,11 +124,9 @@ unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> 
 }
 
 pub(crate) unsafe fn spawn(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> JoinHandle<()> {
-    thread::Builder::new()
-        .spawn(move || {
-            begin(can_reload_config, event_close).unwrap_or_else(|err| {
-                error!("{}: terminated: {}", module_path!(), err);
-            });
-        })
-        .unwrap()
+    thread::spawn(move || {
+        begin(can_reload_config, event_close).unwrap_or_else(|err| {
+            error!("{}: terminated: {}", module_path!(), err);
+        });
+    })
 }

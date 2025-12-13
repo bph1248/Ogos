@@ -524,7 +524,7 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
     Ok(win_info)
 }
 
-unsafe fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_errored: &mut HashMap<usize, Errored>, window_shift_config: &WindowShift, receiver: &Receiver<WindowShiftMsg>) -> Res<()> {
+unsafe fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_errored: &mut HashMap<usize, Errored>, window_shift_config: &WindowShift, rx: &Receiver<WindowShiftMsg>) -> Res<()> {
     let interval_begin = now!();
     let interval_end = interval_begin + Duration::from_secs(u64::from(window_shift_config.interval_dur));
     let time_remaining = || interval_end - now!();
@@ -532,8 +532,8 @@ unsafe fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, w
 
     let mut inner = || -> Res<()> {
         let msg = match pause_shift {
-            true => receiver.recv()?,
-            false => receiver.recv_timeout(time_remaining())?
+            true => rx.recv()?,
+            false => rx.recv_timeout(time_remaining())?
         };
 
         match msg {
@@ -595,7 +595,7 @@ unsafe fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> 
     Ok(false)
 }
 
-unsafe fn begin(receiver: Receiver<WindowShiftMsg>) -> Res<()> {
+unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
     info!("{}: begin", module_path!());
 
     let config = config::get().read()?;
@@ -613,7 +613,7 @@ unsafe fn begin(receiver: Receiver<WindowShiftMsg>) -> Res<()> {
     };
     loop {
         // Listen for messages until timeout, then look to shift windows. Rinse and repeat
-        match smaug(&mut ts, &mut win_infos, &mut win_errored, &window_shift_config, &receiver) {
+        match smaug(&mut ts, &mut win_infos, &mut win_errored, &window_shift_config, &rx) {
             Ok(_) => {
                 let fg_hwnd = GetForegroundWindow();
 
@@ -694,12 +694,10 @@ unsafe fn begin(receiver: Receiver<WindowShiftMsg>) -> Res<()> {
     Ok(())
 }
 
-pub(crate) unsafe fn spawn(receiver: Receiver<WindowShiftMsg>) -> JoinHandle<()> {
-    thread::Builder::new()
-        .spawn(|| {
-            begin(receiver).unwrap_or_else(|err| {
-                error!("{}: terminated: {}", module_path!(), err);
-            });
-        })
-        .unwrap()
+pub(crate) unsafe fn spawn(rx: Receiver<WindowShiftMsg>) -> JoinHandle<()> {
+    thread::spawn(|| {
+        begin(rx).unwrap_or_else(|err| {
+            error!("{}: terminated: {}", module_path!(), err);
+        });
+    })
 }

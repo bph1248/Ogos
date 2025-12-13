@@ -146,7 +146,7 @@ impl TryFrom<u32> for ColorBitDepth {
                 10 => Self::N10,
                 12 => Self::N12,
                 16 => Self::N16,
-                _ => Err(ErrVar::FailedAsColorBitDepth { from: value })?
+                _ => Err(ErrVar::FailedColorBitDepthFrom { from: value })?
             }
         )
     }
@@ -227,7 +227,7 @@ impl TryFrom<u32> for DitherBitDepth {
                 6 => Self::N6,
                 8 => Self::N8,
                 10 => Self::N10,
-                _ => Err(ErrVar::FailedAsDitherBitDepth { from: value })?
+                _ => Err(ErrVar::FailedDitherBitDepthFrom { from: value })?
             }
         )
     }

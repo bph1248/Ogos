@@ -15,7 +15,7 @@ use std::{
     os::windows::process::*,
     process::*,
     sync::mpsc::*,
-    thread::{self, *},
+    thread::*,
     time::{self, *}
 };
 
@@ -98,7 +98,7 @@ pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, rp_info: &DiscordRichPres
     Ok(())
 }
 
-fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, username: String, receiver: Receiver<Msg>) -> Res<()> {
+fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, username: String, rx: Receiver<Msg>) -> Res<()> {
     info!("{}: begin chess", module_path!());
 
     ipc_client.connect()?;
@@ -146,7 +146,7 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
         })?;
 
     loop {
-        match receiver.recv_timeout(Duration::from_secs(30)) { // Wait for signal to close, triggered when user closes gui
+        match rx.recv_timeout(Duration::from_secs(30)) { // Wait for signal to close, triggered when user closes gui
             Ok(msg) => {
                 if let Msg::Close = msg {
                     break
@@ -201,12 +201,10 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
     Ok(())
 }
 
-pub(crate) fn spawn_scoped_chess<'a>(s: &'a Scope<'a, '_>, ipc_client: &'a mut DiscordIpcClient, large_image: Option<String>, username: String, receiver: Receiver<Msg>) -> ScopedJoinHandle<'a, ()> {
-    thread::Builder::new()
-        .spawn_scoped(s, || {
-            begin_chess(ipc_client, large_image, username, receiver).unwrap_or_else(|err| {
-                error!("{}: failed to monitor chess stats: {}", module_path!(), err);
-            });
-        })
-        .unwrap()
+pub(crate) fn spawn_scoped_chess<'a>(s: &'a Scope<'a, '_>, ipc_client: &'a mut DiscordIpcClient, large_image: Option<String>, username: String, rx: Receiver<Msg>) -> ScopedJoinHandle<'a, ()> {
+    s.spawn(|| {
+        begin_chess(ipc_client, large_image, username, rx).unwrap_or_else(|err| {
+            error!("{}: failed to monitor chess stats: {}", module_path!(), err);
+        });
+    })
 }

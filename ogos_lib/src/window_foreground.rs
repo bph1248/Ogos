@@ -56,7 +56,7 @@ impl Drop for Binds {
 
 bitflags! {
     #[derive(Clone, Copy, Default, PartialEq)]
-    pub(crate) struct ChannelEnable: u32 {
+    pub(crate) struct EnabledChannels: u32 {
         const WINDOW_FOREGROUND = 0b00000001;
         const WINDOW_SHIFT      = 0b00000010;
     }
@@ -91,26 +91,22 @@ pub(crate) struct Receivers {
 }
 
 #[derive(Default)]
-pub(crate) struct EnabledChannels {
-    pub(crate) enable: ChannelEnable,
-    pub(crate) senders: Senders,
-    pub(crate) receivers: Receivers
+pub(crate) struct LongLivedChannels {
+    pub(crate) enabled: EnabledChannels,
+    pub(crate) sxs: Senders,
+    pub(crate) rxs: Receivers
 }
-impl EnabledChannels {
-    pub(crate) fn with_window_foreground(mut self, channel: (Sender<WindowForegroundMsg>, Receiver<WindowForegroundMsg>)) -> Self {
-        self.enable |= ChannelEnable::WINDOW_FOREGROUND;
-        self.senders.window_foreground = Some(channel.0);
-        self.receivers.window_foreground = Some(channel.1);
-
-        self
+impl LongLivedChannels {
+    pub(crate) fn with_window_foreground(&mut self, channel: (Sender<WindowForegroundMsg>, Receiver<WindowForegroundMsg>)) {
+        self.enabled |= EnabledChannels::WINDOW_FOREGROUND;
+        self.sxs.window_foreground = Some(channel.0);
+        self.rxs.window_foreground = Some(channel.1);
     }
 
-    pub(crate) fn with_window_shift(mut self, channel: (Sender<WindowShiftMsg>, Receiver<WindowShiftMsg>)) -> Self {
-        self.enable |= ChannelEnable::WINDOW_SHIFT;
-        self.senders.window_shift = Some(channel.0);
-        self.receivers.window_shift = Some(channel.1);
-
-        self
+    pub(crate) fn with_window_shift(&mut self, channel: (Sender<WindowShiftMsg>, Receiver<WindowShiftMsg>)) {
+        self.enabled |= EnabledChannels::WINDOW_SHIFT;
+        self.sxs.window_shift = Some(channel.0);
+        self.rxs.window_shift = Some(channel.1);
     }
 }
 
@@ -831,8 +827,8 @@ fn init_binds() -> Res1<Binds> {
     })
 }
 
-unsafe fn init_taskbar(receiver: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
-    match receiver.recv()? {
+unsafe fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
+    match rx.recv()? {
         WindowForegroundMsg::Taskbar(tb) => {
             tb.taskbar_hwnd.hide();
             _ = ShowWindow(tb.hitbox_hwnd, SW_SHOWNA);
@@ -843,13 +839,13 @@ unsafe fn init_taskbar(receiver: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar
     }
 }
 
-unsafe fn begin(enable: WindowForegroundEnable, receiver: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> Res<()> {
+unsafe fn begin(enable: WindowForegroundEnable, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> Res<()> {
     info!("{}: begin", module_path!());
 
     let mut ts = ThreadState {
         hook_mgr_tid: hook_mgr_tid.0,
         binds: enable.contains(WindowForegroundEnable::DYNAMIC_BINDS).then_some(init_binds()?),
-        tb: enable.contains(WindowForegroundEnable::TASKBAR).then_some(init_taskbar(&receiver)?),
+        tb: enable.contains(WindowForegroundEnable::TASKBAR).then_some(init_taskbar(&rx)?),
         ..default!()
     };
 
@@ -922,7 +918,7 @@ unsafe fn begin(enable: WindowForegroundEnable, receiver: Receiver<WindowForegro
         Ok(())
     };
 
-    for msg in receiver.iter() {
+    for msg in rx.iter() {
         let msg_name = msg.name();
 
         if let Err(err) = handle_msg(msg) {
@@ -939,12 +935,10 @@ unsafe fn begin(enable: WindowForegroundEnable, receiver: Receiver<WindowForegro
     Ok(())
 }
 
-pub(crate) unsafe fn spawn(enable: WindowForegroundEnable, receiver: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
-    thread::Builder::new()
-        .spawn(move || {
-            begin(enable, receiver, hook_mgr_tid).unwrap_or_else(|err| {
-                error!("{}: terminated: {}", module_path!(), err);
-            });
-        })
-        .unwrap()
+pub(crate) unsafe fn spawn(enable: WindowForegroundEnable, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
+    thread::spawn(move || {
+        begin(enable, rx, hook_mgr_tid).unwrap_or_else(|err| {
+            error!("{}: terminated: {}", module_path!(), err);
+        });
+    })
 }

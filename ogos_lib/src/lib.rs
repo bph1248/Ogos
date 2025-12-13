@@ -165,28 +165,28 @@ unsafe fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf
     Ok(path)
 }
 
-fn get_enabled_channels(window_foreground_enable: bool, window_shift_enable: bool) -> EnabledChannels {
-    let mut enabled = EnabledChannels::default();
+fn get_long_lived_channels(window_foreground_enable: bool, window_shift_enable: bool) -> LongLivedChannels {
+    let mut llc = LongLivedChannels::default();
 
     if window_foreground_enable {
         let channels = mpsc::channel::<WindowForegroundMsg>();
 
-        enabled = enabled.with_window_foreground(channels);
+        llc.with_window_foreground(channels);
     }
 
     if window_shift_enable {
         let channels = mpsc::channel::<WindowShiftMsg>();
 
-        enabled = enabled.with_window_shift(channels);
+        llc.with_window_shift(channels);
     }
 
-    enabled
+    llc
 }
 
-fn receive_ready(to_close: &mut Vec<LongLivedTask>, ready_receiver: &mpsc::Receiver<ReadyMsg>) -> Option<Tid> {
+fn receive_ready(to_close: &mut Vec<LongLivedTask>, rx: mpsc::Receiver<ReadyMsg>) -> Option<Tid> {
     let mut window_watch_tid = None;
 
-    for msg in ready_receiver.iter() {
+    for msg in rx.iter() {
         match msg {
             ReadyMsg::PipeServer => to_close.push(LongLivedTask::PipeServer),
             ReadyMsg::WindowWatch(tid) => {
@@ -338,7 +338,7 @@ unsafe fn begin() -> Res<()> {
         let mut thread_hnds = Vec::new();
         let mut to_close = Vec::new();
 
-        let (ready_sender, ready_receiver) = mpsc::channel::<ReadyMsg>();
+        let (ready_sx, ready_rx) = mpsc::channel::<ReadyMsg>();
 
         let init_long_lived_tasks = || -> Res<()> {
             let mut can_reload_config = Vec::new();
@@ -352,30 +352,30 @@ unsafe fn begin() -> Res<()> {
                     error!("{}: failed to configure static binds: {}", module_path!(), err);
                 });
 
-                thread_hnds.push(pipe_server::spawn(ready_sender.clone()));
+                thread_hnds.push(pipe_server::spawn(ready_sx.clone()));
             }
 
-            let sxrx = get_enabled_channels(cli.binds || cli.taskbar, cli.window_shift);
+            let long_lived_channels = get_long_lived_channels(cli.binds || cli.taskbar, cli.window_shift);
 
             // Window watch
-            if !sxrx.enable.is_empty() {
+            if !long_lived_channels.enabled.is_empty() {
                 if cli.binds { window_foreground_enable |= WindowForegroundEnable::DYNAMIC_BINDS };
                 if cli.taskbar { window_foreground_enable |= WindowForegroundEnable::TASKBAR; }
 
-                thread_hnds.push(window_watch::spawn(window_foreground_enable, sxrx.senders, ready_sender));
+                thread_hnds.push(window_watch::spawn(window_foreground_enable, long_lived_channels.sxs, ready_sx));
             }
-            let hook_mgr_tid = receive_ready(&mut to_close, &ready_receiver);
+            let hook_mgr_tid = receive_ready(&mut to_close, ready_rx);
 
-            match sxrx.enable {
-                ChannelEnable::WINDOW_FOREGROUND => {
-                    thread_hnds.push(window_foreground::spawn(window_foreground_enable, sxrx.receivers.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
+            match long_lived_channels.enabled {
+                EnabledChannels::WINDOW_FOREGROUND => {
+                    thread_hnds.push(window_foreground::spawn(window_foreground_enable, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
                 },
-                ChannelEnable::WINDOW_SHIFT => {
-                    thread_hnds.push(window_shift::spawn(sxrx.receivers.window_shift.unwrap()));
+                EnabledChannels::WINDOW_SHIFT => {
+                    thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
                 },
-                _ if sxrx.enable == ChannelEnable::WINDOW_FOREGROUND | ChannelEnable::WINDOW_SHIFT => {
-                    thread_hnds.push(window_foreground::spawn(window_foreground_enable, sxrx.receivers.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
-                    thread_hnds.push(window_shift::spawn(sxrx.receivers.window_shift.unwrap()));
+                _ if long_lived_channels.enabled == EnabledChannels::WINDOW_FOREGROUND | EnabledChannels::WINDOW_SHIFT => {
+                    thread_hnds.push(window_foreground::spawn(window_foreground_enable, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
+                    thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
                 },
                 _ => ()
             }

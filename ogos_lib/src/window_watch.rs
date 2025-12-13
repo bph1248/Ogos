@@ -37,7 +37,7 @@ pub(crate) const WM_OGOS_RELOAD_CONFIG: u32 = WmOgos::ReloadConfig as u32;
            const WM_OGOS_REQUEST_WIN_EVENT_UNHOOKS: u32 = WmOgos::RequestWinEventUnhooks as u32;
 
 struct ThreadState {
-    senders: Senders
+    sxs: Senders
 }
 
 thread_local! {
@@ -45,26 +45,26 @@ thread_local! {
 }
 
 trait Dispatch {
-    fn dispatch(self, senders: &Senders) -> Res1<()>;
+    fn dispatch(self, sxs: &Senders) -> Res1<()>;
 }
 impl Dispatch for BroadcastMsg {
-    fn dispatch(self, senders: &Senders) -> Res1<()> {
-        senders.window_foreground.as_ref().map(|sx| { sx.send(WindowForegroundMsg::BroadcastMsg(self)) }).transpose()?;
-        senders.window_shift.as_ref().map(|sx| { sx.send(WindowShiftMsg::BroadcastMsg(self)) }).transpose()?;
+    fn dispatch(self, sxs: &Senders) -> Res1<()> {
+        sxs.window_foreground.as_ref().map(|sx| { sx.send(WindowForegroundMsg::BroadcastMsg(self)) }).transpose()?;
+        sxs.window_shift.as_ref().map(|sx| { sx.send(WindowShiftMsg::BroadcastMsg(self)) }).transpose()?;
 
         Ok(())
     }
 }
 impl Dispatch for WindowForegroundMsg {
-    fn dispatch(self, senders: &Senders) -> Res1<()> {
-        senders.window_foreground.as_ref().map(|sx| { sx.send(self) }).transpose()?;
+    fn dispatch(self, sxs: &Senders) -> Res1<()> {
+        sxs.window_foreground.as_ref().map(|sx| { sx.send(self) }).transpose()?;
 
         Ok(())
     }
 }
 impl Dispatch for WindowShiftMsg {
-    fn dispatch(self, senders: &Senders) -> Res1<()> {
-        senders.window_shift.as_ref().map(|sx| { sx.send(self) }).transpose()?;
+    fn dispatch(self, sxs: &Senders) -> Res1<()> {
+        sxs.window_shift.as_ref().map(|sx| { sx.send(self) }).transpose()?;
 
         Ok(())
     }
@@ -146,7 +146,7 @@ unsafe fn dispatch_msg<T>(msg: T) where
 {
     let msg_name = msg.name();
     THREAD_STATE.with(|ts| -> Res<()> {
-        let sxs = &ts.get().unwrap().senders;
+        let sxs = &ts.get().unwrap().sxs;
 
         msg.dispatch(sxs)?;
 
@@ -244,7 +244,7 @@ unsafe extern "system" fn message_only_proc(hwnd: HWND, msg: u32, wparam: WPARAM
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-unsafe fn init_hitbox(senders: &Senders) -> Res1<HWND> {
+unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
     SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(window_foreground_all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
 
     let config = config::get().read()?;
@@ -343,19 +343,19 @@ unsafe fn init_hitbox(senders: &Senders) -> Res1<HWND> {
         ..default!()
     };
 
-    senders.window_foreground.as_ref().unwrap().send(WindowForegroundMsg::Taskbar(Box::new(tb)))?;
+    sxs.window_foreground.as_ref().unwrap().send(WindowForegroundMsg::Taskbar(Box::new(tb)))?;
 
     Ok(hitbox_hwnd)
 }
 
-unsafe fn begin(enable: WindowForegroundEnable, senders: Senders, send_ready: Sender<ReadyMsg>) -> Res<()> {
+unsafe fn begin(enable: WindowForegroundEnable, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> Res<()> {
     info!("{}: begin", module_path!());
 
     let mut msg = MSG::default();
 
     THREAD_STATE.with(|ts| -> Res<()> {
         if enable.contains(WindowForegroundEnable::TASKBAR) {
-            init_hitbox(&senders)?;
+            init_hitbox(&sxs)?;
         }
 
         if enable.contains(WindowForegroundEnable::DYNAMIC_BINDS | !WindowForegroundEnable::TASKBAR) {
@@ -394,13 +394,13 @@ unsafe fn begin(enable: WindowForegroundEnable, senders: Senders, send_ready: Se
             )?;
         }
 
-        ts.set(ThreadState { senders }).map_err(|_| ErrVar::FailedSetOnceCell)?;
+        ts.set(ThreadState { sxs }).map_err(|_| ErrVar::FailedSetOnceCell)?;
 
         PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE).as_bool();
 
         let tid = GetCurrentThreadId();
-        send_ready.send(ReadyMsg::WindowWatch(Tid(tid)))?;
-        drop(send_ready);
+        ready_sx.send(ReadyMsg::WindowWatch(Tid(tid)))?;
+        drop(ready_sx);
 
         Ok(())
     })?;
@@ -472,12 +472,10 @@ unsafe fn begin(enable: WindowForegroundEnable, senders: Senders, send_ready: Se
     Ok(())
 }
 
-pub(crate) unsafe fn spawn(enable: WindowForegroundEnable, senders: Senders, send_ready: Sender<ReadyMsg>) -> JoinHandle<()> {
-    thread::Builder::new()
-        .spawn(move || {
-            begin(enable, senders, send_ready).unwrap_or_else(|err| {
-                error!("{}: terminated: {}", module_path!(), err);
-            });
-        })
-        .unwrap()
+pub(crate) unsafe fn spawn(enable: WindowForegroundEnable, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> JoinHandle<()> {
+    thread::spawn(move || {
+        begin(enable, sxs, ready_sx).unwrap_or_else(|err| {
+            error!("{}: terminated: {}", module_path!(), err);
+        });
+    })
 }

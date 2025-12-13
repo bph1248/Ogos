@@ -149,11 +149,9 @@ unsafe fn begin(send_ready: mpsc::Sender<ReadyMsg>) -> Res<()> {
 }
 
 pub(crate) unsafe fn spawn(send_ready: mpsc::Sender<ReadyMsg>) -> JoinHandle<()> {
-    thread::Builder::new()
-        .spawn(|| {
-            begin(send_ready).unwrap_or_else(|err| {
-                error!("{}: terminated: {}", module_path!(), err);
-            });
-        })
-        .unwrap()
+    thread::spawn(|| {
+        begin(send_ready).unwrap_or_else(|err| {
+            error!("{}: terminated: {}", module_path!(), err);
+        });
+    })
 }

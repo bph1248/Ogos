@@ -250,14 +250,14 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
                 match name {
                     "Chess" => {
                         thread::scope(|s| -> Res<()> {
-                            let (send_to_discord, receiver) = mpsc::channel::<Msg>();
+                            let (discord_sx, rx) = mpsc::channel::<Msg>();
 
                             let large_image = discord_rp_info.large_image.clone();
                             let chess_username = discord_rp_info.chess_username.clone().ok_or(ErrVar::MissingUsername)?;
-                            discord::spawn_scoped_chess(s, &mut ipc_client, large_image, chess_username, receiver);
+                            discord::spawn_scoped_chess(s, &mut ipc_client, large_image, chess_username, rx);
 
                             gui::begin(gui::Kind::Discord { name: name.into(), rp_info: discord_rp_info })?;
-                            send_to_discord.send(Msg::Close)?;
+                            discord_sx.send(Msg::Close)?;
 
                             Ok(())
                         })?;

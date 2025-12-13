@@ -61,7 +61,7 @@ pub(crate) mod qmk_deser {
 }
 
 struct EligibleForShiftInfo {
-    eligible: Vec<HWND>,
+    eligibles: Vec<HWND>,
     screen_extent: Extent2d
 }
 
@@ -105,7 +105,7 @@ impl Qmk {
 
 #[derive(Default)]
 struct ThreadState {
-    trigger: Option<InputEvent>,
+    trigger_to_send: Option<InputEvent>,
     trigger_is_pressed: bool,
     prefixes_pressed: HashSet<Key>
 }
@@ -246,7 +246,7 @@ impl TryAsInputEvent for &str {
             .or_else(|_| {
                 Wheel::from_str(self).map(MouseWheel)
             })
-            .map_err(|_| ErrVar::FailedStrAsInputEvent { from: (*self).into() })
+            .map_err(|_| ErrVar::FailedInputEventFrom { from: (*self).into() })
     }
 }
 
@@ -255,7 +255,7 @@ pub(crate) trait TryAsKey {
 }
 impl TryAsKey for &str {
     fn try_as_key(&self) -> ResVar<Key> {
-        Key::from_str(self).map_err(|_| ErrVar::FailedStrAsKey { from: (*self).into() })
+        Key::from_str(self).map_err(|_| ErrVar::FailedKeyFromStr { from: (*self).into() })
     }
 }
 impl TryAsKey for Keycode {
@@ -366,17 +366,17 @@ impl TryAsKey for Keycode {
             KC_KP_MINUS => KeypadMinus,
             KC_KP_PLUS => KeypadPlus,
             KC_KP_DOT => KeypadDot,
-            _ => Err(ErrVar::FailedKeycodeAsKey { from: self.clone() })?
+            _ => Err(ErrVar::FailedKeyFromKeycode { from: self.clone() })?
         })
     }
 }
 
 cfg_if! { if #[cfg(feature = "dbg_window_info")] {
     unsafe extern "system" fn enum_windows_eligible_for_shift_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let EligibleForShiftInfo { eligible, screen_extent } = &mut *(lparam.0 as *mut _);
+        let EligibleForShiftInfo { eligibles, screen_extent } = &mut *(lparam.0 as *mut _);
 
         if hwnd.is_eligible_for_shift(*screen_extent).unwrap_or_default() {
-            eligible.push(hwnd);
+            eligibles.push(hwnd);
         }
 
         TRUE
@@ -416,17 +416,17 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
     unsafe fn print_eligible_for_shift_info() -> Res<()> {
         let screen_extent = get_screen_extent(GetDesktopWindow())?;
         let mut eligible_for_shift_info = EligibleForShiftInfo {
-            eligible: Vec::new(),
+            eligibles: Vec::new(),
             screen_extent
         };
         EnumWindows(Some(enum_windows_eligible_for_shift_proc), LPARAM(&mut eligible_for_shift_info as *mut _ as _))?;
 
         info!("{}: eligible for shift:", module_path!());
-        for hwnd in eligible_for_shift_info.eligible {
-            let exe = hwnd.get_exe()?;
-            let tpids = hwnd.get_thread_proc_ids()?;
-            let caption = hwnd.get_caption()?;
-            let class = hwnd.get_class()?;
+        for hwnd in eligible_for_shift_info.eligibles {
+            let exe = hwnd.get_exe_or_err();
+            let tpids = hwnd.get_thread_proc_ids().unwrap_or_default();
+            let caption = hwnd.get_caption_or_err();
+            let class = hwnd._get_class_or_err();
             let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
             let parent = hwnd.get_parent().unwrap_or_default();
 
@@ -439,10 +439,10 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
 
     unsafe fn print_foreground_info() -> Res<()> {
         let fg_hwnd = GetForegroundWindow();
-        let fg_exe = fg_hwnd.get_exe()?;
-        let fg_tpids = fg_hwnd.get_thread_proc_ids()?;
-        let fg_caption = fg_hwnd.get_caption()?;
-        let fg_class = fg_hwnd.get_class()?;
+        let fg_exe = fg_hwnd.get_exe_or_err();
+        let fg_tpids = fg_hwnd.get_thread_proc_ids().unwrap_or_default();
+        let fg_caption = fg_hwnd.get_caption_or_err();
+        let fg_class = fg_hwnd._get_class_or_err();
         let fg_owner = GetWindow(fg_hwnd, GW_OWNER).unwrap_or_default();
         let fg_parent = fg_hwnd.get_parent().unwrap_or_default();
 
@@ -461,9 +461,9 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
 
         info!("{}: fg children:", module_path!());
         for hwnd in children {
-            let tpids = hwnd.get_thread_proc_ids()?;
-            let caption = hwnd.get_caption()?;
-            let class = hwnd.get_class()?;
+            let tpids = hwnd.get_thread_proc_ids().unwrap_or_default();
+            let caption = hwnd.get_caption_or_err();
+            let class = hwnd._get_class_or_err();
             let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
             let parent = hwnd.get_parent().unwrap_or_default();
             info!("{}: \thwnd: {:p}, tid: {}, caption: {}, class: {}, owner: {:p}, parent: {:p}",
@@ -475,9 +475,9 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
         for hwnd in tl_siblings_info.siblings {
             if hwnd == fg_root_owner { continue }
 
-            let tpids = hwnd.get_thread_proc_ids()?;
-            let caption = hwnd.get_caption()?;
-            let class = hwnd.get_class()?;
+            let tpids = hwnd.get_thread_proc_ids().unwrap_or_default();
+            let caption = hwnd.get_caption_or_err();
+            let class = hwnd._get_class_or_err();
             let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
             let parent = hwnd.get_parent().unwrap_or_default();
             info!("{}: \thwnd: {:p}, tid: {}, caption: {}, class: {}, owner: {:p}, parent: {:p}",
@@ -555,6 +555,14 @@ pub(crate) fn set_bind(binds_config: &Binds, msg: BindMsg)  {
     }
 }
 
+fn pause_wallpaper_engine() -> Res<()> {
+    control_wallpaper_engine(WallpaperEngineArg::Stop)?;
+    thread::sleep(Duration::from_secs(420));
+    control_wallpaper_engine(WallpaperEngineArg::Play)?;
+
+    Ok(())
+}
+
 pub(crate) unsafe fn configure_static_binds() -> Res<()> {
     let config = config::get().read()?;
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: Binds::NAME })?;
@@ -565,49 +573,28 @@ pub(crate) unsafe fn configure_static_binds() -> Res<()> {
         #[cfg(feature = "dbg_window_info")]
         hotkey_tasks.insert(Key::F, Task::GetForegroundInfo);
 
-        // Task dispatch
+        // Invoke tasks
         let pixel_cleaning_prelude = config.pixel_cleaning;
-        let (task_dispatch, receiver) = mpsc::channel::<InputEvent>();
+        let (invoke_task_sx, rx) = mpsc::channel::<InputEvent>();
         thread::spawn(move || {
-            for input_event in receiver.iter() { // Breaks when all trigger callbacks are destroyed
-                if let InputEvent::Keyboard(key) = input_event &&
-                    let Some(task) = hotkey_tasks.get(&key)
-                {
+            for trigger in rx.iter() {
+                if let InputEvent::Keyboard(key) = trigger && let Some(task) = hotkey_tasks.get(&key) {
                     match task {
-                        Task::BeginPixelCleaning => {
-                            begin_pixel_cleaning(pixel_cleaning_prelude).unwrap_or_else(|err| {
-                                error!("{}: failure during pixel cleaning: {}", module_path!(), err);
-                            });
-                        },
-                        Task::LetWalkAway => {
-                            let_walk_away().unwrap_or_else(|err| {
-                                error!("{}: failed to let walk away: {}", module_path!(), err);
-                            });
-                        },
+                        Task::BeginPixelCleaning => begin_pixel_cleaning(pixel_cleaning_prelude).unwrap_or_else(|err| {
+                            error!("{}: failure during pixel cleaning: {}", module_path!(), err);
+                        }),
+                        Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
+                            error!("{}: failed to let walk away: {}", module_path!(), err);
+                        }),
                         Task::PauseWallpaperEngine => {
-                            thread::spawn(|| {
-                                (|| -> Res<()> {
-                                    control_wallpaper_engine(WallpaperEngineArg::Stop)?;
-                                    thread::sleep(Duration::from_secs(420));
-                                    control_wallpaper_engine(WallpaperEngineArg::Play)?;
-
-                                    Ok(())
-                                })()
-                                .unwrap_or_else(|err| {
-                                    error!("{}: failed to control wallpaper engine: {}", module_path!(), err);
-                                });
-                            });
+                            thread::spawn(|| pause_wallpaper_engine().unwrap_or_else(|err| error!("{}: failure pausing wallpaper engine: {}", module_path!(), err)));
                         },
-                        Task::SetSleepMode => {
-                            SetSuspendState(BOOLEAN(0), BOOLEAN(0), BOOLEAN(1)).ok().x().unwrap_or_else(|err| {
-                                error!("{}: failed to set sleep mode: {}", module_path!(), err);
-                            });
-                        },
-                        Task::ToggleDisplayMode => {
-                            _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
-                                error!("{}: failed to toggle display mode: {}", module_path!(), err);
-                            });
-                        },
+                        Task::SetSleepMode => SetSuspendState(BOOLEAN(0), BOOLEAN(0), BOOLEAN(1)).ok().x().unwrap_or_else(|err| {
+                            error!("{}: failed to set sleep mode: {}", module_path!(), err);
+                        }),
+                        Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
+                            error!("{}: failed to toggle display mode: {}", module_path!(), err);
+                        }),
                         #[cfg(feature = "dbg_window_info")]
                         Task::GetForegroundInfo => {
                             print_foreground_info().unwrap_or_else(|err| {
@@ -623,38 +610,32 @@ pub(crate) unsafe fn configure_static_binds() -> Res<()> {
             }
         });
 
-        // Don't bother deferring or sequencing hotkeys - mki's LL keyboard hook can process them quickly enough, and the slow work (hotkey fns) are offloaded
         for prefix in hotkeys.prefix.iter() {
-            let task_dispatch = task_dispatch.clone();
+            let invoke_task_sx = invoke_task_sx.clone();
 
             let callback = Box::new(move |event, state| {
                 match state {
-                    State::Pressed => {
-                        if let InputEvent::Keyboard(key) = event {
-                            THREAD_STATE.with_borrow_mut(|ts| {
-                                ts.prefixes_pressed.insert(key);
-                            });
-                        }
-                    },
-                    State::Released => {
+                    State::Pressed => if let InputEvent::Keyboard(key) = event {
                         THREAD_STATE.with_borrow_mut(|ts| {
-                            if let InputEvent::Keyboard(key) = event {
-                                ts.prefixes_pressed.remove(&key);
-                            }
-
-                            if ts.trigger.is_some() && !ts.trigger_is_pressed && ts.prefixes_pressed.is_empty() {
-                                task_dispatch.send(ts.trigger.unwrap()).unwrap();
-
-                                ts.trigger = None;
-                            }
+                            ts.prefixes_pressed.insert(key);
                         });
                     },
+                    State::Released => THREAD_STATE.with_borrow_mut(|ts| {
+                        if let InputEvent::Keyboard(key) = event {
+                            ts.prefixes_pressed.remove(&key);
+                        }
+
+                        if ts.prefixes_pressed.is_empty() && !ts.trigger_is_pressed && let Some(trigger) = ts.trigger_to_send.take() {
+                            invoke_task_sx.send(trigger).unwrap();
+                        }
+                    }),
                     _ => ()
                 }
             });
             let action = Action {
                 callback,
                 inhibit: InhibitEvent::No,
+                // Don't bother offloading - the callback is processed quickly enough on the LL hook thread
                 defer: false,
                 sequencer: false
             };
@@ -668,24 +649,22 @@ pub(crate) unsafe fn configure_static_binds() -> Res<()> {
         let hotkeys_triggers_iter = hotkeys_triggers_iter.chain([&Key::F]);
 
         for trigger in hotkeys_triggers_iter {
-            let send_to_worker = task_dispatch.clone();
+            let invoke_task_sx = invoke_task_sx.clone();
 
             let callback = Box::new(move |event, state| {
                 match state {
                     State::Pressed => THREAD_STATE.with_borrow_mut(|ts| {
                         ts.trigger_is_pressed = true;
 
-                        if ts.prefixes_pressed.len() == hotkeys_prefix_len && ts.trigger.is_none() {
-                            ts.trigger = Some(event);
+                        if ts.prefixes_pressed.len() == hotkeys_prefix_len && ts.trigger_to_send.is_none() {
+                            ts.trigger_to_send = Some(event);
                         }
                     }),
                     State::Released => THREAD_STATE.with_borrow_mut(|ts| {
                         ts.trigger_is_pressed = false;
 
-                        if ts.trigger.is_some() && ts.prefixes_pressed.is_empty() {
-                            send_to_worker.send(event).unwrap();
-
-                            ts.trigger = None;
+                        if ts.prefixes_pressed.is_empty() && let Some(trigger) = ts.trigger_to_send.take() {
+                            invoke_task_sx.send(trigger).unwrap();
                         }
                     }),
                     _ => ()

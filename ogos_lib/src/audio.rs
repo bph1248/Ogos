@@ -61,7 +61,7 @@ impl TryFrom<&str> for Hz {
             "48000" => Self::N48000,
             "88200" => Self::N88200,
             "96000" => Self::N96000,
-            _ => Err(ErrVar::FailedAsHz { from: value.into() })?
+            _ => Err(ErrVar::FailedHzFrom { from: value.into() })?
         })
     }
 }
@@ -74,7 +74,7 @@ impl TryFrom<u32> for Hz {
             48000 => Self::N48000,
             88200 => Self::N88200,
             96000 => Self::N96000,
-            _ => Err(ErrVar::FailedAsHz { from: value.to_string() })?
+            _ => Err(ErrVar::FailedHzFrom { from: value.to_string() })?
         })
     }
 }
