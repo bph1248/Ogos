@@ -227,7 +227,7 @@ fn load_and_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::Col
     )?;
     resizer.resize(tmp_pixels.as_rgba(), dst_pixels.as_rgba_mut())?;
 
-    let color_image = egui::ColorImage::from_rgba_unmultiplied([dst_width, dst_height], dst_pixels.as_ref());
+    let color_image = egui::ColorImage::from_rgba_unmultiplied([dst_width, dst_height], dst_pixels.as_slice());
 
     Ok((color_image, dst_pixels))
 }
@@ -236,7 +236,7 @@ unsafe fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: b
     thread::spawn(move || {
         (|| -> Res<()> {
             let ipc_client = discord_rp_info.as_mut().map(|discord_rp_info| -> Res<_> {
-                let mut ipc_client = DiscordIpcClient::new(discord_rp_info.client_id.as_ref())?;
+                let mut ipc_client = DiscordIpcClient::new(discord_rp_info.client_id.as_str())?;
 
                 discord::begin(&mut ipc_client, discord_rp_info)?;
 

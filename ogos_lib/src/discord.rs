@@ -82,7 +82,7 @@ pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, rp_info: &DiscordRichPres
     let mut activity = Activity::new()
         .activity_type(rp_info.activity.into())
         .timestamps(Timestamps::new().start(time_start))
-        .details(rp_info.details.as_ref());
+        .details(rp_info.details.as_str());
 
     if let Some(state) = rp_info.state.as_ref() {
         activity = activity.state(state);
@@ -109,7 +109,7 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
     cmd.arg(url).creation_flags(CREATE_NO_WINDOW);
     let init = || -> Res<(Stats, i64)> {
         let output = output_command(&mut cmd)?.stdout;
-        let initial_stats = serde_json::from_slice::<Stats>(output.as_ref())?;
+        let initial_stats = serde_json::from_slice::<Stats>(output.as_slice())?;
 
         let time_start = i64::try_from(time::SystemTime::now().duration_since(time::UNIX_EPOCH)?.as_secs())?;
         let details = format!(
@@ -126,8 +126,8 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
         let mut activity = Activity::new()
             .activity_type(ActivityType::Playing)
             .timestamps(Timestamps::new().start(time_start))
-            .details(details.as_ref())
-            .state(state.as_ref());
+            .details(details.as_str())
+            .state(state.as_str());
 
         if let Some(large_image) = large_image.as_ref() {
             activity = activity.assets(Assets::new().large_image(large_image));
@@ -179,8 +179,8 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
             let mut activity = Activity::new()
                 .activity_type(ActivityType::Playing)
                 .timestamps(Timestamps::new().start(time_start))
-                .details(details.as_ref())
-                .state(state.as_ref());
+                .details(details.as_str())
+                .state(state.as_str());
 
             if let Some(large_image) = large_image.as_ref() {
                 activity = activity.assets(Assets::new().large_image(large_image));

@@ -101,9 +101,9 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         let launcher_or_game_path = match using_launcher {
             Some(launcher) => {
                 match launcher {
-                    Launcher::Epic => config.app_paths.epic.as_ref(),
-                    Launcher::Gog => config.app_paths.gog.as_ref(),
-                    Launcher::Steam => config.app_paths.steam.as_ref()
+                    Launcher::Epic => config.app_paths.epic.as_str(),
+                    Launcher::Gog => config.app_paths.gog.as_str(),
+                    Launcher::Steam => config.app_paths.steam.as_str()
                 }
             },
             None => game_info.proc.as_str()
@@ -129,7 +129,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
                         let game_id = url.trim_start_matches(Launcher::Gog.as_url_prefix());
                         let game_id_arg = concat_string!("/gameId=", game_id);
 
-                        cmd.args(["/command=runGame", game_id_arg.as_ref()]);
+                        cmd.args(["/command=runGame", game_id_arg.as_str()]);
                     },
                     _ => { // Epic/Steam
                         cmd.arg(url);
@@ -244,7 +244,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
 
         match discord_rp_info {
             Some(discord_rp_info) => {
-                let mut ipc_client = DiscordIpcClient::new(discord_rp_info.client_id.as_ref())?;
+                let mut ipc_client = DiscordIpcClient::new(discord_rp_info.client_id.as_str())?;
 
                 info!("{}: calling discord and waiting for gui to terminate...", module_path!());
                 match name {

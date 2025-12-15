@@ -475,7 +475,7 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
                 })
                 .unwrap_or_default();
 
-            let papers = match class_is_denied(win_text.class.as_ref()) {
+            let papers = match class_is_denied(win_text.class.as_str()) {
                 true => Papers::Deny,
                 false => {
                     constraints.shift.as_ref()
@@ -508,7 +508,7 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
         None => WinInfo {
             hwnd,
             exe: win_exe,
-            papers: match class_is_denied(win_text.class.as_ref()) {
+            papers: match class_is_denied(win_text.class.as_str()) {
                 true => Papers::Deny,
                 _ => Papers::Waive
             },

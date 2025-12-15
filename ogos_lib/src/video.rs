@@ -262,7 +262,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
             .creation_flags(CREATE_NO_WINDOW);
         let output = output_command(&mut ffprobe_cmd)?;
         let output = String::from_utf8(output.stdout)?;
-        let ffprobe = serde_json::from_str::<Ffprobe>(output.as_ref())?;
+        let ffprobe = serde_json::from_str::<Ffprobe>(output.as_str())?;
 
         // Sample rate
         let guard_path = CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
@@ -367,7 +367,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
             false => {
                 disable_reshade()?;
 
-                match vid_color_transfer.as_ref() {
+                match vid_color_transfer.as_str() {
                     "arib-std-b67" => { // HLG
                         profile_arg = MpvArg::Profile(&mpv_config.hdr_profile).to_arg_string();
                         set_display_mode_op = SetDisplayModeOp::Set(DisplayMode::Hdr);

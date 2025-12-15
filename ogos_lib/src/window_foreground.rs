@@ -592,7 +592,7 @@ unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND)
             let exe = hwnd.get_exe()?;
             let has_maps = ts.binds.as_ref()
                 .map(|binds| {
-                   has_maps(binds, exe.as_ref())
+                   has_maps(binds, exe.as_str())
                 })
                 .unwrap_or_default();
 
