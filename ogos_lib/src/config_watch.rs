@@ -26,7 +26,15 @@ use windows::Win32::{
     }
 };
 
-const DEBOUNCE_INTERVAL_MS: u32 = 200;
+const DEBOUNCE_INTERVAL_MS: u32 = 500;
+
+unsafe fn reconfigure_static_binds() {
+    mki::clear();
+
+    binds::configure_static_binds().unwrap_or_else(|err| {
+        error!("{}: failed to reconfigure static binds: {}", module_path!(), err);
+    });
+}
 
 unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> Res<()> {
     info!("{}: begin", module_path!());
@@ -89,31 +97,22 @@ unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> 
                         Ok(new) => {
                             *config::get().write()? = new;
 
-                            info!("{}: loaded new config", module_path!());
+                            info!("{}: reloaded config", module_path!());
 
                             for can_reload_config in can_reload_config.iter() {
                                 match can_reload_config {
-                                    CanReloadConfig::StaticBinds => {
-                                        thread::Builder::new()
-                                            .spawn(|| {
-                                                mki::clear();
-
-                                                binds::configure_static_binds().unwrap_or_else(|err| {
-                                                    error!("{}: failed to configure static binds: {}", module_path!(), err);
-                                                });
-                                            })?;
-                                    },
+                                    CanReloadConfig::StaticBinds => { thread::spawn(|| reconfigure_static_binds()); },
                                     CanReloadConfig::WindowWatch(hook_mgr_tid) => PostThreadMessageW(hook_mgr_tid.0, window_watch::WM_OGOS_RELOAD_CONFIG, WPARAM(0), LPARAM(0))?
                                 }
                             }
                         },
-                        Err(err) => error!("{}: failed to load config: {} ", module_path!(), err)
+                        Err(err) => error!("{}: failed to reload config: {} ", module_path!(), err)
                     }
                 }
 
                 timeout = INFINITE;
             },
-            WAIT_FAILED => error!("{}: wait on config write failed", module_path!()),
+            WAIT_FAILED => error!("{}: failed to watch config", module_path!()),
             _ => () // WAIT_ABANDONED
         }
     }
