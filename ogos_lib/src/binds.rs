@@ -25,7 +25,7 @@ use std::{
     collections::*,
     fs,
     str::*,
-    sync::mpsc,
+    sync::mpsc::{self, *},
     thread,
     time::*
 };
@@ -57,6 +57,46 @@ pub(crate) mod qmk_deser {
     pub(crate) struct Layout {
         #[serde(rename = "keymap")]
         pub(crate) layers: Vec<Layer>
+    }
+}
+
+mod trigger_watch {
+    use super::*;
+
+    pub(crate) unsafe fn begin(hotkey_tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: Receiver<InputEvent>) {
+        for trigger in rx.iter() {
+            if let InputEvent::Keyboard(key) = trigger && let Some(task) = hotkey_tasks.get(&key) {
+                match task {
+                    Task::BeginPixelCleaning => begin_pixel_cleaning(pixel_cleaning_prelude).unwrap_or_else(|err| {
+                        error!("{}: failure during pixel cleaning: {}", module_path!(), err);
+                    }),
+                    Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
+                        error!("{}: failed to let walk away: {}", module_path!(), err);
+                    }),
+                    Task::PauseWallpaperEngine => {
+                        thread::spawn(|| pause_wallpaper_engine().unwrap_or_else(|err| error!("{}: failure pausing wallpaper engine: {}", module_path!(), err)));
+                    },
+                    Task::SetSleepMode => SetSuspendState(BOOLEAN(0), BOOLEAN(0), BOOLEAN(1)).ok().x().unwrap_or_else(|err| {
+                        error!("{}: failed to set sleep mode: {}", module_path!(), err);
+                    }),
+                    Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
+                        error!("{}: failed to toggle display mode: {}", module_path!(), err);
+                    }),
+                    #[cfg(feature = "dbg_window_info")]
+                    Task::GetForegroundInfo => {
+                        print_foreground_info().unwrap_or_else(|err| {
+                            error!("{}: failed to get foreground info: {}", module_path!(), err);
+                        });
+
+                        print_eligible_for_shift_info().unwrap_or_else(|err| {
+                            error!("{}: failed to get eligible-for-shift info: {}", module_path!(), err);
+                        });
+                    }
+                }
+            }
+        }
+
+        info!("{}: closed", module_path!());
     }
 }
 
@@ -576,39 +616,7 @@ pub(crate) unsafe fn configure_static_binds() -> Res<()> {
         // Invoke tasks
         let pixel_cleaning_prelude = config.pixel_cleaning;
         let (invoke_task_sx, rx) = mpsc::channel::<InputEvent>();
-        thread::spawn(move || {
-            for trigger in rx.iter() {
-                if let InputEvent::Keyboard(key) = trigger && let Some(task) = hotkey_tasks.get(&key) {
-                    match task {
-                        Task::BeginPixelCleaning => begin_pixel_cleaning(pixel_cleaning_prelude).unwrap_or_else(|err| {
-                            error!("{}: failure during pixel cleaning: {}", module_path!(), err);
-                        }),
-                        Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
-                            error!("{}: failed to let walk away: {}", module_path!(), err);
-                        }),
-                        Task::PauseWallpaperEngine => {
-                            thread::spawn(|| pause_wallpaper_engine().unwrap_or_else(|err| error!("{}: failure pausing wallpaper engine: {}", module_path!(), err)));
-                        },
-                        Task::SetSleepMode => SetSuspendState(BOOLEAN(0), BOOLEAN(0), BOOLEAN(1)).ok().x().unwrap_or_else(|err| {
-                            error!("{}: failed to set sleep mode: {}", module_path!(), err);
-                        }),
-                        Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
-                            error!("{}: failed to toggle display mode: {}", module_path!(), err);
-                        }),
-                        #[cfg(feature = "dbg_window_info")]
-                        Task::GetForegroundInfo => {
-                            print_foreground_info().unwrap_or_else(|err| {
-                                error!("{}: failed to get foreground info: {}", module_path!(), err);
-                            });
-
-                            print_eligible_for_shift_info().unwrap_or_else(|err| {
-                                error!("{}: failed to get eligible-for-shift info: {}", module_path!(), err);
-                            });
-                        }
-                    }
-                }
-            }
-        });
+        thread::spawn(move || trigger_watch::begin(hotkey_tasks, pixel_cleaning_prelude, rx));
 
         for prefix in hotkeys.prefix.iter() {
             let invoke_task_sx = invoke_task_sx.clone();
