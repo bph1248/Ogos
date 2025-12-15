@@ -320,23 +320,19 @@ impl Display for WallpaperEngineArg {
 
 pub(crate) static NOVIDEO_SRGB_FFI: OnceCell<Option<NovideoSrgbFfi>> = OnceCell::new();
 
-pub(crate) static NVAPI_GPU_GET_DITHER_CONTROL_FN: Lazy<NvAPI_GPU_GetDitherControl_fn> = Lazy::new(|| {
-    unsafe {
-        let interface = nvapi_QueryInterface(NvAPI_GPU_GetDitherControl.id()).x().unwrap_or_else(|err| {
-            panic!("{}: failed to query nvapi interface: {}: {}", module_path!(), stringify!(NvAPI_GPU_GetDitherControl), err)
-        });
+pub(crate) static NVAPI_GPU_GET_DITHER_CONTROL_FN: Lazy<NvAPI_GPU_GetDitherControl_fn> = Lazy::new(|| unsafe {
+    let interface = nvapi_QueryInterface(NvAPI_GPU_GetDitherControl.id()).x().unwrap_or_else(|err| {
+        panic!("{}: failed to query nvapi interface: {}: {}", module_path!(), stringify!(NvAPI_GPU_GetDitherControl), err)
+    });
 
-        std::mem::transmute(interface)
-    }
+    std::mem::transmute(interface)
 });
-pub(crate) static NVAPI_GPU_SET_DITHER_CONTROL_FN: Lazy<NvAPI_GPU_SetDitherControl_fn> = Lazy::new(|| {
-    unsafe {
-        let interface = nvapi_QueryInterface(NvAPI_GPU_SetDitherControl.id()).x().unwrap_or_else(|err| {
-            panic!("{}: failed to query nvapi interface: {}: {}", module_path!(), stringify!(NvAPI_GPU_SetDitherControl), err)
-        });
+pub(crate) static NVAPI_GPU_SET_DITHER_CONTROL_FN: Lazy<NvAPI_GPU_SetDitherControl_fn> = Lazy::new(|| unsafe {
+    let interface = nvapi_QueryInterface(NvAPI_GPU_SetDitherControl.id()).x().unwrap_or_else(|err| {
+        panic!("{}: failed to query nvapi interface: {}: {}", module_path!(), stringify!(NvAPI_GPU_SetDitherControl), err)
+    });
 
-        std::mem::transmute(interface)
-    }
+    std::mem::transmute(interface)
 });
 
 fn make_novideo_srgb_apply_info(info: &NovideoSrgbInfo) -> Res1<(NovideoSrgbApplyInfo, U16CString)> {

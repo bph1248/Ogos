@@ -232,7 +232,7 @@ fn load_and_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::Col
     Ok((color_image, dst_pixels))
 }
 
-fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, mut discord_rp_info: Option<DiscordRichPresenceInfo>) {
+unsafe fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, mut discord_rp_info: Option<DiscordRichPresenceInfo>) {
     thread::spawn(move || {
         (|| -> Res<()> {
             let ipc_client = discord_rp_info.as_mut().map(|discord_rp_info| -> Res<_> {
@@ -245,7 +245,7 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
             .transpose()?;
 
             match file_kind {
-                FileKind::Vid => unsafe { video::launch_mpv(path.as_path(), maintain_sample_rate.into(), use_glsl_shaders)? },
+                FileKind::Vid => video::launch_mpv(path.as_path(), maintain_sample_rate.into(), use_glsl_shaders)?,
                 _ => opener::open(path.as_path())?
             }
 
@@ -805,11 +805,9 @@ impl MediaBrowser {
             None => {
                 if !self.filter_win_cursor_checked {
                     let mut cursor_pos = POINT::default();
-                    unsafe {
-                        if GetCursorPos(&mut cursor_pos).is_err() {
-                            return
-                        }
-                    }
+                    unsafe { if GetCursorPos(&mut cursor_pos).is_err() {
+                        return
+                    } }
                     #[allow(clippy::cast_precision_loss)]
                     let cursor_pos = egui::pos2(cursor_pos.x as f32, cursor_pos.y as f32);
 
@@ -1148,13 +1146,13 @@ impl MediaBrowser {
                     if resp.clicked() {
                         let discord_rp_info = self.discord_rp_enable.then_some(self.make_discord_rp_info(i));
 
-                        open_media(
+                        unsafe { open_media(
                             self.details_info.dir_entry_infos[i].path.clone(),
                             self.details_info.dir_entry_infos[i].file_kind,
                             self.maintain_sample_rate,
                             self.use_glsl_shaders,
                             discord_rp_info
-                        );
+                        ); }
                     }
                 }
             });

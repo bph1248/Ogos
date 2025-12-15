@@ -111,12 +111,10 @@ impl WinEventHookContext {
 }
 impl Display for WinEventHookContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unsafe {
-            match self.get_hwnd() {
-                Some(hwnd) => write!(f, "{}: hwnd: {:p}, exe: {}, caption: {}", self.name(), hwnd.0, hwnd.get_exe_or_err(), hwnd.get_caption_or_err()),
-                None => write!(f, "{}", self.name())
-            }
-        }
+        unsafe { match self.get_hwnd() {
+            Some(hwnd) => write!(f, "{}: hwnd: {:p}, exe: {}, caption: {}", self.name(), hwnd.0, hwnd.get_exe_or_err(), hwnd.get_caption_or_err()),
+            None => write!(f, "{}", self.name())
+        } }
     }
 }
 impl Name for WinEventHookContext {

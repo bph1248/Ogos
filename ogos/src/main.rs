@@ -3,7 +3,5 @@
 use ogos_lib::err::*;
 
 fn main() -> Res<()> {
-    unsafe {
-        ogos_lib::entry()
-    }
+    unsafe { ogos_lib::entry() }
 }

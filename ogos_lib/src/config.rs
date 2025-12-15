@@ -734,8 +734,8 @@ pub(crate) struct Config {
     pub(crate) window_shift: Option<WindowShift>
 }
 
-pub(crate) unsafe fn load() -> Res1<Config> {
-    let current_exe_parent_path = CURRENT_EXE_PARENT_PATH.get_unchecked();
+pub(crate) fn load() -> Res1<Config> {
+    let current_exe_parent_path = unsafe { CURRENT_EXE_PARENT_PATH.get_unchecked() };
 
     let config_str = fs::read_to_string(current_exe_parent_path.join(CONFIG_FILE_NAME))?;
     let config_val = serde_json5::from_str::<serde_json::Value>(&config_str)?;

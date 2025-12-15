@@ -355,15 +355,15 @@ impl NvApiOk for NvAPI_Status {
 }
 
 pub(crate) trait Win32CoreOk<T> {
-    fn win32_core_ok(self) -> windows::core::Result<T>;
+    unsafe fn win32_core_ok(self) -> windows::core::Result<T>;
 }
 macro_rules! impl_Win32CoreOk {
     (if self == 0 = { $($ty:ty),+ }) => {
         $(
             impl Win32CoreOk<Self> for $ty {
-                fn win32_core_ok(self) -> windows::core::Result<Self> {
+                unsafe fn win32_core_ok(self) -> windows::core::Result<Self> {
                     if self == 0 {
-                        unsafe { return Err(GetLastError().into()) }
+                        return Err(GetLastError().into())
                     }
 
                     Ok(self)
@@ -374,9 +374,9 @@ macro_rules! impl_Win32CoreOk {
     (if self.is_invalid() = { $($ty:ty),+ }) => {
         $(
             impl Win32CoreOk<Self> for $ty {
-                fn win32_core_ok(self) -> windows::core::Result<Self> {
+                unsafe fn win32_core_ok(self) -> windows::core::Result<Self> {
                     if self.is_invalid() {
-                        unsafe { return Err(GetLastError().into()) }
+                        return Err(GetLastError().into())
                     }
 
                     Ok(self)
@@ -387,9 +387,9 @@ macro_rules! impl_Win32CoreOk {
     (if self.0 == WAIT_FAILED = { $($ty:ty),+ }) => {
         $(
             impl Win32CoreOk<Self> for $ty {
-                fn win32_core_ok(self) -> windows::core::Result<Self> {
+                unsafe fn win32_core_ok(self) -> windows::core::Result<Self> {
                     if self.0 == WAIT_FAILED {
-                        unsafe { return Err(GetLastError().into()) }
+                        return Err(GetLastError().into())
                     }
 
                     Ok(self)
@@ -412,15 +412,15 @@ impl Win32ErrorOk<()> for i32 {
 }
 
 pub(crate) trait Win32VarOk<T> {
-    fn win32_var_ok(self) -> ResVar<T>;
+    unsafe fn win32_var_ok(self) -> ResVar<T>;
 }
 macro_rules! impl_Win32VarOk {
     (if self == 0 = { $($ty:ty),+ }) => {
         $(
             impl Win32VarOk<Self> for $ty {
-                fn win32_var_ok(self) -> ResVar<Self> {
+                unsafe fn win32_var_ok(self) -> ResVar<Self> {
                     if self == 0 {
-                        unsafe { return Err(GetLastError().into()) }
+                        return Err(GetLastError().into())
                     }
 
                     Ok(self)
@@ -431,9 +431,9 @@ macro_rules! impl_Win32VarOk {
     (if self.is_invalid() = { $($ty:ty),+ }) => {
         $(
             impl Win32VarOk<Self> for $ty {
-                fn win32_var_ok(self) -> ResVar<Self> {
+                unsafe fn win32_var_ok(self) -> ResVar<Self> {
                     if self.is_invalid() {
-                        unsafe { return Err(GetLastError().into()) }
+                        return Err(GetLastError().into())
                     }
 
                     Ok(self)
@@ -446,7 +446,7 @@ impl_Win32VarOk!(if self == 0         = { i32, u16, u32 });
 impl_Win32VarOk!(if self.is_invalid() = { HANDLE, HWINEVENTHOOK, HWND });
 
 impl Win32VarOk<Self> for DISP_CHANGE {
-    fn win32_var_ok(self) -> ResVar<Self> {
+    unsafe fn win32_var_ok(self) -> ResVar<Self> {
         if self != DISP_CHANGE_SUCCESSFUL {
             return Err(ErrVar::Win32DispChange { disp_change: self });
         }
@@ -455,7 +455,7 @@ impl Win32VarOk<Self> for DISP_CHANGE {
     }
 }
 impl Win32VarOk<Self> for LRESULT {
-    fn win32_var_ok(self) -> ResVar<Self> {
+    unsafe fn win32_var_ok(self) -> ResVar<Self> {
         if self.0 != 0 {
             return Err(ErrVar::Win32LResult { lresult: self });
         }
