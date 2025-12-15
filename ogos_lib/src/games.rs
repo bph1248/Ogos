@@ -112,7 +112,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         let mut cmd;
         match cli.gaming.use_special_k {
             true => {
-                let skif_path = find_or_confirm_app(App::SKIF, config.app_paths.skif.as_ref())?;
+                let skif_path = confirm_or_find_app(App::SKIF, config.app_paths.skif.as_ref())?;
 
                 cmd = Command::new(skif_path);
                 cmd.arg(launcher_or_game_path);

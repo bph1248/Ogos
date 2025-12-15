@@ -434,7 +434,7 @@ pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, slee
     f()
 }
 
-pub(crate) fn find_or_confirm_app<T>(name: &str, confirm: Option<T>) -> ResVar<PathBuf> where
+pub(crate) fn confirm_or_find_app<T>(name: &str, confirm: Option<T>) -> ResVar<PathBuf> where
     PathBuf: From<T>
 {
     fn inner(name: &str, confirm: Option<PathBuf>) -> ResVar<PathBuf> {

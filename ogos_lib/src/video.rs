@@ -250,8 +250,8 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
         let config = config::get().read()?;
         let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Mpv::NAME })?;
 
-        let ffprobe_path = find_or_confirm_app(App::FFPROBE, config.app_paths.ffprobe.as_ref())?;
-        let mpv_path = find_or_confirm_app(App::MPV, config.app_paths.mpv.as_ref())?;
+        let ffprobe_path = confirm_or_find_app(App::FFPROBE, config.app_paths.ffprobe.as_ref())?;
+        let mpv_path = confirm_or_find_app(App::MPV, config.app_paths.mpv.as_ref())?;
 
         let mut cmd = Command::new(mpv_path.as_path());
         let mut args = vec![];

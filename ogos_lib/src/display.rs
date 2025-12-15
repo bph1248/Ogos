@@ -383,7 +383,7 @@ pub(crate) fn control_wallpaper_engine(arg: WallpaperEngineArg) -> Res1<()> {
 
     if get_first_process(App::WALLPAPER_ENGINE, &mut system).is_some() {
         let config = config::get().read()?;
-        let wallpaper_engine_path = find_or_confirm_app(App::WALLPAPER_ENGINE, config.app_paths.wallpaper_engine.as_ref())?;
+        let wallpaper_engine_path = confirm_or_find_app(App::WALLPAPER_ENGINE, config.app_paths.wallpaper_engine.as_ref())?;
 
         drop(config);
 

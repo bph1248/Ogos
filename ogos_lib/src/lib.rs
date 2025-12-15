@@ -159,7 +159,7 @@ unsafe fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf
         Ok(())
     };
 
-    let path = find_or_confirm_app(App::NOVIDEO_SRGB, config.app_paths.novideo_srgb.as_ref())?;
+    let path = confirm_or_find_app(App::NOVIDEO_SRGB, config.app_paths.novideo_srgb.as_ref())?;
     confirm_deps(path.as_ref())?;
 
     Ok(path)
