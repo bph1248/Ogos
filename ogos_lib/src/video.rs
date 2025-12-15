@@ -6,6 +6,7 @@ use crate::{
     err::*
 };
 
+use concat_string::*;
 use log::*;
 use ini::*;
 use serde::{
@@ -219,20 +220,14 @@ enum MpvArg<'a> {
 }
 impl MpvArg<'_> {
     fn to_arg_string(&self) -> String {
-        let mut arg;
-
         match self {
             Self::GlslShaders(shaders) => {
-                arg = "--glsl-shaders=".to_string();
-                arg.push_str(shaders);
+                concat_string!("--glsl-shaders=", shaders)
             },
             Self::Profile(profile) => {
-                arg = "--profile=".to_string();
-                arg.push_str(profile);
+                concat_string!("--profile=", profile)
             }
         }
-
-        arg
     }
 }
 
@@ -333,10 +328,10 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
                             Path::new(&reshade_config.settings_path).confirm()?;
 
                             if let Err(err) = os::windows::fs::symlink_file(&reshade_config.settings_path, &reshade_settings_sym_link_path) {
-                                let mut question = String::new();
-                                if let Some(ERROR_PRIVILEGE_NOT_HELD) = err.raw_os_error().map(|code| WIN32_ERROR(code as u32)) {
-                                    question.push_str(" Is developer mode enabled?");
-                                }
+                                let question = match err.raw_os_error().map(|code| WIN32_ERROR(code as u32)) {
+                                    Some(ERROR_PRIVILEGE_NOT_HELD) => " Is developer mode enabled?",
+                                    _ => ""
+                                };
 
                                 warn!("{}: failed to symlink {} to {}.{} Copying file instead", module_path!(), Path::new(&reshade_config.settings_path).to_string_lossy(), reshade_settings_sym_link_path.to_string_lossy(), question);
 
