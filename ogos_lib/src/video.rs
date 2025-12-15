@@ -235,7 +235,7 @@ pub(crate) unsafe fn create_maintain_sample_rate_guard() -> io::Result<()> {
     let guard_path = CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
 
     fs::write(&guard_path, "")?;
-    info!("{}: created maintain-sample-rate guard: {:?}", module_path!(), guard_path);
+    info!("{}: created maintain-sample-rate guard: {}", module_path!(), guard_path.display());
 
     Ok(())
 }
@@ -408,7 +408,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
         output_command(&mut cmd)?;
 
         if fs::remove_file(guard_path).is_ok() {
-            info!("{}: removed: {:?}", module_path!(), MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
+            info!("{}: removed: {}", module_path!(), MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
         }
 
         Ok(())
