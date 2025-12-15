@@ -346,27 +346,27 @@ unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
     Ok(hitbox_hwnd)
 }
 
-unsafe fn begin(enable: WindowForegroundEnable, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> Res<()> {
+unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> Res<()> {
     info!("{}: begin", module_path!());
 
     let mut msg = MSG::default();
 
     THREAD_STATE.with(|ts| -> Res<()> {
-        if enable.contains(WindowForegroundEnable::TASKBAR) {
+        if enable.contains(WindowForegroundComponents::TASKBAR) {
             init_hitbox(&sxs)?;
         }
 
-        if enable.contains(WindowForegroundEnable::DYNAMIC_BINDS | !WindowForegroundEnable::TASKBAR) {
+        if enable.contains(WindowForegroundComponents::DYNAMIC_BINDS | !WindowForegroundComponents::TASKBAR) {
             SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(window_foreground_all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
         }
 
-        if enable.contains(WindowForegroundEnable::WINDOW_SHIFT) {
+        if enable.contains(WindowForegroundComponents::WINDOW_SHIFT) {
             SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(window_shift_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
             SetWinEventHook(EVENT_SYSTEM_MENUSTART, EVENT_SYSTEM_MENUSTART, None, Some(window_shift_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
             SetWinEventHook(EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUEND, None, Some(window_shift_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
         }
 
-        if enable == WindowForegroundEnable::WINDOW_SHIFT {
+        if enable == WindowForegroundComponents::WINDOW_SHIFT {
             let class_name = WINDOW_WATCH_CLASS_NAME.to_win_str();
             let wnd_class = WNDCLASSEXW {
                 cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -470,7 +470,7 @@ unsafe fn begin(enable: WindowForegroundEnable, sxs: Senders, ready_sx: Sender<R
     Ok(())
 }
 
-pub(crate) unsafe fn spawn(enable: WindowForegroundEnable, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> JoinHandle<()> {
+pub(crate) unsafe fn spawn(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> JoinHandle<()> {
     thread::spawn(move || {
         begin(enable, sxs, ready_sx).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

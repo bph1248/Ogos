@@ -402,8 +402,8 @@ unsafe fn set_win_attributes(win_info: &WinInfo, window_shift_config: &WindowShi
             DwmSetWindowAttribute(win_info.hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &DWMWCP_DONOTROUND as *const _ as *const c_void, size_of_val(&DWMWCP_DONOTROUND) as u32)?;
         }
 
-        if window_shift_config.immersive_dark_mode_enable {
-            DwmSetWindowAttribute(win_info.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &window_shift_config.immersive_dark_mode_enable.as_win32_bool() as *const _ as *const c_void, size_of::<BOOL>() as u32)?;
+        if window_shift_config.enable_immersive_dark_mode {
+            DwmSetWindowAttribute(win_info.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &window_shift_config.enable_immersive_dark_mode.as_win32_bool() as *const _ as *const c_void, size_of::<BOOL>() as u32)?;
         }
 
         Ok(())

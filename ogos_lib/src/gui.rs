@@ -431,7 +431,7 @@ struct MediaBrowser {
     maintain_sample_rate: bool,
     use_glsl_shaders: bool,
     discord_app_ids: config::DiscordAppIds,
-    discord_rp_enable: bool,
+    discord_rp_enabled: bool,
     discord_rp_watching: Watching,
     discord_rp_details: String,
     discord_rp_state: String
@@ -720,7 +720,7 @@ impl MediaBrowser {
             maintain_sample_rate: default!(),
             use_glsl_shaders: default!(),
             discord_app_ids,
-            discord_rp_enable: default!(),
+            discord_rp_enabled: default!(),
             discord_rp_watching: default!(),
             discord_rp_details: default!(),
             discord_rp_state: default!()
@@ -1144,7 +1144,7 @@ impl MediaBrowser {
                     }
 
                     if resp.clicked() {
-                        let discord_rp_info = self.discord_rp_enable.then_some(self.make_discord_rp_info(i));
+                        let discord_rp_info = self.discord_rp_enabled.then_some(self.make_discord_rp_info(i));
 
                         unsafe { open_media(
                             self.details_info.dir_entry_infos[i].path.clone(),
@@ -1206,9 +1206,9 @@ impl MediaBrowser {
                 Watching::TV => self.discord_app_ids.tv.is_some(),
                 Watching::Words => self.discord_app_ids.words.is_some()
             };
-            self.discord_rp_enable &= can_enable_discord_rp;
+            self.discord_rp_enabled &= can_enable_discord_rp;
 
-            ui.add_enabled(can_enable_discord_rp, egui::Checkbox::new(&mut self.discord_rp_enable, "Enable"));
+            ui.add_enabled(can_enable_discord_rp, egui::Checkbox::new(&mut self.discord_rp_enabled, "Enable"));
 
             ui.separator();
 

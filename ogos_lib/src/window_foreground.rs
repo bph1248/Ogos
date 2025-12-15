@@ -62,7 +62,7 @@ bitflags! {
     }
 
     #[derive(Clone, Copy, PartialEq)]
-    pub(crate) struct WindowForegroundEnable: u32 {
+    pub(crate) struct WindowForegroundComponents: u32 {
         const DYNAMIC_BINDS     = 0b00000001;
         const TASKBAR           = 0b00000010;
         const WINDOW_SHIFT      = 0b00000100;
@@ -839,13 +839,13 @@ unsafe fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
     }
 }
 
-unsafe fn begin(enable: WindowForegroundEnable, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> Res<()> {
+unsafe fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> Res<()> {
     info!("{}: begin", module_path!());
 
     let mut ts = ThreadState {
         hook_mgr_tid: hook_mgr_tid.0,
-        binds: enable.contains(WindowForegroundEnable::DYNAMIC_BINDS).then_some(init_binds()?),
-        tb: enable.contains(WindowForegroundEnable::TASKBAR).then_some(init_taskbar(&rx)?),
+        binds: enable.contains(WindowForegroundComponents::DYNAMIC_BINDS).then_some(init_binds()?),
+        tb: enable.contains(WindowForegroundComponents::TASKBAR).then_some(init_taskbar(&rx)?),
         ..default!()
     };
 
@@ -935,7 +935,7 @@ unsafe fn begin(enable: WindowForegroundEnable, rx: Receiver<WindowForegroundMsg
     Ok(())
 }
 
-pub(crate) unsafe fn spawn(enable: WindowForegroundEnable, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
+pub(crate) unsafe fn spawn(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
     thread::spawn(move || {
         begin(enable, rx, hook_mgr_tid).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

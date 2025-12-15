@@ -298,7 +298,7 @@ pub(crate) struct Stride {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WindowShift {
-    pub(crate) immersive_dark_mode_enable: bool,
+    pub(crate) enable_immersive_dark_mode: bool,
     #[serde(rename = "interval_s")]
     pub(crate) interval_dur: u32,
     #[serde(rename = "leeway_px")]
