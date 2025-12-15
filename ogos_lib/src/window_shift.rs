@@ -409,7 +409,7 @@ unsafe fn set_win_attributes(win_info: &WinInfo, window_shift_config: &WindowShi
         Ok(())
     })()
     .unwrap_or_else(|err| {
-        error!("{}: failed to set dwm window attribute: hwnd: {:p}, {}", module_path!(), win_info.hwnd.0, err);
+        error!("{}: failed to set dwm window attribute: hwnd: {:p}: {}", module_path!(), win_info.hwnd.0, err);
     });
 }
 
@@ -659,7 +659,7 @@ unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
                             _ => errored.others.insert(mem::discriminant(&err.var))
 
                         } {
-                            error!("{}: failed on window enumeration: hwnd: {:p}: exe: {}, {}", module_path!(), hwnd.0, hwnd.get_exe_or_err(), err);
+                            error!("{}: failed on window enumeration: hwnd: {:p}, exe: {}: {}", module_path!(), hwnd.0, hwnd.get_exe_or_err(), err);
                         }
                     });
                 }
