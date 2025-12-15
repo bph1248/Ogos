@@ -39,7 +39,7 @@ unsafe fn reconfigure_static_binds() {
 unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> Res<()> {
     info!("{}: begin", module_path!());
 
-    let watch_dir_name = WinStr::from(CURRENT_EXE_PARENT_PATH.get_unchecked());
+    let watch_dir_name = WinStr::from(CURRENT_EXE_DIR.get_unchecked());
     let watch_dir_hnd = CreateFileW(
          *watch_dir_name,
         FILE_LIST_DIRECTORY.0,

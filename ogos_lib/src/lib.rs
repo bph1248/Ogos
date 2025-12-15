@@ -460,22 +460,22 @@ unsafe fn init() -> Res<()> {
     let current_exe_path = env::current_exe()?;
 
     let current_exe_file_name = current_exe_path.get_file_name()?;
-    let current_exe_parent_path = current_exe_path.get_parent()?;
+    let current_exe_dir = current_exe_path.get_dir()?;
 
-    CURRENT_EXE_PARENT_PATH.set(current_exe_parent_path.into()).map_err(|_| ErrVar::FailedSetOnceCell)?;
+    CURRENT_EXE_DIR.set(current_exe_dir.into()).map_err(|_| ErrVar::FailedSetOnceCell)?;
 
     // Name log file based on the number of instances of Ogos already running
     let mut system = System::new();
     let current_process_count = get_process_count(current_exe_file_name, &mut system);
 
     let log_file_name = format!("ogos_{}.log", current_process_count);
-    let log_parent_path = current_exe_parent_path.join("logs");
-    let log_path = log_parent_path.join(log_file_name);
+    let log_dir = current_exe_dir.join("logs");
+    let log_path = log_dir.join(log_file_name);
 
     {
         use simplelog::*;
 
-        fs::create_dir_all(&log_parent_path)?;
+        fs::create_dir_all(&log_dir)?;
         let log_file = File::options()
             .create(true)
             .write(true)

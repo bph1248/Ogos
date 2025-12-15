@@ -237,7 +237,7 @@ impl MpvArg<'_> {
 }
 
 pub(crate) unsafe fn create_maintain_sample_rate_guard() -> io::Result<()> {
-    let guard_path = CURRENT_EXE_PARENT_PATH.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
+    let guard_path = CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
 
     fs::write(&guard_path, "")?;
     info!("{}: created maintain-sample-rate guard: {:?}", module_path!(), guard_path);
@@ -265,7 +265,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
         let ffprobe = serde_json::from_str::<Ffprobe>(output.as_ref())?;
 
         // Sample rate
-        let guard_path = CURRENT_EXE_PARENT_PATH.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
+        let guard_path = CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
         let maintain_sample_rate = match maintain_sample_rate {
             MaintainSampleRate::No => false,
             MaintainSampleRate::Yes => true,
@@ -319,8 +319,8 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
                 match (reshade_config, ffprobe.side_data.max_content) {
                     (Some(reshade_config), Some(max_content)) if max_content > 0 => { // Statically tone map with ReShade
                         // Check ReShade.ini exists as symlink in mpv dir. Link from ProgramData if it's missing (ie. due to scoop update)
-                        let mpv_parent_path = mpv_path.get_parent()?;
-                        let reshade_settings_sym_link_path = mpv_parent_path.join("ReShade.ini");
+                        let mpv_dir = mpv_path.get_dir()?;
+                        let reshade_settings_sym_link_path = mpv_dir.join("ReShade.ini");
 
                         if reshade_settings_sym_link_path.as_path().confirm().is_err() {
                             // Either the symlink doesn't exist or its target doesn't exist. In case the symlink exists but is broken, remove it

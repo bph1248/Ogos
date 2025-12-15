@@ -202,7 +202,7 @@ pub(crate) enum WmOgos {
 }
 
 pub(crate) static CONFIG: OnceCell<RwLock<Config>> = OnceCell::new();
-pub(crate) static CURRENT_EXE_PARENT_PATH: OnceCell<PathBuf> = OnceCell::new();
+pub(crate) static CURRENT_EXE_DIR: OnceCell<PathBuf> = OnceCell::new();
 
 macro_rules! default {
     () => {
@@ -257,11 +257,11 @@ pub(crate) trait Name {
 
 pub(crate) trait PathExt {
     fn confirm(&self) -> ResVar<&Self>;
+    fn get_dir(&self) -> ResVar<&Path>;
     fn get_file_ext(&self) -> ResVar<&str>;
     fn get_file_kind(&self) -> ResVar<FileKind>;
     fn get_file_name(&self) -> ResVar<&str>; // With extension
     fn get_file_stem(&self) -> ResVar<&str>; // Without extension
-    fn get_parent(&self) -> ResVar<&Path>;
 }
 impl PathExt for Path {
     fn confirm(&self) -> ResVar<&Self> {
@@ -270,6 +270,11 @@ impl PathExt for Path {
         }
 
         Ok(self)
+    }
+
+    fn get_dir(&self) -> ResVar<&Path> {
+        self.parent()
+            .ok_or(ErrVar::InvalidPathParent)
     }
 
     fn get_file_ext(&self) -> ResVar<&str> {
@@ -306,11 +311,6 @@ impl PathExt for Path {
         stem.ok_or(ErrVar::InvalidFileStem)?
             .to_str()
             .ok_or(ErrVar::FailedToStr)
-    }
-
-    fn get_parent(&self) -> ResVar<&Path> {
-        self.parent()
-            .ok_or(ErrVar::InvalidPathParent)
     }
 }
 

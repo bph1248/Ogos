@@ -491,7 +491,7 @@ impl MediaBrowser {
         let (hash_sx, hash_rx) = mpsc::channel();
         let (ferry_sx, ferry_rx) = mpsc::channel();
 
-        let current_exe_dir = CURRENT_EXE_PARENT_PATH.get().unwrap();
+        let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
         let image_dir = Arc::new(current_exe_dir.join("images"));
 
         let cache_path = image_dir.join("cache").with_extension("json");
