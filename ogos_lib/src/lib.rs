@@ -486,6 +486,7 @@ unsafe fn init() -> Res<()> {
             // .add_filter_allow_str("ogos_lib")
             // .add_filter_allow_str("log_panics")
             .add_filter_ignore_str("eframe")
+            .add_filter_ignore_str("egui")
             .add_filter_ignore_str("wgpu")
             .set_thread_mode(ThreadLogMode::IDs)
             .set_thread_level(LevelFilter::Error)
