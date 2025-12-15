@@ -319,8 +319,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
                 match (reshade_config, ffprobe.side_data.max_content) {
                     (Some(reshade_config), Some(max_content)) if max_content > 0 => { // Statically tone map with ReShade
                         // Check ReShade.ini exists as symlink in mpv dir. Link from ProgramData if it's missing (ie. due to scoop update)
-                        let mpv_dir = mpv_path.get_dir()?;
-                        let reshade_settings_sym_link_path = mpv_dir.join("ReShade.ini");
+                        let reshade_settings_sym_link_path = mpv_path.with_file_name("ReShade.ini");
 
                         if reshade_settings_sym_link_path.as_path().confirm().is_err() {
                             // Either the symlink doesn't exist or its target doesn't exist. In case the symlink exists but is broken, remove it

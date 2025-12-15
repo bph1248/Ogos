@@ -469,7 +469,7 @@ unsafe fn init() -> Res<()> {
     let current_process_count = get_process_count(current_exe_file_name, &mut system);
 
     let log_file_name = format!("ogos_{}.log", current_process_count);
-    let log_dir = current_exe_dir.join("logs");
+    let log_dir = current_exe_path.with_file_name("logs");
     let log_path = log_dir.join(log_file_name);
 
     {
