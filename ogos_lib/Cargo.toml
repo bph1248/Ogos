@@ -20,7 +20,7 @@ com-policy-config = "0.6.0"
 concat-string = "1.0.1"
 const_format = "0.2.34"
 ddc-hi = "0.4.1"
-discord-rich-presence = "0.2.5"
+discord-rich-presence = "1.0.0"
 eframe = { version = "0.33.0", features = [
     "default_fonts",
     "wgpu"

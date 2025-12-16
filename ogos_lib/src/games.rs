@@ -52,7 +52,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         let config = config::get().read()?;
         let games_config = config.games.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Games::NAME })?;
         let game_info = games_config.0.get(name).ok_or_else(|| ErrVar::UnknownGame { name: name.into() })?;
-        let discord_rp_info = game_info.discord_rp.clone();
+        let discord_info = game_info.discord.clone();
 
         if let Some(name) = game_info.unbind {
             pipe_msg(PipeMsg::BindMsg(BindMsg::Unbind(BindName::Underscore)))?;
@@ -242,9 +242,9 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
             });
         }
 
-        match discord_rp_info {
-            Some(discord_rp_info) => {
-                let mut ipc_client = DiscordIpcClient::new(discord_rp_info.client_id.as_str())?;
+        match discord_info {
+            Some(discord_info) => {
+                let mut ipc_client = DiscordIpcClient::new(discord_info.client_id.as_str());
 
                 info!("{}: calling discord and waiting for gui to terminate...", module_path!());
                 match name {
@@ -252,20 +252,20 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
                         thread::scope(|s| -> Res<()> {
                             let (discord_sx, rx) = mpsc::channel::<Msg>();
 
-                            let large_image = discord_rp_info.large_image.clone();
-                            let chess_username = discord_rp_info.chess_username.clone().ok_or(ErrVar::MissingUsername)?;
+                            let large_image = discord_info.large_image.clone();
+                            let chess_username = discord_info.chess_username.clone().ok_or(ErrVar::MissingUsername)?;
                             discord::spawn_scoped_chess(s, &mut ipc_client, large_image, chess_username, rx);
 
-                            gui::begin(gui::Kind::Discord { name: name.into(), rp_info: discord_rp_info })?;
+                            gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;
                             discord_sx.send(Msg::Close)?;
 
                             Ok(())
                         })?;
                     },
                     _ => {
-                        discord::begin(&mut ipc_client, &discord_rp_info)?;
+                        discord::begin(&mut ipc_client, &discord_info)?;
 
-                        gui::begin(gui::Kind::Discord { name: name.into(), rp_info: discord_rp_info })?;
+                        gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;
 
                         ipc_client.close()?;
                     }

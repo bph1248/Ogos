@@ -73,27 +73,28 @@ struct Stats {
     tactics: Tactics
 }
 
-pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, rp_info: &DiscordRichPresenceInfo) -> Res<()> {
+pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfo) -> Res<()> {
     info!("{}: begin", module_path!());
 
     ipc_client.connect()?;
 
     let time_start = i64::try_from(time::SystemTime::now().duration_since(time::UNIX_EPOCH)?.as_secs())?;
     let mut activity = Activity::new()
-        .activity_type(rp_info.activity.into())
+        .activity_type(info.activity.into())
         .timestamps(Timestamps::new().start(time_start))
-        .details(rp_info.details.as_str());
+        .details(info.details.as_str())
+        .status_display_type(info.display_kind.into());
 
-    if let Some(state) = rp_info.state.as_ref() {
+    if let Some(state) = info.state.as_ref() {
         activity = activity.state(state);
     }
-    if let Some(large_image) = rp_info.large_image.as_ref() {
+    if let Some(large_image) = info.large_image.as_ref() {
         activity = activity.assets(Assets::new().large_image(large_image));
     }
 
     ipc_client.set_activity(activity)?;
 
-    info!("{}: set discord activity: id: {}, details: {}, state: {:?}, large_image: {:?}", module_path!(), ipc_client.client_id, rp_info.details, rp_info.state, rp_info.large_image);
+    info!("{}: set discord activity: id: {}, details: {}, state: {:?}, large_image: {:?}", module_path!(), ipc_client.client_id, info.details, info.state, info.large_image);
 
     Ok(())
 }

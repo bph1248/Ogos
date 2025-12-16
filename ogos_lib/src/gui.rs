@@ -52,8 +52,8 @@ struct DirEntryInfo {
 }
 
 pub(crate) enum Kind {
-    Discord { name: String, rp_info: DiscordRichPresenceInfo },
-    MediaBrowser { discord_app_ids: DiscordAppIds }
+    Discord { name: String, discord_info: DiscordInfo },
+    MediaBrowser
 }
 
 #[derive(Default, Deserialize, PartialEq)]
@@ -64,7 +64,7 @@ enum Watching {
     Words
 }
 
-fn to_discord_rp_asset_name(s: impl AsRef<str>) -> String {
+fn to_discord_asset_name(s: impl AsRef<str>) -> String {
     s.as_ref().chars()
         .map(|c| {
             let c = c.to_ascii_lowercase();
@@ -79,13 +79,13 @@ fn to_discord_rp_asset_name(s: impl AsRef<str>) -> String {
 
 pub(crate) struct Discord {
     name: String,
-    rp_info: DiscordRichPresenceInfo
+    discord_info: DiscordInfo
 }
 impl Discord {
-    pub(crate) fn new(_cctx: &eframe::CreationContext<'_>, name: String, rp_info: DiscordRichPresenceInfo) -> Self {
+    pub(crate) fn new(_cctx: &eframe::CreationContext<'_>, name: String, discord_info: DiscordInfo) -> Self {
         Self {
             name,
-            rp_info
+            discord_info
         }
     }
 }
@@ -99,7 +99,7 @@ impl eframe::App for Discord {
 
                 ui.separator();
 
-                let text_edit = egui::TextEdit::singleline(&mut self.rp_info.details).desired_width(f32::INFINITY);
+                let text_edit = egui::TextEdit::singleline(&mut self.discord_info.details).desired_width(f32::INFINITY);
                 let details = ui.label("Details");
 
                 ui.add(text_edit).labelled_by(details.id);
@@ -232,13 +232,13 @@ fn load_and_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::Col
     Ok((color_image, dst_pixels))
 }
 
-unsafe fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, mut discord_rp_info: Option<DiscordRichPresenceInfo>) {
+unsafe fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, mut discord_info: Option<DiscordInfo>) {
     thread::spawn(move || {
         (|| -> Res<()> {
-            let ipc_client = discord_rp_info.as_mut().map(|discord_rp_info| -> Res<_> {
-                let mut ipc_client = DiscordIpcClient::new(discord_rp_info.client_id.as_str())?;
+            let ipc_client = discord_info.as_mut().map(|discord_info| -> Res<_> {
+                let mut ipc_client = DiscordIpcClient::new(discord_info.client_id.as_str());
 
-                discord::begin(&mut ipc_client, discord_rp_info)?;
+                discord::begin(&mut ipc_client, discord_info)?;
 
                 Ok(ipc_client)
             })
@@ -430,11 +430,12 @@ struct MediaBrowser {
     hovered_details_entry_i: usize,
     maintain_sample_rate: bool,
     use_glsl_shaders: bool,
-    discord_app_ids: config::DiscordAppIds,
-    discord_rp_enabled: bool,
-    discord_rp_watching: Watching,
-    discord_rp_details: String,
-    discord_rp_state: String
+    discord_app_ids: DiscordAppIds,
+    discord_enabled: bool,
+    discord_watching: Watching,
+    discord_details: String,
+    discord_state: String,
+    discord_display_kind: DiscordDisplayKind
 }
 impl eframe::App for MediaBrowser {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -479,7 +480,7 @@ impl eframe::App for MediaBrowser {
     }
 }
 impl MediaBrowser {
-    fn new(ctx: &egui::Context, discord_app_ids: DiscordAppIds) -> Res<Self> {
+    fn new(ctx: &egui::Context) -> Res<Self> {
         // let now = now!();
 
         // let elapsed = now.elapsed();
@@ -572,6 +573,9 @@ impl MediaBrowser {
             })
             .collect::<Vec<_>>();
         grid_entry_infos.sort_by(|a, b| a.stem.cmp(&b.stem));
+
+        let discord_app_ids = config.discord.app_ids.clone();
+        let discord_display_kind = config.discord.display_kind;
         drop(config);
 
         for (entry_i, info) in grid_entry_infos.iter().enumerate() {
@@ -720,10 +724,11 @@ impl MediaBrowser {
             maintain_sample_rate: default!(),
             use_glsl_shaders: default!(),
             discord_app_ids,
-            discord_rp_enabled: default!(),
-            discord_rp_watching: default!(),
-            discord_rp_details: default!(),
-            discord_rp_state: default!()
+            discord_enabled: default!(),
+            discord_watching: default!(),
+            discord_details: default!(),
+            discord_state: default!(),
+            discord_display_kind
         })
     }
 
@@ -1144,44 +1149,47 @@ impl MediaBrowser {
                     }
 
                     if resp.clicked() {
-                        let discord_rp_info = self.discord_rp_enabled.then_some(self.make_discord_rp_info(i));
+                        let discord_info = self.discord_enabled.then_some(self.make_discord_info(i));
 
-                        unsafe { open_media(
-                            self.details_info.dir_entry_infos[i].path.clone(),
-                            self.details_info.dir_entry_infos[i].file_kind,
-                            self.maintain_sample_rate,
-                            self.use_glsl_shaders,
-                            discord_rp_info
-                        ); }
+                        unsafe {
+                            open_media(
+                                self.details_info.dir_entry_infos[i].path.clone(),
+                                self.details_info.dir_entry_infos[i].file_kind,
+                                self.maintain_sample_rate,
+                                self.use_glsl_shaders,
+                                discord_info
+                            );
+                        }
                     }
                 }
             });
     }
 
-    fn make_discord_rp_info(&self, i: usize) -> config::DiscordRichPresenceInfo {
-        config::DiscordRichPresenceInfo {
-            client_id: match self.discord_rp_watching {
-                Watching::Movie => self.discord_app_ids.movies.clone().unwrap(),
+    fn make_discord_info(&self, i: usize) -> config::DiscordInfo {
+        config::DiscordInfo {
+            client_id: match self.discord_watching {
+                Watching::Movie => self.discord_app_ids.movies.clone().unwrap(), // App ID is Some when Discord is enabled
                 Watching::TV => self.discord_app_ids.tv.clone().unwrap(),
                 Watching::Words => self.discord_app_ids.words.clone().unwrap()
             },
             activity: config::DiscordActivity::Watching,
-            details: match self.discord_rp_details.is_empty() {
-                true => match self.discord_rp_watching {
+            details: match self.discord_details.is_empty() {
+                true => match self.discord_watching {
                     Watching::TV => self.details_info.dir_name.to_string(),
                     _ => self.details_info.dir_entry_infos[i].stem.clone()
                 },
-                false => self.discord_rp_details.clone()
+                false => self.discord_details.clone()
             },
-            state: self.discord_rp_watching.eq(&Watching::TV).then(|| {
-                match self.discord_rp_state.is_empty() {
+            state: self.discord_watching.eq(&Watching::TV).then(|| {
+                match self.discord_state.is_empty() {
                     true => self.details_info.dir_entry_infos[i].stem.clone(),
-                    false => self.discord_rp_state.clone()
+                    false => self.discord_state.clone()
                 }
             }),
-            large_image: match self.discord_rp_watching {
-                Watching::TV => Some(to_discord_rp_asset_name(self.details_info.dir_name.as_ref())),
-                _ => Some(to_discord_rp_asset_name(self.details_info.dir_entry_infos[i].stem.as_str()))
+            display_kind: self.discord_display_kind,
+            large_image: match self.discord_watching {
+                Watching::TV => Some(to_discord_asset_name(self.details_info.dir_name.as_ref())),
+                _ => Some(to_discord_asset_name(self.details_info.dir_entry_infos[i].stem.as_str()))
             },
             chess_username: None
         }
@@ -1194,32 +1202,32 @@ impl MediaBrowser {
                 ui.add_enabled_ui(!self.details_info.dir_entry_infos.is_empty(), |ui| {
                     ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
                     ui.checkbox(&mut self.use_glsl_shaders, "Override GLSL shaders");
-                    ui.menu_button("Discord Rich Presence", |ui| self.discord_rp_menu(ui));
+                    ui.menu_button("Discord Rich Presence", |ui| self.discord_menu(ui));
                 });
             });
     }
 
-    fn discord_rp_menu(&mut self, ui: &mut egui::Ui) {
+    fn discord_menu(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let can_enable_discord_rp = match self.discord_rp_watching {
+            let can_enable_discord = match self.discord_watching {
                 Watching::Movie => self.discord_app_ids.movies.is_some(),
                 Watching::TV => self.discord_app_ids.tv.is_some(),
                 Watching::Words => self.discord_app_ids.words.is_some()
             };
-            self.discord_rp_enabled &= can_enable_discord_rp;
+            self.discord_enabled &= can_enable_discord;
 
-            ui.add_enabled(can_enable_discord_rp, egui::Checkbox::new(&mut self.discord_rp_enabled, "Enable"));
+            ui.add_enabled(can_enable_discord, egui::Checkbox::new(&mut self.discord_enabled, "Enable"));
 
             ui.separator();
 
-            if ui.add_enabled(self.discord_app_ids.tv.is_some(), egui::RadioButton::new(self.discord_rp_watching == Watching::TV, "TV")).clicked() {
-                self.discord_rp_watching = Watching::TV;
+            if ui.add_enabled(self.discord_app_ids.tv.is_some(), egui::RadioButton::new(self.discord_watching == Watching::TV, "TV")).clicked() {
+                self.discord_watching = Watching::TV;
             };
-            if ui.add_enabled(self.discord_app_ids.movies.is_some(), egui::RadioButton::new(self.discord_rp_watching == Watching::Movie, "Movie")).clicked() {
-                self.discord_rp_watching = Watching::Movie;
+            if ui.add_enabled(self.discord_app_ids.movies.is_some(), egui::RadioButton::new(self.discord_watching == Watching::Movie, "Movie")).clicked() {
+                self.discord_watching = Watching::Movie;
             };
-            if ui.add_enabled(self.discord_app_ids.words.is_some(), egui::RadioButton::new(self.discord_rp_watching == Watching::Words, "Words")).clicked() {
-                self.discord_rp_watching = Watching::Words;
+            if ui.add_enabled(self.discord_app_ids.words.is_some(), egui::RadioButton::new(self.discord_watching == Watching::Words, "Words")).clicked() {
+                self.discord_watching = Watching::Words;
             };
         });
 
@@ -1234,13 +1242,13 @@ impl MediaBrowser {
         grid.show(ui, |ui| {
             ui.label(details_label_galley);
 
-            let details_hint_text = match self.discord_rp_watching {
+            let details_hint_text = match self.discord_watching {
                 Watching::TV => self.details_info.dir_name.as_ref(),
                 _ => self.details_info.dir_entry_infos[self.hovered_details_entry_i].stem.as_str()
             };
             let details_hint_galley = egui::WidgetText::from(details_hint_text)
                 .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
-            let details_text_edit = egui::TextEdit::singleline(&mut self.discord_rp_details)
+            let details_text_edit = egui::TextEdit::singleline(&mut self.discord_details)
                 .desired_width(details_text_edit_width)
                 .hint_text(details_hint_galley);
 
@@ -1248,13 +1256,13 @@ impl MediaBrowser {
 
             ui.end_row();
 
-            if self.discord_rp_watching == Watching::TV {
+            if self.discord_watching == Watching::TV {
                 ui.label("State");
 
                 let state_hint_text = self.details_info.dir_entry_infos[self.hovered_details_entry_i].stem.as_str();
                 let state_hint_galley = egui::WidgetText::from(state_hint_text)
                     .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
-                let state_text_edit = egui::TextEdit::singleline(&mut self.discord_rp_state)
+                let state_text_edit = egui::TextEdit::singleline(&mut self.discord_state)
                     .hint_text(state_hint_galley)
                     .desired_width(details_text_edit_width);
 
@@ -1267,7 +1275,7 @@ impl MediaBrowser {
 pub(crate) fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_maximize_button(false);
-    if let Kind::MediaBrowser { .. } = kind {
+    if let Kind::MediaBrowser = kind {
         let config = config::get().read()?;
 
         if let Some(size) = config.media_browser.as_ref().and_then(|mb| mb.window_inner_size) {
@@ -1330,8 +1338,8 @@ pub(crate) fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
             cctx.egui_ctx.set_style(style);
 
             Ok(match kind {
-                Kind::Discord { name, rp_info } => Box::new(Discord::new(cctx, name, rp_info)),
-                Kind::MediaBrowser { discord_app_ids } => Box::new(MediaBrowser::new(&cctx.egui_ctx, discord_app_ids)?)
+                Kind::Discord { name, discord_info } => Box::new(Discord::new(cctx, name, discord_info)),
+                Kind::MediaBrowser => Box::new(MediaBrowser::new(&cctx.egui_ctx)?)
             })
         })
     )?;

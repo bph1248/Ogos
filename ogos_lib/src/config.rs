@@ -407,11 +407,13 @@ impl Into<drpa::ActivityType> for DiscordActivity {
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DiscordRichPresenceInfo {
+pub(crate) struct DiscordInfo {
     pub(crate) client_id: String,
     pub(crate) activity: DiscordActivity,
     pub(crate) details: String,
     pub(crate) state: Option<String>,
+    #[serde(default)]
+    pub(crate) display_kind: DiscordDisplayKind,
     pub(crate) large_image: Option<String>,
     pub(crate) chess_username: Option<String>
 }
@@ -430,8 +432,7 @@ pub(crate) struct GameInfo {
     pub(crate) args: Option<Vec<String>>,
     pub(crate) res: Option<Extent2dU>,
     pub(crate) unbind: Option<BindName>,
-    #[serde(rename = "discord_rich_presence")]
-    pub(crate) discord_rp: Option<DiscordRichPresenceInfo>
+    pub(crate) discord: Option<DiscordInfo>
 }
 
 #[derive(Deserialize)]
@@ -575,12 +576,37 @@ pub(crate) struct DisplayModes {
 }
 impl_name!(DisplayModes);
 
+#[derive(Clone, Copy, Default, Deserialize)]
+pub(crate) enum DiscordDisplayKind {
+    #[default]
+    Name,
+    State,
+    Details
+}
+impl Into<drpa::StatusDisplayType> for DiscordDisplayKind {
+    fn into(self) -> drpa::StatusDisplayType {
+        match self {
+            Self::Name => drpa::StatusDisplayType::Name,
+            Self::State => drpa::StatusDisplayType::State,
+            Self::Details => drpa::StatusDisplayType::Details
+        }
+    }
+}
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DiscordAppIds {
     pub(crate) movies: Option<String>,
     pub(crate) tv: Option<String>,
     pub(crate) words: Option<String>
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Discord {
+    pub(crate) app_ids: DiscordAppIds,
+    #[serde(default)]
+    pub(crate) display_kind: DiscordDisplayKind
 }
 
 #[derive(Deserialize)]
@@ -724,7 +750,8 @@ pub(crate) struct Config {
     pub(crate) app_paths: AppPaths,
     pub(crate) audio: Option<Audio>,
     pub(crate) binds: Option<Binds>,
-    pub(crate) discord_app_ids: Option<DiscordAppIds>,
+    #[serde(default)]
+    pub(crate) discord: Discord,
     pub(crate) display_modes: Option<DisplayModes>,
     pub(crate) games: Option<Games>,
     pub(crate) media_browser: Option<MediaBrowser>,

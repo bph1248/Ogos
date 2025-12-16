@@ -318,19 +318,7 @@ unsafe fn begin() -> Res<()> {
     }
 
     if cli.media_browser {
-        (|| -> Res<()> {
-            let config = config::get().read()?;
-            let discord_app_ids = config.discord_app_ids.clone().unwrap_or_default();
-
-            drop(config);
-
-            gui::begin(gui::Kind::MediaBrowser { discord_app_ids })?;
-
-            Ok(())
-        })()
-        .unwrap_or_else(|err| {
-            error!("{}: failed to handle image: {}", module_path!(), err);
-        });
+        gui::begin(gui::Kind::MediaBrowser).unwrap_or_else(|err| error!("{}: failed to launch media browser: {}", module_path!(), err));
     }
 
     // Long-lived tasks
