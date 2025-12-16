@@ -146,7 +146,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         }
 
         spawn_command(&mut cmd)?;
-        info!("{}: spawned {}", module_path!(), cmd.to_string());
+        info!("{}: spawned {}", module_path!(), cmd.display());
 
         let mut system = System::new();
         let pid = (1..=30).find_map(|_| {

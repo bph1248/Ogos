@@ -251,6 +251,26 @@ impl BoolExt for bool {
     }
 }
 
+pub(crate) trait CmdExt {
+    fn display(&self) -> String;
+}
+impl CmdExt for Command {
+    fn display(&self) -> String {
+        let program = self.get_program().to_string_lossy();
+
+        let get_quoted_bytes = |s: &str| s.len() + 2 * "\"".len();
+        let capacity = get_quoted_bytes(program.as_ref()) + self.get_args().map(|arg| " ".len() + get_quoted_bytes(arg.to_string_lossy().as_ref())).sum::<usize>();
+
+        let mut s = String::with_capacity(capacity);
+        write!(&mut s, "\"{}\"", program).unwrap();
+        for arg in self.get_args() {
+            write!(&mut s, " \"{}\"", arg.to_string_lossy()).unwrap();
+        }
+
+        s
+    }
+}
+
 pub(crate) trait Name {
     fn name(&self) -> &'static str;
 }
@@ -400,28 +420,6 @@ impl StrExt for &str {
     }
 }
 
-pub(crate) trait ToString {
-    fn to_string(&self) -> String;
-}
-impl ToString for Command {
-    fn to_string(&self) -> String {
-        let program = self.get_program().to_string_lossy();
-        let args = self.get_args().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
-
-        let get_quoted_bytes = |s: &str| s.len() + 2 * "\"".len();
-        let capacity = get_quoted_bytes(&program) + args.iter().map(|arg| get_quoted_bytes(arg) + " ".len()).sum::<usize>();
-
-        let mut s = String::with_capacity(capacity);
-
-        write!(&mut s, "\"{}\"", self.get_program().to_string_lossy()).unwrap();
-        for arg in self.get_args() {
-            write!(&mut s, " \"{}\"", arg.to_string_lossy()).unwrap();
-        }
-
-        s
-    }
-}
-
 pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, sleep_dur: Duration) -> Res<T> {
     for _ in 0..attempt_count.saturating_sub(1) {
         if let Ok(t) = f() {
@@ -486,19 +484,19 @@ pub(crate) fn get_process_count(proc_name: &str, system: &mut System) -> usize {
 pub(crate) fn output_command(cmd: &mut Command) -> ResVar<Output> {
     let output = cmd.output()
         .map_err(|err| {
-            ErrVar::FailedOutputCommand { inner: err, cmd: cmd.to_string() }
+            ErrVar::FailedOutputCommand { inner: err, cmd: cmd.display() }
         })?;
 
     match output.status.success() {
         true => Ok(output),
-        false => Err(ErrVar::UnsuccessfulExitCode { code: output.status.code(), cmd: cmd.to_string() })
+        false => Err(ErrVar::UnsuccessfulExitCode { code: output.status.code(), cmd: cmd.display() })
     }
 }
 
 pub(crate) fn spawn_command(cmd: &mut Command) -> ResVar<Child> {
     let output = cmd.spawn()
         .map_err(|err| {
-            ErrVar::FailedSpawnCommand { inner: err, cmd: cmd.to_string() }
+            ErrVar::FailedSpawnCommand { inner: err, cmd: cmd.display() }
         })?;
 
     Ok(output)
