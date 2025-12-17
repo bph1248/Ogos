@@ -58,7 +58,11 @@ impl<const ID: u32> ErrLoc<ID> {
 }
 impl<const ID: u32> Display for ErrLoc<ID> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}, {}", self.msg, self.var, self.x)?;
+        if !self.msg.is_empty() {
+            write!(f, "{}: ", self.msg)?;
+        }
+
+        write!(f, "{}, {}", self.var, self.x)?;
 
         if let Some(trail) = self.trail.as_ref() {
             for loc in trail.iter() {
