@@ -555,7 +555,7 @@ unsafe fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, w
             },
             WindowShiftMsg::BroadcastMsg(BroadcastMsg::WmReloadConfig) => Err(ErrVar::ReloadConfig)?,
             WindowShiftMsg::Destroy(hwnd) => {
-                #[cfg(feature = "bug_hunting_window_shift_destroy")]
+                #[cfg(feature = "dbg_window_shift_destroy")]
                 info!("{}: removing hwnd: {:#x}", module_path!(), hwnd);
 
                 win_infos.remove(&hwnd);

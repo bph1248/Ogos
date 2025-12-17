@@ -59,15 +59,10 @@ windows_061 = { version = "0.61", package = "windows", features = [
 ] }
 
 [features]
-bug_hunting_cpu_sets = []
-bug_hunting_screen_extent = []
-bug_hunting_taskbar_window_pos_changing = []
-bug_hunting_taskbar_win_events = []
-bug_hunting_taskbar_win_events_all_foreground = []
-bug_hunting_taskbar_win_messages = []
-bug_hunting_window_shift_destroy = []
-bug_hunting_window_watch_win_events = []
 dbg_console = []
+dbg_cpu_sets = []
 dbg_cursor_watch = []
 dbg_window_info = []
 dbg_window_shift_delta = []
+dbg_window_shift_destroy = []
+dbg_window_watch_win_events = []

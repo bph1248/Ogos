@@ -180,7 +180,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
                     let valid_cpu_set_infos_len = required_cpu_set_infos_size / cpu_set_info_size;
                     let staggered_cpu_set_ids = cpu_set_infos[0..valid_cpu_set_infos_len as usize].iter()
                         .filter_map(|cpu_set_info| {
-                            #[cfg(feature = "bug_hunting_cpu_sets")] {
+                            #[cfg(feature = "dbg_cpu_sets")] {
                                 info!("GetSystemCpuSetInformation:");
                                 info!("\tinfo size: {:?}", cpu_set_info.Size);
                                 info!("\tinfo type: {:?}", cpu_set_info.Type);
@@ -209,7 +209,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
                     SetProcessDefaultCpuSets(proc_hnd, Some(&staggered_cpu_set_ids)).ok()?;
                     info!("{}: staggered cpu set ids: {:?}", module_path!(), staggered_cpu_set_ids);
 
-                    #[cfg(feature = "bug_hunting_cpu_sets")] {
+                    #[cfg(feature = "dbg_cpu_sets")] {
                         let mut required_count = 0_u32;
                         _ = GetProcessDefaultCpuSets(proc_hnd, None, &mut required_count);
                         info!("GetProcessDefaultCpuSets:");

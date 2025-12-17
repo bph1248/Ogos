@@ -196,7 +196,7 @@ unsafe extern "system" fn window_foreground_all_foreground_proc(_: HWINEVENTHOOK
 }
 
 unsafe extern "system" fn window_shift_proc(_: HWINEVENTHOOK, event: u32, hwnd: HWND, id_obj: i32, _id_child: i32, _: u32, _: u32) {
-    #[cfg(feature = "bug_hunting_window_watch_win_events")]
+    #[cfg(feature = "dbg_window_watch_win_events")]
     info!("{}: {} ({:#06x}): hwnd: {:p}, id_obj: {:#x}, id_child: {:#x}", module_path!(), event.to_event_string(), event, hwnd.0, id_obj, _id_child);
 
     let msg = match event {
