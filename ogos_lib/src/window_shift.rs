@@ -19,7 +19,7 @@ use std::{
     thread::{self, *},
     time::*
 };
-use rand::*;
+use rand::seq::*;
 use windows::Win32::{
     Foundation::*,
     Graphics::Dwm::*,
@@ -600,12 +600,16 @@ unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
 
     let config = config::get().read()?;
     let mut window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigKey { name: config::WindowShift::NAME })?;
-
     drop(config);
 
     let current_desktop_hnd = get_current_thread_desktop()?;
     let mut win_infos: HashMap<usize, WinInfo> = HashMap::new();
     let mut win_errored: HashMap<usize, Errored> = HashMap::new();
+
+    let mut rng = rand::rng();
+    let config::WindowShift { stride, .. } = window_shift_config;
+    let x_axis_choices = [stride.x as i32, -(stride.x as i32)];
+    let y_axis_choices = [stride.y as i32, -(stride.y as i32)];
 
     let mut ts = ThreadState {
         screen_extent: get_screen_extent(GetDesktopWindow())?,
@@ -623,15 +627,9 @@ unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
 
                 EnumDesktopWindows(current_desktop_hnd, Some(enum_desktop_windows_proc), LPARAM(&mut ts as *mut _ as _))?;
 
-                let config::WindowShift { stride, .. } = &window_shift_config;
-                let shift_by = {
-                    let x_axis_choices = [stride.x as i32, -(stride.x as i32)];
-                    let y_axis_choices = [stride.y as i32, -(stride.y as i32)];
-
-                    Delta {
-                        x: x_axis_choices[rand::thread_rng().gen_range(0..=1)],
-                        y: y_axis_choices[rand::thread_rng().gen_range(0..=1)]
-                    }
+                let shift_by = Delta {
+                    x: *x_axis_choices.choose(&mut rng).unwrap(),
+                    y: *y_axis_choices.choose(&mut rng).unwrap()
                 };
 
                 for hwnd in ts.hwnds.drain(..) {

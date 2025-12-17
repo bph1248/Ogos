@@ -288,7 +288,7 @@ pub(crate) struct Constraints {
     pub(crate) shift: Option<ShiftConstraint>
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Stride {
     pub(crate) x: u32,
