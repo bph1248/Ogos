@@ -180,7 +180,7 @@ impl HwndExt for HWND {
 
     unsafe fn get_exe(&self) -> Res1<String> {
         let tpids = self.get_thread_proc_ids()?;
-        let proc_hnd = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, None, tpids.proc)?;
+        let proc_hnd = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, tpids.proc)?;
 
         let mut proc_image_file_name = [0_u16; MAX_PATH as usize + 1];
         GetProcessImageFileNameW(proc_hnd, &mut proc_image_file_name).win32_var_ok()?;

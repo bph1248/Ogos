@@ -149,22 +149,16 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         info!("{}: spawned {}", module_path!(), cmd.display());
 
         let mut system = System::new();
-        let pid = (1..=30).find_map(|_| {
-            system.refresh_processes_specifics(default!());
-
-            let proc = get_first_process(&game_info.proc, &mut system);
-            match proc {
-                Some(proc) => Some(proc.pid()),
-                None => {
+        let pid = (0..30).find_map(|_| {
+            get_first_process(&game_info.proc, &mut system)
+                .map(|proc| proc.pid())
+                .or_else(|| {
                     thread::sleep(Duration::from_secs(1));
 
                     None
-                }
-            }
+                })
         })
-        .ok_or_else(|| {
-            ErrVar::MissingProcess { name: game_info.proc.clone() }
-        })?;
+        .ok_or_else(|| ErrVar::MissingProcess { name: game_info.proc.clone() })?;
         info!("{}: process: {}, pid: {}", module_path!(), game_info.proc, pid);
 
         drop(config);
@@ -175,13 +169,13 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
                     let proc_hnd = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_LIMITED_INFORMATION, false, pid.as_u32())?;
 
                     let mut required_cpu_set_infos_size = 0;
-                    _ = GetSystemCpuSetInformation(None, 0, &mut required_cpu_set_infos_size, proc_hnd, 0); // Ignore error thrown when querying required buffer size
+                    _ = GetSystemCpuSetInformation(None, 0, &mut required_cpu_set_infos_size, Some(proc_hnd), None); // Ignore error thrown when querying required buffer size
 
                     let cpu_set_info_size = size_of::<SYSTEM_CPU_SET_INFORMATION>() as u32;
                     let cpu_set_infos_len = required_cpu_set_infos_size / cpu_set_info_size;
                     let mut cpu_set_infos = vec![SYSTEM_CPU_SET_INFORMATION::default(); cpu_set_infos_len as usize];
                     let cpu_set_infos_size = size_of_val(&*cpu_set_infos) as u32;
-                    GetSystemCpuSetInformation(Some(cpu_set_infos.as_mut_ptr()), cpu_set_infos_size, &mut required_cpu_set_infos_size, proc_hnd, 0).ok()?;
+                    GetSystemCpuSetInformation(Some(cpu_set_infos.as_mut_ptr()), cpu_set_infos_size, &mut required_cpu_set_infos_size, Some(proc_hnd), None).ok()?;
 
                     let valid_cpu_set_infos_len = required_cpu_set_infos_size / cpu_set_info_size;
                     let staggered_cpu_set_ids = cpu_set_infos[0..valid_cpu_set_infos_len as usize].iter()

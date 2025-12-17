@@ -375,6 +375,19 @@ macro_rules! impl_Win32CoreOk {
             }
         )+
     };
+    (if self == false = { $($ty:ty),+ }) => {
+        $(
+            impl Win32CoreOk<Self> for $ty {
+                unsafe fn win32_core_ok(self) -> windows::core::Result<Self> {
+                    if self == false {
+                        return Err(GetLastError().into())
+                    }
+
+                    Ok(self)
+                }
+            }
+        )+
+    };
     (if self.is_invalid() = { $($ty:ty),+ }) => {
         $(
             impl Win32CoreOk<Self> for $ty {
@@ -403,6 +416,7 @@ macro_rules! impl_Win32CoreOk {
     };
 }
 impl_Win32CoreOk!(if self == 0             = { u32 });
+impl_Win32CoreOk!(if self == false         = { bool });
 impl_Win32CoreOk!(if self.is_invalid()     = { HWINEVENTHOOK });
 impl_Win32CoreOk!(if self.0 == WAIT_FAILED = { WAIT_EVENT });
 

@@ -129,7 +129,7 @@ unsafe extern "system" fn wnd_proc_tray(hwnd: HWND, msg: u32, wparam: WPARAM, lp
 
                     let mut cursor_pos = POINT::default();
                     GetCursorPos(&mut cursor_pos)?;
-                    let selected = TrackPopupMenu(menu_hnd, TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RETURNCMD, cursor_pos.x, cursor_pos.y, 0, hwnd, None);
+                    let selected = TrackPopupMenu(menu_hnd, TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RETURNCMD, cursor_pos.x, cursor_pos.y, None, hwnd, None);
 
                     match selected.0 as usize {
                         RELOAD_CONFIG => (),
@@ -400,7 +400,7 @@ unsafe fn begin() -> Res<()> {
                 CW_USEDEFAULT,
                 None,
                 None,
-                exe_module,
+                Some(exe_module.into()),
                 None
             )?;
 

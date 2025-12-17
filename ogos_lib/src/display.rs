@@ -407,7 +407,7 @@ pub(crate) unsafe fn control_windows(arg: ControlWindowsArg) -> Res1<()> {
             ControlWindowsArg::_UndoMinimizeAll => UNDO_MINIMIZE_ALL
         }
     );
-    SendMessageW(taskbar_hwnd, WM_COMMAND, wparam, LPARAM(0)).win32_var_ok()?;
+    SendMessageW(taskbar_hwnd, WM_COMMAND, Some(wparam), None).win32_var_ok()?;
 
     info!("{}: control windows: {}", module_path!(), arg);
 
@@ -463,7 +463,7 @@ pub(crate) unsafe fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>
 }
 
 pub(crate) unsafe fn enable_screensaver() -> ResVar<()> {
-    SendMessageW(GetDesktopWindow(), WM_SYSCOMMAND, WPARAM(SC_SCREENSAVE as usize), None).win32_var_ok()?;
+    SendMessageW(GetDesktopWindow(), WM_SYSCOMMAND, Some(WPARAM(SC_SCREENSAVE as usize)), None).win32_var_ok()?;
 
     info!("{}: screensaver: enabled", module_path!());
 

@@ -29,9 +29,12 @@ use std::{
     thread,
     time::*
 };
-use windows::Win32::{
-    Foundation::*,
-    System::Power::*
+use windows::{
+    core::*,
+    Win32::{
+        Foundation::*,
+        System::Power::*
+    }
 };
 
 #[cfg(feature = "dbg_window_info")]
@@ -76,7 +79,7 @@ mod trigger_watch {
                     Task::PauseWallpaperEngine => {
                         thread::spawn(|| pause_wallpaper_engine().unwrap_or_else(|err| error!("{}: failure pausing wallpaper engine: {}", module_path!(), err)));
                     },
-                    Task::SetSleepMode => SetSuspendState(BOOLEAN(0), BOOLEAN(0), BOOLEAN(1)).ok().x().unwrap_or_else(|err| {
+                    Task::SetSleepMode => _ = SetSuspendState(false, false, true).win32_core_ok().x().inspect_err(|err| {
                         error!("{}: failed to set sleep mode: {}", module_path!(), err);
                     }),
                     Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
@@ -491,7 +494,7 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
             module_path!(), fg_hwnd.0, fg_exe, fg_tpids.thread, fg_caption, fg_class, fg_owner.0, fg_parent.0);
 
         let mut children: Vec<HWND> = Vec::new();
-        _ = EnumChildWindows(fg_hwnd, Some(enum_child_windows_proc), LPARAM(&mut children as *mut _ as _));
+        _ = EnumChildWindows(Some(fg_hwnd), Some(enum_child_windows_proc), LPARAM(&mut children as *mut _ as _));
 
         let mut tl_siblings_info = TopLevelSiblingsInfo {
             fg_pid: fg_tpids.proc,

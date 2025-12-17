@@ -23,11 +23,14 @@ use std::{
     time::*
 };
 use sysinfo::*;
-use windows::Win32::{
-    Foundation::*,
-    UI::{
-        WindowsAndMessaging::*,
-        Input::KeyboardAndMouse::*,
+use windows::{
+    core::*,
+    Win32::{
+        Foundation::*,
+        UI::{
+            WindowsAndMessaging::*,
+            Input::KeyboardAndMouse::*,
+        }
     }
 };
 
@@ -467,18 +470,18 @@ pub(crate) fn get_file_kind(ext: &str) -> FileKind {
 }
 
 pub(crate) fn get_first_process<'a>(proc_name: &str, system: &'a mut System) -> Option<&'a Process> {
-    system.refresh_processes_specifics(default!());
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, default!());
 
-    system.processes_by_exact_name(proc_name)
+    system.processes_by_exact_name(proc_name.as_ref())
         .find(|process| {
             process.name() == proc_name
         })
 }
 
 pub(crate) fn get_process_count(proc_name: &str, system: &mut System) -> usize {
-    system.refresh_processes_specifics(default!());
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, default!());
 
-    system.processes_by_exact_name(proc_name).count()
+    system.processes_by_exact_name(proc_name.as_ref()).count()
 }
 
 pub(crate) fn output_command(cmd: &mut Command) -> ResVar<Output> {

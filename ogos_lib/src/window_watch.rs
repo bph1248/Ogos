@@ -267,7 +267,7 @@ unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
     .unwrap();
 
     let start_menu_class_name = TASKBAR_START_MENU_CLASS_NAME.to_win_str();
-    let start_menu_hwnd = FindWindowExW(taskbar_hwnd, None, *start_menu_class_name, None)?;
+    let start_menu_hwnd = FindWindowExW(Some(taskbar_hwnd), None, *start_menu_class_name, None)?;
     let start_menu_rect = start_menu_hwnd.get_rect()?;
 
     let screen_extent = get_screen_extent(GetDesktopWindow())?;
@@ -309,7 +309,7 @@ unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
         screen_extent.height,
         None,
         None,
-        exe_module,
+        Some(exe_module.into()),
         None
     )?;
 
@@ -368,6 +368,7 @@ unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Send
 
         if enable == WindowForegroundComponents::WINDOW_SHIFT {
             let class_name = WINDOW_WATCH_CLASS_NAME.to_win_str();
+            let exe_module = GetModuleHandleW(None)?;
             let wnd_class = WNDCLASSEXW {
                 cbSize: size_of::<WNDCLASSEXW>() as u32,
                 lpfnWndProc: Some(message_only_proc),
@@ -387,7 +388,7 @@ unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Send
                 CW_USEDEFAULT,
                 None,
                 None,
-                GetModuleHandleW(None)?,
+                Some(exe_module.into()),
                 None
             )?;
         }

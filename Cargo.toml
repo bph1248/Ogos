@@ -16,7 +16,7 @@ version = "0.1.0"
 log = "0.4.17"
 log-panics = "2.1.0"
 simplelog = "0.12.1"
-windows = { version = "0.58", features = [
+windows = { version = "0.62.2", features = [
     "Win32_Devices_Display",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",

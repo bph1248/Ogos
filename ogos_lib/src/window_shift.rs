@@ -20,16 +20,19 @@ use std::{
     time::*
 };
 use rand::seq::*;
-use windows::Win32::{
-    Foundation::*,
-    Graphics::Dwm::*,
-    System::{
-        StationsAndDesktops::*,
-        Threading::*
-    },
-    UI::{
-        Input::KeyboardAndMouse::*,
-        WindowsAndMessaging::*
+use windows::{
+    core::*,
+    Win32::{
+        Foundation::*,
+        Graphics::Dwm::*,
+        System::{
+            StationsAndDesktops::*,
+            Threading::*
+        },
+        UI::{
+            Input::KeyboardAndMouse::*,
+            WindowsAndMessaging::*
+        }
     }
 };
 
@@ -625,7 +628,7 @@ unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
                     continue
                 }
 
-                EnumDesktopWindows(current_desktop_hnd, Some(enum_desktop_windows_proc), LPARAM(&mut ts as *mut _ as _))?;
+                EnumDesktopWindows(Some(current_desktop_hnd), Some(enum_desktop_windows_proc), LPARAM(&mut ts as *mut _ as _))?;
 
                 let shift_by = Delta {
                     x: *x_axis_choices.choose(&mut rng).unwrap(),

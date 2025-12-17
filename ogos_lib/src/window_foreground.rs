@@ -278,7 +278,7 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant
                 }
             }
 
-            SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.exit.x, tb.hitbox_pos.exit.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
+            SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), tb.hitbox_pos.exit.x, tb.hitbox_pos.exit.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
             tb.hitbox_mouse_move_anchor = Some(now!());
             tb.taskbar_hwnd.show_na();
 
@@ -289,7 +289,7 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant
                 Some(snap_ordinate) => {
                     match tb.hitbox_exit_cursor_should_have_snapped {
                         true => {
-                            SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
+                            SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
                             tb.hitbox_mouse_move_anchor = Some(now!());
                             tb.hitbox_state = HitboxState::Entry;
                             tb.hitbox_exit_cursor_should_have_snapped = false;
@@ -317,7 +317,7 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant
                     }
                 },
                 None => {
-                    SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
+                    SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
                     tb.hitbox_mouse_move_anchor = Some(now!());
                     tb.hitbox_state = HitboxState::Entry;
 
@@ -392,7 +392,7 @@ unsafe fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWN
 
             let rehook_taskbar = || -> Res<()> {
                 let taskbar_hwnd = FindWindowW(Some(&*tb.taskbar_class_name), None)?;
-                let start_menu_hwnd = FindWindowExW(taskbar_hwnd, None, *tb.start_menu_class_name, None)?;
+                let start_menu_hwnd = FindWindowExW(Some(taskbar_hwnd), None, *tb.start_menu_class_name, None)?;
                 let taskbar_tpids = taskbar_hwnd.get_thread_proc_ids()?;
 
                 let request = WinEventHookRequest {
@@ -510,7 +510,7 @@ unsafe fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: 
                 let taskbar_side = get_taskbar_side(taskbar_rect, tb.screen_extent);
                 let hitbox_pos = get_hitbox_pos(taskbar_rect, taskbar_side, tb.hitbox_entry_side, tb.hitbox_entry_inset_px, tb.hitbox_exit_taskbar_offset_px, tb.screen_extent);
 
-                SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, hitbox_pos.entry.x, hitbox_pos.entry.y, tb.screen_extent.width, tb.screen_extent.height, SWP_NOACTIVATE | SWP_NOCOPYBITS)?;
+                SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), hitbox_pos.entry.x, hitbox_pos.entry.y, tb.screen_extent.width, tb.screen_extent.height, SWP_NOACTIVATE | SWP_NOCOPYBITS)?;
                 tb.hitbox_hwnd.show_na();
                 tb.taskbar_hwnd.hide();
 
@@ -665,7 +665,7 @@ unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND)
                 false => {
                     tb.hitbox_hwnd.show_na();
 
-                    SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, 0,0, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOSIZE)?;
+                    SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), 0,0, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOSIZE)?;
                 }
             }
         }
@@ -750,7 +750,7 @@ unsafe fn move_hitbox_about_jump_list(tb: &Taskbar, jump_list_hwnd: HWND) -> Res
         let jump_list_rect = jump_list_hwnd.get_rect()?;
         let hitbox_pos_exit_y = jump_list_rect.top - tb.screen_extent.height - tb.hitbox_exit_jump_list_offset_px;
 
-        SetWindowPos(tb.hitbox_hwnd, HWND_TOPMOST, tb.hitbox_pos.exit.x, hitbox_pos_exit_y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
+        SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), tb.hitbox_pos.exit.x, hitbox_pos_exit_y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
     }
 
     Ok(())

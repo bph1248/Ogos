@@ -50,10 +50,10 @@ serde_json5 = "0.2.1"
 simplelog = { workspace = true }
 strum = { version = "0.27.1", features = ["derive"] }
 subenum = "1.1.2"
-sysinfo = "0.29.0"
-thiserror = "1.0.60"
+sysinfo = "0.37.2"
+thiserror = "2.0.17"
 tokio = { version = "1.46.1", features = ["full"] }
-which = "6.0.1"
+which = "8.0.0"
 widestring = "1.2.0"
 windows = { workspace = true }
 windows_061 = { version = "0.61", package = "windows", features = [
