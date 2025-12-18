@@ -6,7 +6,7 @@ use crate::{
     window_foreground
 };
 
-use ddc_hi::*;
+use ddc::Ddc;
 use log::*;
 use netcorehost::hostfxr::*;
 use nvapi_sys as nvapi;
@@ -420,46 +420,53 @@ pub(crate) unsafe fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>
         if prelude.let_walk_away { let_walk_away()?; }
     }
 
-    let mut displays = ddc_hi::Display::enumerate();
-    let display = displays.iter_mut()
-        .find(|display| {
-            let query = ddc_hi::Query::Backend(ddc_hi::Backend::Nvapi);
-
-            query.matches(&display.info)
-        })
-        .ok_or(ErrVar::MissingNvApiBackedDisplay)?;
-
-    match display.info.model_name.as_deref() {
-        Some("PG32UCDM") => {
-            let vcp_value = display.handle.get_vcp_feature(VCP_FEATURE_PIXEL_CLEANING)?.value();
-
-            match matches!(vcp_value, VCP_VALUE_PIXEL_CLEANING_OFF_SDR | VCP_VALUE_PIXEL_CLEANING_OFF_HDR) {
-                true => {
-                    let vcp_value_pixel_cleaning = vcp_value + VCP_VALUE_PIXEL_CLEANING_IGNITION;
-
-                    display.handle.set_vcp_feature(VCP_FEATURE_PIXEL_CLEANING, vcp_value_pixel_cleaning)?;
-
-                    info!("{}: enable pixel cleaning: vcp {:#x}: {:#x}", module_path!(), VCP_FEATURE_PIXEL_CLEANING, vcp_value_pixel_cleaning);
-
-                    if let Some(prelude) = prelude &&
-                        prelude.pause_wallpaper_engine
-                    {
-                        thread::spawn(|| {
-                            thread::sleep(Duration::from_secs(420));
-
-                            control_wallpaper_engine(WallpaperEngineArg::Play).unwrap_or_else(|err| {
-                                error!("{}: failed to resume wallpaper engine after pixel cleaning: {}", module_path!(), err);
-                            });
-                        });
-                    }
-                },
-                false => Err(ErrVar::InvalidPixelCleaningVcpValue { vcp_value })?
-            }
-
-            Ok(())
-        },
-        _ => Err(ErrVar::InvalidDisplayModelName)?
+    let path = get_first_display_path()?;
+    let friendly_name = get_display_friendly_name(path)?;
+    if friendly_name != u16cstr!("PG32UCDM") {
+        Err(ErrVar::InvalidDisplayName)?;
     }
+    let gdi_name = get_display_gdi_name(path)?;
+
+    let monitor_hnds = ddc_winapi::enumerate_monitors()?;
+    let mut monitor_info = MONITORINFOEXW::default();
+    monitor_info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
+
+    let mut droid = None;
+    for hnd in monitor_hnds {
+        let hnd = HMONITOR(hnd as *mut _); // Different Windows APIs
+        GetMonitorInfoW(hnd, &mut monitor_info as *mut _ as _).ok()?;
+        let gdi_name_ = U16CString::from_ptr_truncate(&monitor_info.szDevice as _, monitor_info.szDevice.len());
+
+        if gdi_name_ == gdi_name {
+            droid = Some(hnd);
+        }
+    }
+
+    let phys_monitors = ddc_winapi::get_physical_monitors_from_hmonitor(droid.unwrap().0 as *mut _)?;
+    let mut monitor = ddc_winapi::Monitor::new(phys_monitors[0]);
+
+    let vcp_value = monitor.get_vcp_feature(VCP_FEATURE_PIXEL_CLEANING)?.value();
+    match vcp_value {
+        VCP_VALUE_PIXEL_CLEANING_OFF_SDR | VCP_VALUE_PIXEL_CLEANING_OFF_HDR => {
+            let vcp_value = vcp_value + VCP_VALUE_PIXEL_CLEANING_IGNITION;
+            monitor.set_vcp_feature(VCP_FEATURE_PIXEL_CLEANING, vcp_value)?;
+
+            info!("{}: enable pixel cleaning: vcp {:#x}: {:#x}", module_path!(), VCP_FEATURE_PIXEL_CLEANING, vcp_value);
+
+            if let Some(prelude) = prelude && prelude.pause_wallpaper_engine {
+                thread::spawn(|| {
+                    thread::sleep(Duration::from_secs(420));
+
+                    control_wallpaper_engine(WallpaperEngineArg::Play).unwrap_or_else(|err| {
+                        error!("{}: failed to resume wallpaper engine after pixel cleaning: {}", module_path!(), err);
+                    });
+                });
+            }
+        },
+        _ => Err(ErrVar::InvalidPixelCleaningVcpValue { vcp_value })?
+    }
+
+    Ok(())
 }
 
 pub(crate) unsafe fn enable_screensaver() -> ResVar<()> {
@@ -501,6 +508,38 @@ unsafe fn get_color_bit_depth(display_id: NvU32) -> nvapi::Result<ColorBitDepth>
     Ok(color_bit_depth)
 }
 
+pub(crate) unsafe fn get_display_friendly_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> {
+    let mut target_device_name = DISPLAYCONFIG_TARGET_DEVICE_NAME {
+        header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+            r#type: DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+            size: size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>().try_into()?,
+            adapterId: path.targetInfo.adapterId,
+            id: path.targetInfo.id
+        },
+        ..default!()
+    };
+    DisplayConfigGetDeviceInfo(&mut target_device_name.header).win32_err_ok()?;
+    let friendly_name = U16CString::from_ptr_truncate(target_device_name.monitorFriendlyDeviceName.as_ptr(), target_device_name.monitorFriendlyDeviceName.len());
+
+    Ok(friendly_name)
+}
+
+pub(crate) unsafe fn get_display_gdi_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> {
+    let mut source_device_name = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+        header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+            r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+            size: size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>().try_into()?,
+            adapterId: path.sourceInfo.adapterId,
+            id: path.sourceInfo.id
+        },
+        ..default!()
+    };
+    DisplayConfigGetDeviceInfo(&mut source_device_name.header).win32_err_ok()?;
+    let gdi_name = U16CString::from_ptr_truncate(source_device_name.viewGdiDeviceName.as_ptr(), source_device_name.viewGdiDeviceName.len());
+
+    Ok(gdi_name)
+}
+
 pub(crate) unsafe fn get_display_mode(path: DISPLAYCONFIG_PATH_INFO) -> Res1<DisplayMode> {
     let mut advanced_color_info = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
@@ -535,10 +574,6 @@ pub(crate) unsafe fn get_first_display_path() -> Res1<DISPLAYCONFIG_PATH_INFO> {
     let mut path_count = 0;
     let mut mode_count = 0;
     GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count).ok()?;
-
-    if path_count != 1 {
-        Err(ErrVar::InvalidDisplayCount)?;
-    }
 
     let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
     let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
