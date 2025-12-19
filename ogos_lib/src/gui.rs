@@ -36,11 +36,7 @@ use windows::Win32::{
 
 const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color32::from_rgb(250, 246, 235) };
 const CHUNK_BYTE_COUNT: u64 = 500 * 1024;
-const GRID_IMAGE_WIDTH: f32 = 348.0;
-const GRID_IMAGE_HEIGHT: f32 = 522.0;
-const GRID_IMAGE_SIZE: egui::Vec2 = egui::vec2(GRID_IMAGE_WIDTH, GRID_IMAGE_HEIGHT);
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
-const DETAILS_IMAGE_SIZE: egui::Vec2 = egui::vec2(800.0, 1200.0);
 const FRAME_MARGIN: f32 = 15.0;
 const SEPARATOR_WIDTH: f32 = 2.0;
 
@@ -144,12 +140,12 @@ fn ferry_image(info: ImageFerryInfo) -> Res1<()> {
     let ImageFerryInfo {
         src_path,
         image_state_sx,
-        transform
+        resize
     } = info;
 
-    match transform {
-        Some(transform) => {
-            let ImageFerryTransform { dst_path, dst_size } = transform;
+    match resize {
+        Some(resize) => {
+            let ImageFerryResize { dst_path, dst_size } = resize;
 
             let (color_image, pixels) = load_and_resize_color_image(src_path.as_path(), dst_size).unwrap();
             let color_image_size = color_image.size;
@@ -361,6 +357,10 @@ struct CacheEntryInfo {
 #[derive(Default, Serialize, Deserialize)]
 struct Cache {
     #[serde(default)]
+    grid_cell_size: egui::Vec2,
+    #[serde(default)]
+    details_cell_size: egui::Vec2,
+    #[serde(default)]
     images: IndexSet<String>,
     #[serde(default)]
     tags: Vec<Rc<str>>,
@@ -382,30 +382,30 @@ struct GridEntryInfo {
     hash: Option<Arc<str>>
 }
 
+struct ImageFerryInfo {
+    src_path: PathBuf,
+    image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>,
+    resize: Option<ImageFerryResize>
+}
+
+struct ImageFerryResize {
+    dst_path: PathBuf,
+    dst_size: egui::Vec2
+}
+
 #[derive(Default)]
 struct ImageStates {
     grid_state: ImageState,
     details_state: ImageState
 }
 
-struct ImageFerryTransform {
-    dst_path: PathBuf,
-    dst_size: egui::Vec2
-}
-
-struct ImageFerryInfo {
-    src_path: PathBuf,
-    image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>,
-    transform: Option<ImageFerryTransform>
-}
-
-#[derive(Default)]
-struct PointerContained(bool);
-
 struct MenuPointerState {
     pointer_contained: bool,
     entry_clicked: bool
 }
+
+#[derive(Default)]
+struct PointerContained(bool);
 
 struct MediaBrowser {
     _thread_pool: Arc<rayon::ThreadPool>,
@@ -416,6 +416,7 @@ struct MediaBrowser {
     frame: egui::Frame,
     view_kind: ViewKind,
     grid_entries: Vec<GridEntryInfo>,
+    grid_cell_size: egui::Vec2,
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
     active_tag: Option<Rc<str>>,
     active_view: Vec<usize>, // Indices into grid_entries
@@ -426,6 +427,7 @@ struct MediaBrowser {
     filter_win_stamp: Option<Instant>,
     filter_win_cursor_checked: bool,
     details_info: DetailsInfo,
+    details_cell_size: egui::Vec2,
     details_button_resps: Vec<egui::Response>,
     hovered_details_entry_i: usize,
     maintain_sample_rate: bool,
@@ -446,6 +448,8 @@ impl eframe::App for MediaBrowser {
         if ctx.input(|state| state.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 
+            self.cache.grid_cell_size = self.grid_cell_size;
+            self.cache.details_cell_size = self.details_cell_size;
             self.cache.tags = self.tags.keys().cloned().collect();
             self.cache.images = self.images.keys().map(|key| key.to_string()).collect();
 
@@ -520,8 +524,23 @@ impl MediaBrowser {
             .collect::<Res<IndexMap::<Arc<str>, ImageStates>>>()?;
 
         let config = config::get().read()?;
-        let media_dirs = config.media_browser.as_ref().map(|media_browser| &media_browser.dirs)
+        let (media_dirs,
+            grid_cell_width,
+            details_cell_width
+        ) = config.media_browser.as_ref()
+            .map(|media_browser_config| {
+                #[allow(clippy::cast_precision_loss)]
+                (
+                    &media_browser_config.dirs,
+                    media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
+                    media_browser_config.details_cell_width.next_multiple_of(2) as f32
+                )
+            })
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
+        let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * 1.5);
+        let details_cell_size = egui::vec2(details_cell_width, details_cell_width * 1.5);
+        let grid_cell_size_changed = cache.grid_cell_size != grid_cell_size;
+        let details_cell_size_changed = cache.details_cell_size != details_cell_size;
 
         let mut grid_entry_infos = media_dirs.iter()
             .map(|dir| Path::new(dir).read_dir())
@@ -617,10 +636,20 @@ impl MediaBrowser {
                         let mut chunk = [0_u8; CHUNK_BYTE_COUNT as usize];
                         image_file.read(&mut chunk)?;
                         let computed_hash = Arc::from(hasher.update(&chunk).finalize().to_hex().as_str());
+                        let hash_mismatches = expected_hash.is_none_or(|expected_hash| expected_hash != computed_hash);
 
-                        // Compare hashes
-                        if expected_hash.is_none_or(|expected_hash| expected_hash != computed_hash) {
-                            match load_and_resize_color_image(image_path.as_path(), GRID_IMAGE_SIZE) {
+                        let load_grid_image = |grid_image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>| {
+                            match load_color_image(grid_image_path.as_path()) {
+                                Ok(grid_image) => grid_image_state_sx.send(Ok(grid_image)).unwrap(),
+                                Err(err) => {
+                                    error!("{}: failed to load image: {}", module_path!(), err);
+
+                                    grid_image_state_sx.send(Err(())).unwrap();
+                                }
+                            }
+                        };
+                        let resize_grid_image = |grid_image_path, grid_image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>| {
+                            match load_and_resize_color_image(image_path.as_path(), grid_cell_size) {
                                 Ok((grid_image, grid_pixels)) => {
                                     let grid_image_width = grid_image.width() as u32;
                                     let grid_image_height = grid_image.height() as u32;
@@ -629,19 +658,6 @@ impl MediaBrowser {
                                     ctx.request_repaint();
 
                                     hash_sx.send((entry_i, computed_hash)).unwrap();
-
-                                    ferry_sx.send((
-                                        image_file_name.clone(),
-                                        ImageFerryInfo {
-                                            src_path: image_path,
-                                            image_state_sx: details_image_state_sx,
-                                            transform: Some(ImageFerryTransform {
-                                                dst_path: details_image_path,
-                                                dst_size: DETAILS_IMAGE_SIZE
-                                            })
-                                        }
-                                    ))
-                                    .unwrap();
 
                                     save_image(grid_image_path, grid_pixels.as_slice(), grid_image_width, grid_image_height)
                                         .unwrap_or_else(|err| error!("{}: failed to save image: {}: {}", module_path!(), image_file_name, err));
@@ -652,27 +668,46 @@ impl MediaBrowser {
                                     grid_image_state_sx.send(Err(())).unwrap();
                                 }
                             }
-                        } else {
-                            match load_color_image(grid_image_path.as_path()) {
-                                Ok(grid_image) => {
-                                    grid_image_state_sx.send(Ok(grid_image)).unwrap();
-
-                                    ferry_sx.send((
-                                        image_file_name.clone(),
-                                        ImageFerryInfo {
-                                            src_path: details_image_path,
-                                            image_state_sx: details_image_state_sx,
-                                            transform: None
-                                        }
-                                    ))
-                                    .unwrap();
-                                },
-                                Err(err) => {
-                                    error!("{}: failed to load image: {}", module_path!(), err);
-
-                                    grid_image_state_sx.send(Err(())).unwrap();
+                        };
+                        let ferry_load_details_image = |details_image_path, details_image_state_sx| {
+                            ferry_sx.send((
+                                image_file_name.clone(),
+                                ImageFerryInfo {
+                                    src_path: details_image_path,
+                                    image_state_sx: details_image_state_sx,
+                                    resize: None
                                 }
-                            }
+                            ))
+                            .unwrap();
+                        };
+                        let ferry_resize_details_image = |image_path, details_image_path, details_image_state_sx| {
+                            ferry_sx.send((
+                                image_file_name.clone(),
+                                ImageFerryInfo {
+                                    src_path: image_path,
+                                    image_state_sx: details_image_state_sx,
+                                    resize: Some(ImageFerryResize {
+                                        dst_path: details_image_path,
+                                        dst_size: details_cell_size
+                                    })
+                                }
+                            ))
+                            .unwrap();
+                        };
+
+                        if hash_mismatches {
+                            resize_grid_image(grid_image_path, grid_image_state_sx);
+                            ferry_resize_details_image(image_path, details_image_path, details_image_state_sx);
+
+                            return Ok(())
+                        }
+                        match grid_cell_size_changed {
+                            true => resize_grid_image(grid_image_path, grid_image_state_sx),
+                            false => load_grid_image(grid_image_state_sx)
+                        }
+                        match details_cell_size_changed {
+                            true => ferry_resize_details_image(image_path, details_image_path, details_image_state_sx),
+                            false => ferry_load_details_image(details_image_path, details_image_state_sx)
                         }
 
                         Ok(())
@@ -709,6 +744,7 @@ impl MediaBrowser {
             frame,
             view_kind: ViewKind::Grid,
             grid_entries: grid_entry_infos,
+            grid_cell_size,
             tags,
             active_tag: default!(),
             active_view: default!(),
@@ -719,6 +755,7 @@ impl MediaBrowser {
             filter_win_stamp: default!(),
             filter_win_cursor_checked: default!(),
             details_info: default!(),
+            details_cell_size,
             details_button_resps: Vec::with_capacity(24),
             hovered_details_entry_i: default!(),
             maintain_sample_rate: default!(),
@@ -847,8 +884,8 @@ impl MediaBrowser {
 
                     ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
-                    let cell_space_x = GRID_IMAGE_WIDTH + GRID_IMAGE_SPACING.x;
-                    let cell_space_y = GRID_IMAGE_HEIGHT + GRID_IMAGE_SPACING.y;
+                    let cell_space_x = self.grid_cell_size.x + GRID_IMAGE_SPACING.x;
+                    let cell_space_y = self.grid_cell_size.y + GRID_IMAGE_SPACING.y;
 
                     let table_cell_count = match self.active_tag.as_ref() {
                         Some(_) => self.active_view.len(),
@@ -891,9 +928,9 @@ impl MediaBrowser {
             .striped(false)
             .vscroll(false)
             .cell_layout(egui::Layout::top_down(egui::Align::Center))
-            .columns(egui_extras::Column::initial(GRID_IMAGE_WIDTH).at_most(GRID_IMAGE_WIDTH), row_cell_count)
+            .columns(egui_extras::Column::initial(self.grid_cell_size.x).at_most(self.grid_cell_size.x), row_cell_count)
             .body(|body| {
-                body.rows(GRID_IMAGE_HEIGHT, table_row_count, |mut row| {
+                body.rows(self.grid_cell_size.y, table_row_count, |mut row| {
                     let mut cell_i = row.index() * row_cell_count + row.col_index();
 
                     while row.col_index() < row_cell_count && cell_i < table_cell_count {
@@ -1065,7 +1102,7 @@ impl MediaBrowser {
         );
         let image_rect = egui::Rect::from_center_size(
             left_subd_rect.center(),
-            DETAILS_IMAGE_SIZE
+            self.details_cell_size
         );
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(image_rect), |ui| {

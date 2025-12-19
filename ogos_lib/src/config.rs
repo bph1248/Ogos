@@ -382,7 +382,9 @@ impl_name!(Mpv);
 #[serde(deny_unknown_fields)]
 pub(crate) struct MediaBrowser {
     pub(crate) dirs: Vec<PathBuf>,
-    pub(crate) window_inner_size: Option<Extent2dU>
+    pub(crate) window_inner_size: Option<Extent2dU>,
+    pub(crate) grid_cell_width: u32,
+    pub(crate) details_cell_width: u32
 }
 impl_name!(MediaBrowser);
 
