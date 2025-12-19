@@ -38,14 +38,11 @@ use std::{
 };
 use sysinfo::*;
 use widestring::*;
-use windows::{
-    core::*,
-    Win32::{
-        Devices::Display::*,
-        Foundation::*,
-        Graphics::Gdi::*,
-        UI::WindowsAndMessaging::*
-    }
+use windows::Win32::{
+    Devices::Display::*,
+    Foundation::*,
+    Graphics::Gdi::*,
+    UI::WindowsAndMessaging::*
 };
 
 pub(crate) const DISPLAYCONFIG_ADVANCED_COLOR_STATE_SDR: u32 = 0;
@@ -595,31 +592,21 @@ pub(crate) unsafe fn get_first_gpu_display_ids() -> Res1<(NvPhysicalGpuHandle, N
     Ok((gpu_hnds[0], display_ids[0]))
 }
 
-pub(crate) unsafe fn get_screen_extent(monitor_from: HWND) -> Res1<Extent2d> {
-    let hmonitor = MonitorFromWindow(monitor_from, MONITOR_DEFAULTTOPRIMARY); // Assume only 1 monitor
-    let mut monitor_info = MONITORINFOEXW {
-        monitorInfo: MONITORINFO {
-            cbSize: size_of::<MONITORINFOEXW>() as u32,
-            ..default!()
-        },
-        ..default!()
-    };
-    GetMonitorInfoW(hmonitor, &mut monitor_info.monitorInfo).ok()?;
+pub(crate) unsafe fn get_screen_extent() -> Res1<Extent2d> {
+    let mut path_count = 0;
+    let mut mode_count = 0;
+    GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count).ok()?;
 
-    let monitor_name = PCWSTR(monitor_info.szDevice.as_ptr());
-    let mut display_settings = DEVMODEW {
-        dmSize: size_of::<DEVMODEW>() as u16,
-        dmDriverExtra: 0,
-        ..default!()
-    };
-    EnumDisplaySettingsW(monitor_name, ENUM_CURRENT_SETTINGS, &mut display_settings).ok()?;
+    let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
+    let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
+    QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &mut path_count, paths.as_mut_ptr(), &mut mode_count, modes.as_mut_ptr(), None).ok()?;
 
-    Ok(
-        Extent2d {
-            width: display_settings.dmPelsWidth as i32,
-            height: display_settings.dmPelsHeight as i32
-        }
-    )
+    let source_mode = &modes[paths[0].sourceInfo.Anonymous.modeInfoIdx as usize];
+
+    Ok(Extent2d {
+        width: source_mode.Anonymous.sourceMode.width as i32,
+        height: source_mode.Anonymous.sourceMode.height as i32
+    })
 }
 
 pub(crate) unsafe fn set_color_bit_depth(display_id: NvU32, bit_depth: ColorBitDepth) -> Res1<Option<ColorBitDepth>> {
@@ -770,10 +757,6 @@ pub(crate) unsafe fn set_screen_extent(extent: Extent2dU) -> Res1<Option<Extent2
     let mut mode_count = 0;
     GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count).ok()?;
 
-    if path_count != 1 {
-        Err(ErrVar::InvalidDisplayCount)?;
-    }
-
     let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
     let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
     QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &mut path_count, paths.as_mut_ptr(), &mut mode_count, modes.as_mut_ptr(), None).ok()?;
@@ -783,14 +766,13 @@ pub(crate) unsafe fn set_screen_extent(extent: Extent2dU) -> Res1<Option<Extent2
         width: source_mode.Anonymous.sourceMode.width,
         height: source_mode.Anonymous.sourceMode.height
     };
-
     if extent == prev_extent {
         return Ok(None)
     }
 
     source_mode.Anonymous.sourceMode.width = extent.width;
     source_mode.Anonymous.sourceMode.height = extent.height;
-    SetDisplayConfig(Some(paths.as_slice()), Some(modes.as_slice()), SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG/*  | SDC_SAVE_TO_DATABASE */).win32_err_ok()?;
+    SetDisplayConfig(Some(paths.as_slice()), Some(modes.as_slice()), SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG).win32_err_ok()?;
 
     Ok(Some(prev_extent))
 }

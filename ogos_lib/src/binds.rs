@@ -457,7 +457,7 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
     }
 
     unsafe fn print_eligible_for_shift_info() -> Res<()> {
-        let screen_extent = get_screen_extent(GetDesktopWindow())?;
+        let screen_extent = get_screen_extent()?;
         let mut eligible_for_shift_info = EligibleForShiftInfo {
             eligibles: Vec::new(),
             screen_extent

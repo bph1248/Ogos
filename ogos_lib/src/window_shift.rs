@@ -615,7 +615,7 @@ unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
     let y_axis_choices = [stride.y as i32, -(stride.y as i32)];
 
     let mut ts = ThreadState {
-        screen_extent: get_screen_extent(GetDesktopWindow())?,
+        screen_extent: get_screen_extent()?,
         ..default!()
     };
     loop {

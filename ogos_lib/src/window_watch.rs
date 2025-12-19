@@ -270,7 +270,7 @@ unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
     let start_menu_hwnd = FindWindowExW(Some(taskbar_hwnd), None, *start_menu_class_name, None)?;
     let start_menu_rect = start_menu_hwnd.get_rect()?;
 
-    let screen_extent = get_screen_extent(GetDesktopWindow())?;
+    let screen_extent = get_screen_extent()?;
     let taskbar_rect = taskbar_hwnd.get_rect()?;
     let taskbar_side = get_taskbar_side(taskbar_rect, screen_extent);
     let (hitbox_exit_snap_ordinate,
