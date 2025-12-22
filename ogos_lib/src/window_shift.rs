@@ -603,6 +603,7 @@ unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
 
     let config = config::get().read()?;
     let mut window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigKey { name: config::WindowShift::NAME })?;
+    window_shift_config.interval_dur = window_shift_config.interval_dur.max(1);
     drop(config);
 
     let current_desktop_hnd = get_current_thread_desktop()?;
