@@ -5,7 +5,8 @@ use crate::{
     cursor_watch::*,
     err::*,
     win32::*,
-    window_watch::*
+    window_watch::*,
+    *
 };
 
 use bitflags::bitflags;
@@ -403,6 +404,8 @@ unsafe fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWN
                 };
                 let rx = request_win_event_hooks(ts.hook_mgr_tid, request)?;
 
+                add_tray_notify_icon(false)?;
+
                 tb.taskbar_hwnd = taskbar_hwnd;
                 tb.taskbar_tpids = taskbar_tpids;
                 tb.taskbar_hooks = Some(rx);
@@ -416,8 +419,8 @@ unsafe fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWN
             };
 
             attempt(rehook_taskbar, 10, Duration::from_secs(1))
-                .unwrap_or_else(|_| {
-                    panic!("{}: failed to rehook taskbar", module_path!())
+                .unwrap_or_else(|err| {
+                    panic!("{}: failed to rehook taskbar: {}", module_path!(), err)
                 });
         },
         _ => ()

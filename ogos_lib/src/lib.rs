@@ -96,7 +96,7 @@ pub(crate) enum LongLivedTask {
     WindowWatch(Tid)
 }
 
-unsafe extern "system" fn wnd_proc_tray(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => {
             DestroyWindow(hwnd).x()
@@ -148,6 +148,52 @@ unsafe extern "system" fn wnd_proc_tray(hwnd: HWND, msg: u32, wparam: WPARAM, lp
     }
 
     DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+pub(crate) unsafe fn add_tray_notify_icon(register_class: bool) -> Res1<()> {
+    let tray_class_name = "OgosTray".to_win_str();
+    let exe_module = GetModuleHandleW(None)?;
+    if register_class {
+        let wnd_class = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(tray_notify_icon_proc),
+            hInstance: exe_module.into(),
+            lpszClassName: *tray_class_name,
+            ..default!()
+        };
+        RegisterClassExW(&wnd_class).win32_var_ok()?;
+    }
+
+    let hidden_tray_hwnd = CreateWindowExW(
+        default!(),
+        *tray_class_name,
+        *tray_class_name,
+        WS_OVERLAPPED,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        None,
+        None,
+        Some(exe_module.into()),
+        None
+    )?;
+
+    let icon_hnd = LoadIconW(None, IDI_APPLICATION)?;
+    let notify_icon_data = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hidden_tray_hwnd,
+        uID: 1,
+        uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+        uCallbackMessage: WmOgos::Tray as u32,
+        hIcon: icon_hnd,
+        szTip: "Ogos".to_wide_128(),
+        ..default!()
+    };
+
+    Shell_NotifyIconW(NIM_ADD, &notify_icon_data).ok()?;
+
+    Ok(())
 }
 
 unsafe fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf> {
@@ -377,46 +423,7 @@ unsafe fn begin() -> Res<()> {
                 to_close.push(LongLivedTask::ConfigWatch(event_close));
             }
 
-            // Tray
-            let tray_class_name = "OgosTray".to_win_str();
-            let exe_module = GetModuleHandleW(None)?;
-            let wnd_class = WNDCLASSEXW {
-                cbSize: size_of::<WNDCLASSEXW>() as u32,
-                lpfnWndProc: Some(wnd_proc_tray),
-                hInstance: exe_module.into(),
-                lpszClassName: *tray_class_name,
-                ..default!()
-            };
-            RegisterClassExW(&wnd_class).win32_var_ok()?;
-
-            let hidden_tray_hwnd = CreateWindowExW(
-                default!(),
-                *tray_class_name,
-                *tray_class_name,
-                WS_OVERLAPPED,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                None,
-                None,
-                Some(exe_module.into()),
-                None
-            )?;
-
-            let icon_hnd = LoadIconW(None, IDI_APPLICATION)?;
-            let notify_icon_data = NOTIFYICONDATAW {
-                cbSize: size_of::<NOTIFYICONDATAW>() as u32,
-                hWnd: hidden_tray_hwnd,
-                uID: 1,
-                uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
-                uCallbackMessage: WmOgos::Tray as u32,
-                hIcon: icon_hnd,
-                szTip: "Ogos".to_wide_128(),
-                ..default!()
-            };
-
-            Shell_NotifyIconW(NIM_ADD, &notify_icon_data).ok()?;
+            add_tray_notify_icon(true)?;
 
             Ok(())
         };
