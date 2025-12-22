@@ -221,6 +221,15 @@ macro_rules! default {
         std::default::Default::default()
     };
 }
+macro_rules! _elapsed {
+    ($($s:stmt;)+) => {
+        let begin = std::time::Instant::now();
+
+        $($s)+
+
+        info!("elapsed: {}", begin.elapsed().as_micros());
+    };
+}
 macro_rules! into {
     () => {
         |x| x.into()
@@ -232,6 +241,8 @@ macro_rules! now {
     };
 }
 pub(crate) use default;
+#[allow(unused_imports)]
+pub(crate) use _elapsed;
 pub(crate) use into;
 pub(crate) use now;
 
