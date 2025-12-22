@@ -45,7 +45,7 @@ impl Launcher {
     }
 }
 
-pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) }> {
+pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc_var!(Games) }> {
     let mut revert_to: Vec<GamesSetting> = Vec::new();
 
     let res = (|| -> Res<(), { loc_var!(Games) }> {
@@ -148,7 +148,6 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli) -> Res<(), { loc_var!(Games) 
         spawn_command(&mut cmd)?;
         info!("{}: spawned {}", module_path!(), cmd.display());
 
-        let mut system = System::new();
         let pid = (0..30).find_map(|_| {
             get_first_process(&game_info.proc, &mut system)
                 .map(|proc| proc.pid())

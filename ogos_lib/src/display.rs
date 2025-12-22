@@ -375,10 +375,8 @@ pub(crate) unsafe fn control_novideo_srgb(info: &NovideoSrgbInfo) -> Res2<()> {
     }
 }
 
-pub(crate) fn control_wallpaper_engine(arg: WallpaperEngineArg) -> Res1<()> {
-    let mut system = System::new();
-
-    if get_first_process(App::WALLPAPER_ENGINE, &mut system).is_some() {
+pub(crate) fn control_wallpaper_engine(arg: WallpaperEngineArg, system: &mut System) -> Res1<()> {
+    if get_first_process(App::WALLPAPER_ENGINE, system).is_some() {
         let config = config::get().read()?;
         let wallpaper_engine_path = confirm_or_find_app(App::WALLPAPER_ENGINE, config.app_paths.wallpaper_engine.as_ref())?;
 
@@ -412,10 +410,19 @@ pub(crate) unsafe fn control_windows(arg: ControlWindowsArg) -> Res1<()> {
 }
 
 pub(crate) unsafe fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>) -> Res2<()> {
-    if let Some(prelude) = prelude {
-        if prelude.pause_wallpaper_engine { control_wallpaper_engine(WallpaperEngineArg::Stop)?; }
-        if prelude.let_walk_away { let_walk_away()?; }
-    }
+    let system = (|| -> Res<Option<System>> {
+        if let Some(prelude) = prelude {
+            if prelude.let_walk_away { let_walk_away()?; }
+            if prelude.pause_wallpaper_engine {
+                let mut system = System::new();
+                control_wallpaper_engine(WallpaperEngineArg::Stop, &mut system)?;
+
+                return Ok(Some(system))
+            }
+        }
+
+        Ok(None)
+    })()?;
 
     let path = get_first_display_path()?;
     let friendly_name = get_display_friendly_name(path)?;
@@ -450,11 +457,11 @@ pub(crate) unsafe fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>
 
             info!("{}: enable pixel cleaning: vcp {:#x}: {:#x}", module_path!(), VCP_FEATURE_PIXEL_CLEANING, vcp_value);
 
-            if let Some(prelude) = prelude && prelude.pause_wallpaper_engine {
-                thread::spawn(|| {
+            if let Some(mut system) = system {
+                thread::spawn(move || {
                     thread::sleep(Duration::from_secs(420));
 
-                    control_wallpaper_engine(WallpaperEngineArg::Play).unwrap_or_else(|err| {
+                    control_wallpaper_engine(WallpaperEngineArg::Play, &mut system).unwrap_or_else(|err| {
                         error!("{}: failed to resume wallpaper engine after pixel cleaning: {}", module_path!(), err);
                     });
                 });

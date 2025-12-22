@@ -263,7 +263,7 @@ unsafe fn shutdown(mut to_close: Vec<LongLivedTask>) {
     }
 }
 
-unsafe fn begin() -> Res<()> {
+unsafe fn begin(system: System) -> Res<()> {
     // Parse Cli
     let (cli, cli_path_kind) = parse_cli()?;
 
@@ -329,7 +329,7 @@ unsafe fn begin() -> Res<()> {
 
     // Games
     if let Some(name) = cli.launch_game.as_ref() {
-        games::launch(name, &cli).unwrap_or_else(|err| {
+        games::launch(name, &cli, system).unwrap_or_else(|err| {
             error!("{}: failure launching game: {}: {}", module_path!(), name, err);
         });
     }
@@ -451,7 +451,7 @@ unsafe fn begin() -> Res<()> {
     Ok(())
 }
 
-unsafe fn init() -> Res<()> {
+unsafe fn init() -> Res<System> {
     let current_exe_path = env::current_exe()?;
 
     let current_exe_file_name = current_exe_path.get_file_name()?;
@@ -535,17 +535,20 @@ unsafe fn init() -> Res<()> {
         }
     }
 
-    Ok(())
+    Ok(system)
 }
 
 pub unsafe fn entry() -> Res<()> {
-    if let Err(err) = init() {
-        display_message_box(&format!("{}: failed to init: {}", module_path!(), err))?;
+    let system = match init() {
+        Ok(system) => system,
+        Err(err) => {
+            display_message_box(&format!("{}: failed to init: {}", module_path!(), err))?;
 
-        return Err(err)
-    }
+            return Err(err)
+        }
+    };
 
-    if let Err(err) = begin() &&
+    if let Err(err) = begin(system) &&
         let ErrVar::Clap(inner) = err.var.as_ref()
     {
         if inner.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
