@@ -289,10 +289,18 @@ pub(crate) struct Constraints {
 }
 
 #[derive(Clone, Copy, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, from = "[u32; 2]")]
 pub(crate) struct Stride {
     pub(crate) x: u32,
     pub(crate) y: u32
+}
+impl From<[u32; 2]> for Stride {
+    fn from(value: [u32; 2]) -> Self {
+        Self {
+            x: value[0],
+            y: value[1]
+        }
+    }
 }
 
 #[derive(Clone, Deserialize)]

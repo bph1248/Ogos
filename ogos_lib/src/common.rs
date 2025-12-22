@@ -68,9 +68,18 @@ impl Into<RECT> for Extent2d {
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(from = "[u32; 2]")]
 pub(crate) struct Extent2dU {
     pub(crate) width: u32,
     pub(crate) height: u32
+}
+impl From<[u32; 2]> for Extent2dU {
+    fn from(value: [u32; 2]) -> Self {
+        Self {
+            width: value[0],
+            height: value[1]
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
