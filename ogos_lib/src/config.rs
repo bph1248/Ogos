@@ -587,6 +587,7 @@ pub(crate) struct DisplayModes {
 impl_name!(DisplayModes);
 
 #[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum DiscordDisplayKind {
     #[default]
     Name,
