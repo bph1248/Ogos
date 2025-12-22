@@ -652,7 +652,6 @@ pub(crate) struct InputEventMaps(
 pub(crate) enum Task {
     BeginPixelCleaning,
     LetWalkAway,
-    PauseWallpaperEngine,
     SetSleepMode,
     ToggleDisplayMode,
     #[cfg(feature = "dbg_window_info")]

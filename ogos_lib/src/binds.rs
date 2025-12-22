@@ -76,9 +76,6 @@ mod trigger_watch {
                     Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
                         error!("{}: failed to let walk away: {}", module_path!(), err);
                     }),
-                    Task::PauseWallpaperEngine => {
-                        thread::spawn(|| pause_wallpaper_engine().unwrap_or_else(|err| error!("{}: failure pausing wallpaper engine: {}", module_path!(), err)));
-                    },
                     Task::SetSleepMode => _ = SetSuspendState(false, false, true).win32_core_ok().x().inspect_err(|err| {
                         error!("{}: failed to set sleep mode: {}", module_path!(), err);
                     }),
@@ -596,14 +593,6 @@ pub(crate) fn set_bind(binds_config: &Binds, msg: BindMsg)  {
             }
         }
     }
-}
-
-fn pause_wallpaper_engine() -> Res<()> {
-    control_wallpaper_engine(WallpaperEngineArg::Stop)?;
-    thread::sleep(Duration::from_secs(420));
-    control_wallpaper_engine(WallpaperEngineArg::Play)?;
-
-    Ok(())
 }
 
 pub(crate) unsafe fn configure_static_binds() -> Res<()> {
