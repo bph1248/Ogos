@@ -45,8 +45,9 @@ use windows::Win32::{
     UI::WindowsAndMessaging::*
 };
 
-pub(crate) const DISPLAYCONFIG_ADVANCED_COLOR_STATE_SDR: u32 = 0;
-pub(crate) const DISPLAYCONFIG_ADVANCED_COLOR_STATE_HDR: u32 = 1;
+pub(crate) const DISPLAYCONFIG_ADVANCED_COLOR_STATE_SET_SDR: u32 = 0;
+pub(crate) const DISPLAYCONFIG_ADVANCED_COLOR_STATE_SET_HDR: u32 = 1;
+pub(crate) const DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2: DISPLAYCONFIG_DEVICE_INFO_TYPE = DISPLAYCONFIG_DEVICE_INFO_TYPE(15_i32);
 pub(crate) const MINIMIZE_ALL: usize = 419;
 pub(crate) const UNDO_MINIMIZE_ALL: usize = 416;
 pub(crate) const NV_COLOR_DATA_VER: NvU32 = make_nvapi_version::<NV_COLOR_DATA>(5);
@@ -55,6 +56,27 @@ pub(crate) const NV_DITHER_CONTROL_VER: NvU32 = make_nvapi_version::<NV_GPU_DITH
            const VCP_VALUE_PIXEL_CLEANING_IGNITION: u16 = 0x10;
            const VCP_VALUE_PIXEL_CLEANING_OFF_SDR: u16 = 0x41;
            const VCP_VALUE_PIXEL_CLEANING_OFF_HDR: u16 = 0x01;
+
+#[derive(Default, PartialEq)]
+#[repr(transparent)]
+#[allow(nonstandard_style)]
+pub(crate) struct DISPLAYCONFIG_ADVANCED_COLOR_MODE(pub(crate) i32);
+impl DISPLAYCONFIG_ADVANCED_COLOR_MODE {
+    pub(crate) const SDR: Self = Self(0);
+    pub(crate) const WCG: Self = Self(1);
+    pub(crate) const HDR: Self = Self(2);
+}
+
+#[derive(Default)]
+#[repr(C)]
+#[allow(nonstandard_style)]
+pub(crate) struct DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2 {
+    pub(crate) header: DISPLAYCONFIG_DEVICE_INFO_HEADER,
+    pub(crate) Anonymous: DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_0,
+    pub(crate) colorEncoding: DISPLAYCONFIG_COLOR_ENCODING,
+    pub(crate) bitsPerColorChannel: u32,
+    pub(crate) activeColorMode: DISPLAYCONFIG_ADVANCED_COLOR_MODE
+}
 
 #[repr(C)]
 pub(crate) struct NovideoSrgbApplyInfo {
@@ -545,10 +567,10 @@ pub(crate) unsafe fn get_display_gdi_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1
 }
 
 pub(crate) unsafe fn get_display_mode(path: DISPLAYCONFIG_PATH_INFO) -> Res1<DisplayMode> {
-    let mut advanced_color_info = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO {
+    let mut advanced_color_info = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2 {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
-            r#type: DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO,
-            size: size_of::<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO>().try_into()?,
+            r#type: DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2,
+            size: size_of::<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2>() as u32,
             adapterId: path.targetInfo.adapterId,
             id: path.targetInfo.id
         },
@@ -556,9 +578,12 @@ pub(crate) unsafe fn get_display_mode(path: DISPLAYCONFIG_PATH_INFO) -> Res1<Dis
     };
     DisplayConfigGetDeviceInfo(&mut advanced_color_info.header).win32_err_ok()?;
 
-    let display_mode = match (advanced_color_info.Anonymous.value & 0x2) == 0x2 {
-        true => DisplayMode::Hdr,
-        false => DisplayMode::Sdr
+    // let acm_enabled = advanced_color_info.Anonymous.value & 0x80 == 0x80;
+    let display_mode = match advanced_color_info.activeColorMode {
+        DISPLAYCONFIG_ADVANCED_COLOR_MODE::SDR => DisplayMode::Sdr,
+        DISPLAYCONFIG_ADVANCED_COLOR_MODE::WCG => DisplayMode::Sdr,
+        DISPLAYCONFIG_ADVANCED_COLOR_MODE::HDR => DisplayMode::Hdr,
+        _ => unreachable!()
     };
 
     Ok(display_mode)
@@ -656,7 +681,7 @@ unsafe fn set_display_mode_unchecked(display_mode: DisplayMode, display_path: DI
                     id: display_path.targetInfo.id
                 },
                 Anonymous: DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE_0 {
-                    value: DISPLAYCONFIG_ADVANCED_COLOR_STATE_SDR
+                    value: DISPLAYCONFIG_ADVANCED_COLOR_STATE_SET_SDR
                 }
             }
         },
@@ -669,7 +694,7 @@ unsafe fn set_display_mode_unchecked(display_mode: DisplayMode, display_path: DI
                     id: display_path.targetInfo.id
                 },
                 Anonymous: DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE_0 {
-                    value: DISPLAYCONFIG_ADVANCED_COLOR_STATE_HDR
+                    value: DISPLAYCONFIG_ADVANCED_COLOR_STATE_SET_HDR
                 }
             }
         }
@@ -693,7 +718,6 @@ pub(crate) unsafe fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<Displa
         let (gpu_hnd, display_ids) = get_first_gpu_display_ids()?;
         let config = config::get().read()?;
         let display_modes_config = config.display_modes.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::DisplayModes::NAME })?;
-        let use_novideo_srgb = display_modes_config.sdr.novideo_srgb.is_some() || display_modes_config.hdr.novideo_srgb.is_some();
 
         match display_mode {
             DisplayMode::Sdr => {
@@ -707,7 +731,7 @@ pub(crate) unsafe fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<Displa
 
                 match display_modes_config.sdr.novideo_srgb.as_ref() {
                     Some(info) => control_novideo_srgb(info)?,
-                    None => if use_novideo_srgb {
+                    None => if display_modes_config.hdr.novideo_srgb.is_some() {
                         control_novideo_srgb(&default!())?;
                     }
                 }
@@ -719,7 +743,7 @@ pub(crate) unsafe fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<Displa
 
                 match display_modes_config.hdr.novideo_srgb.as_ref() {
                     Some(info) => control_novideo_srgb(info)?,
-                    None => if use_novideo_srgb {
+                    None => if display_modes_config.sdr.novideo_srgb.is_some() {
                         control_novideo_srgb(&default!())?;
                     }
                 }
