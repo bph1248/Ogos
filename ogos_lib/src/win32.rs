@@ -30,6 +30,15 @@ use windows::{
 pub(crate) const ERR_STR: &str = "<err>";
 pub(crate) const MAX_CLASS_NAME_LEN: usize = 256;
 
+pub(crate) trait WinErrorExt {
+    fn as_win32_error(&self) -> WIN32_ERROR;
+}
+impl WinErrorExt for windows::core::Error {
+    fn as_win32_error(&self) -> WIN32_ERROR {
+        WIN32_ERROR((self.code().0 & 0xFFFF) as u32) // Assume facility is FACILITY_WIN32
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct SafeHwnd(pub(crate) HWND);
 impl Deref for SafeHwnd {

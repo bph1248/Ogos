@@ -125,7 +125,9 @@ impl Name for WinEventHookContext {
 
 unsafe fn cleanup_hooks(hooks: &[HWINEVENTHOOK]) {
     for hook in hooks {
-        if let Err(err) = UnhookWinEvent(*hook).ok() {
+        if let Err(err) = UnhookWinEvent(*hook).ok() &&
+            err.as_win32_error() != ERROR_INVALID_HANDLE
+        {
             error!("{}: failed to unhook win event hooks - closing: {}", module_path!(), err);
 
             PostQuitMessage(1);
