@@ -212,6 +212,8 @@ unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_DESTROY => {
             PostQuitMessage(0);
 
+            info!("{}: hitbox destroyed", module_path!());
+
             LRESULT(0)
         },
         WM_DISPLAYCHANGE => {

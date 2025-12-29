@@ -439,6 +439,7 @@ unsafe fn begin(system: System) -> Res<()> {
             Err(err) => error!("{}: failure initializing long-lived tasks: {}", module_path!(), err)
         }
 
+        info!("{}: init shutdown", module_path!());
         shutdown(to_close);
 
         for hnd in thread_hnds {
