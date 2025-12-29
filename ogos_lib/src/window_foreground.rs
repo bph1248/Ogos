@@ -191,7 +191,7 @@ unsafe fn leak_win_event_hooks(ts: &mut ThreadState, request: WinEventHookReques
     let request: (Option<WinEventHooksSx>, _) = (None, request);
     let cargo = Box::into_raw(Box::new(request));
 
-    if let Err(err) = PostThreadMessageW(ts.hook_mgr_tid, WmOgos::RequestWinEventHooks as u32, WPARAM(0), LPARAM(cargo as isize)) {
+    if let Err(err) = PostThreadMessageW(ts.hook_mgr_tid, WM_OGOS_REQUEST_WIN_EVENT_HOOKS, WPARAM(0), LPARAM(cargo as isize)) {
         Err(ErrVar::FailedContactHookMgr { inner: err })?;
     }
 
@@ -203,7 +203,7 @@ unsafe fn request_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookReques
     let request = (Some(sx), request);
     let cargo = Box::into_raw(Box::new(request));
 
-    PostThreadMessageW(hook_mgr_tid, WmOgos::RequestWinEventHooks as u32, WPARAM(0), LPARAM(cargo as isize))?;
+    PostThreadMessageW(hook_mgr_tid, WM_OGOS_REQUEST_WIN_EVENT_HOOKS, WPARAM(0), LPARAM(cargo as isize))?;
 
     Ok(rx)
 }
@@ -211,7 +211,7 @@ unsafe fn request_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookReques
 unsafe fn request_win_event_unhooks(hook_mgr_tid: u32, request: WinEventUnhookRequest) -> windows::core::Result<()> {
     let cargo = Box::into_raw(Box::new(request));
 
-    PostThreadMessageW(hook_mgr_tid, WmOgos::RequestWinEventUnhooks as u32, WPARAM(0), LPARAM(cargo as isize))?;
+    PostThreadMessageW(hook_mgr_tid, WM_OGOS_REQUEST_WIN_EVENT_UNHOOKS, WPARAM(0), LPARAM(cargo as isize))?;
 
     Ok(())
 }

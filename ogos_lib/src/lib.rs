@@ -113,7 +113,7 @@ unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WP
             return LRESULT(0)
         },
         WM_NCCREATE => return LRESULT(1),
-        _ if msg == WmOgos::Tray as u32 => {
+        WM_OGOS_TRAY => {
             (|| -> Res<()> {
                 if lparam.0 as u32 == WM_RBUTTONUP {
                     let menu_hnd = CreatePopupMenu()?;
@@ -185,7 +185,7 @@ pub(crate) unsafe fn add_tray_notify_icon(register_class: bool) -> Res1<()> {
         hWnd: hidden_tray_hwnd,
         uID: 1,
         uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
-        uCallbackMessage: WmOgos::Tray as u32,
+        uCallbackMessage: WM_OGOS_TRAY,
         hIcon: icon_hnd,
         szTip: "Ogos".to_wide_128(),
         ..default!()
@@ -251,7 +251,7 @@ unsafe fn shutdown(mut to_close: Vec<LongLivedTask>) {
             match long_lived_task {
                 LongLivedTask::ConfigWatch(event_close) => SetEvent(event_close)?,
                 LongLivedTask::PipeServer => pipe_msg(PipeMsg::Close)?,
-                LongLivedTask::WindowWatch(tid) => PostThreadMessageW(tid.0, WmOgos::Close as u32, WPARAM(0), LPARAM(0))?,
+                LongLivedTask::WindowWatch(tid) => PostThreadMessageW(tid.0, WM_OGOS_CLOSE, WPARAM(0), LPARAM(0))?,
                 _ => ()
             }
 

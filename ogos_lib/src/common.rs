@@ -10,6 +10,7 @@ use crate::{
 
 use discord_rich_presence::*;
 use once_cell::sync::*;
+use paste::*;
 use serde::*;
 use strum::*;
 use subenum::*;
@@ -204,9 +205,24 @@ pub(crate) enum Setting {
     ScreenExtent(Extent2dU)
 }
 
-#[repr(u32)]
-pub(crate) enum WmOgos {
-    Close = WM_USER + 1,
+macro_rules! impl_WmOgos {
+    ($first:ident, $($rest:ident),*) => {
+        #[repr(u32)]
+        pub(crate) enum WmOgos {
+            $first = WM_USER + 1,
+            $($rest,)*
+        }
+
+        paste! {
+            pub(crate) const [<WM_OGOS_ $first:snake:upper>]: u32 = WmOgos::$first as u32;
+            $(
+                pub(crate) const [<WM_OGOS_ $rest:snake:upper>]: u32 = WmOgos::$rest as u32;
+            )*
+        }
+    };
+}
+impl_WmOgos! {
+    Close,
     ReloadConfig,
     Tray,
     RequestWinEventHooks,

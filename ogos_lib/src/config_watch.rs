@@ -5,8 +5,7 @@ use crate::{
     common::*,
     config::{self, *},
     err::*,
-    win32::*,
-    window_watch
+    win32::*
 };
 
 use log::*;
@@ -102,7 +101,7 @@ unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> 
                             for can_reload_config in can_reload_config.iter() {
                                 match can_reload_config {
                                     CanReloadConfig::StaticBinds => { thread::spawn(|| reconfigure_static_binds()); },
-                                    CanReloadConfig::WindowWatch(hook_mgr_tid) => PostThreadMessageW(hook_mgr_tid.0, window_watch::WM_OGOS_RELOAD_CONFIG, WPARAM(0), LPARAM(0))?
+                                    CanReloadConfig::WindowWatch(hook_mgr_tid) => PostThreadMessageW(hook_mgr_tid.0, WM_OGOS_RELOAD_CONFIG, WPARAM(0), LPARAM(0))?
                                 }
                             }
                         },
