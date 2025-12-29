@@ -45,9 +45,8 @@ use windows::Win32::{
     UI::WindowsAndMessaging::*
 };
 
-pub(crate) const DISPLAYCONFIG_ADVANCED_COLOR_STATE_SET_SDR: u32 = 0;
-pub(crate) const DISPLAYCONFIG_ADVANCED_COLOR_STATE_SET_HDR: u32 = 1;
 pub(crate) const DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2: DISPLAYCONFIG_DEVICE_INFO_TYPE = DISPLAYCONFIG_DEVICE_INFO_TYPE(15_i32);
+pub(crate) const DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE: DISPLAYCONFIG_DEVICE_INFO_TYPE = DISPLAYCONFIG_DEVICE_INFO_TYPE(16_i32);
 pub(crate) const MINIMIZE_ALL: usize = 419;
 pub(crate) const UNDO_MINIMIZE_ALL: usize = 416;
 pub(crate) const NV_COLOR_DATA_VER: NvU32 = make_nvapi_version::<NV_COLOR_DATA>(5);
@@ -76,6 +75,28 @@ pub(crate) struct DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2 {
     pub(crate) colorEncoding: DISPLAYCONFIG_COLOR_ENCODING,
     pub(crate) bitsPerColorChannel: u32,
     pub(crate) activeColorMode: DISPLAYCONFIG_ADVANCED_COLOR_MODE
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+#[allow(nonstandard_style)]
+pub(crate) struct DISPLAYCONFIG_SET_HDR_STATE_0_0 {
+    pub(crate) _bitfield: u32
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+#[allow(nonstandard_style)]
+pub(crate) union DISPLAYCONFIG_SET_HDR_STATE_0 {
+    pub(crate) Anonymous: DISPLAYCONFIG_SET_HDR_STATE_0_0,
+    pub(crate) value: u32
+}
+
+#[repr(C)]
+#[allow(nonstandard_style)]
+pub(crate) struct DISPLAYCONFIG_SET_HDR_STATE {
+    pub(crate) header: DISPLAYCONFIG_DEVICE_INFO_HEADER,
+    pub(crate) Anonymous: DISPLAYCONFIG_SET_HDR_STATE_0,
 }
 
 #[repr(C)]
@@ -671,35 +692,21 @@ pub(crate) unsafe fn set_color_bit_depth(display_id: NvU32, bit_depth: ColorBitD
 }
 
 unsafe fn set_display_mode_unchecked(display_mode: DisplayMode, display_path: DISPLAYCONFIG_PATH_INFO) -> windows::core::Result<()> {
-    let advanced_color_state: DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE = match display_mode {
-        DisplayMode::Sdr => {
-            DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE {
-                header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
-                    r#type: DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE,
-                    size: size_of::<DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE>() as u32,
-                    adapterId: display_path.targetInfo.adapterId,
-                    id: display_path.targetInfo.id
-                },
-                Anonymous: DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE_0 {
-                    value: DISPLAYCONFIG_ADVANCED_COLOR_STATE_SET_SDR
-                }
-            }
+    let set_hdr_state = DISPLAYCONFIG_SET_HDR_STATE {
+        header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+            r#type: DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE,
+            size: size_of::<DISPLAYCONFIG_SET_HDR_STATE>() as u32,
+            adapterId: display_path.targetInfo.adapterId,
+            id: display_path.targetInfo.id
         },
-        DisplayMode::Hdr => {
-            DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE {
-                header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
-                    r#type: DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE,
-                    size: size_of::<DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE>() as u32,
-                    adapterId: display_path.targetInfo.adapterId,
-                    id: display_path.targetInfo.id
-                },
-                Anonymous: DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE_0 {
-                    value: DISPLAYCONFIG_ADVANCED_COLOR_STATE_SET_HDR
-                }
+        Anonymous: DISPLAYCONFIG_SET_HDR_STATE_0 {
+            value: match display_mode {
+                DisplayMode::Sdr => 0,
+                DisplayMode::Hdr => 1
             }
         }
     };
-    DisplayConfigSetDeviceInfo(&advanced_color_state.header).win32_err_ok()?;
+    DisplayConfigSetDeviceInfo(&set_hdr_state.header).win32_err_ok()?;
 
     info!("{}: display mode: {}", module_path!(), display_mode);
 

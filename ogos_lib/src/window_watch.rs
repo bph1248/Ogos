@@ -31,11 +31,6 @@ use windows::{
     }
 };
 
-           const WM_OGOS_CLOSE: u32 = WmOgos::Close as u32;
-pub(crate) const WM_OGOS_RELOAD_CONFIG: u32 = WmOgos::ReloadConfig as u32;
-           const WM_OGOS_REQUEST_WIN_EVENT_HOOKS: u32 = WmOgos::RequestWinEventHooks as u32;
-           const WM_OGOS_REQUEST_WIN_EVENT_UNHOOKS: u32 = WmOgos::RequestWinEventUnhooks as u32;
-
 struct ThreadState {
     sxs: Senders
 }
