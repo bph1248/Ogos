@@ -167,7 +167,7 @@ impl HwndExt for HWND {
         }
 
         let mut text = vec![0_u16; text_len as usize + 1];
-        GetWindowTextW(*self, &mut text).win32_var_ok()?;
+        GetWindowTextW(*self, &mut text).win32_core_ok()?;
 
         Ok(String::from_utf16(&text[..text_len as usize])?)
     }
@@ -178,7 +178,7 @@ impl HwndExt for HWND {
 
     unsafe fn get_class(&self) -> Res1<String> {
         let mut class_name = [0_u16; MAX_CLASS_NAME_LEN + 1];
-        let class_name_len = GetClassNameW(*self, &mut class_name).win32_var_ok()?;
+        let class_name_len = GetClassNameW(*self, &mut class_name).win32_core_ok()?;
 
         Ok(String::from_utf16(&class_name[..class_name_len as usize])?)
     }
@@ -192,7 +192,7 @@ impl HwndExt for HWND {
         let proc_hnd = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, tpids.proc)?;
 
         let mut proc_image_file_name = [0_u16; MAX_PATH as usize + 1];
-        GetProcessImageFileNameW(proc_hnd, &mut proc_image_file_name).win32_var_ok()?;
+        GetProcessImageFileNameW(proc_hnd, &mut proc_image_file_name).win32_core_ok()?;
 
         CloseHandle(proc_hnd)?;
 
@@ -423,7 +423,7 @@ pub(crate) unsafe fn display_message_box(msg: &str) -> ResVar<()> {
     let caption = w!("Ogos");
     let msg = msg.to_win_str();
 
-    MessageBoxW(None, *msg, caption, MB_OK).0.win32_var_ok()?;
+    MessageBoxW(None, *msg, caption, MB_OK).0.win32_core_ok()?;
 
     Ok(())
 }

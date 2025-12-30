@@ -161,7 +161,7 @@ pub(crate) unsafe fn add_tray_notify_icon(register_class: bool) -> Res1<()> {
             lpszClassName: *tray_class_name,
             ..default!()
         };
-        RegisterClassExW(&wnd_class).win32_var_ok()?;
+        RegisterClassExW(&wnd_class).win32_core_ok()?;
     }
 
     let hidden_tray_hwnd = CreateWindowExW(

@@ -295,7 +295,7 @@ unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
         lpszClassName: *class_name,
         ..default!()
     };
-    _ = RegisterClassExW(&wnd_class).win32_var_ok()?;
+    _ = RegisterClassExW(&wnd_class).win32_core_ok()?;
 
     let hitbox_hwnd = CreateWindowExW(
         WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT,
@@ -374,7 +374,7 @@ unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Send
                 lpszClassName: *class_name,
                 ..default!()
             };
-            RegisterClassExW(&wnd_class).win32_var_ok()?;
+            RegisterClassExW(&wnd_class).win32_core_ok()?;
 
             CreateWindowExW(
                 default!(),
@@ -423,8 +423,8 @@ unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Send
                         };
 
                         let hook = SetWinEventHook(info.eventmin, info.eventmax, None, Some(callback), info.idprocess, info.idthread, WINEVENT_OUTOFCONTEXT)
-                            .win32_core_ok()
-                            .map_err(|err| {
+                            .win32_var_ok()
+                            .map_err(|_| {
                                 cleanup_hooks(&hooks);
 
                                 // Notify that hook couldn't be set - undo any state that was set on request
@@ -432,7 +432,7 @@ unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Send
                                     dispatch_msg(WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook: 0, hwnd });
                                 }
 
-                                ErrVar::FailedSetWinEventHooks { inner: err, ctx: info.ctx }
+                                ErrVar::FailedSetWinEventHooks { ctx: info.ctx }
                             })?;
 
                         hooks.push(hook);
