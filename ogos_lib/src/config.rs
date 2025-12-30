@@ -154,7 +154,7 @@ fn deserialize_click_map<'de, D>(deserializer: D) -> Result<InputEventMap, D::Er
             A: serde::de::MapAccess<'de>
         {
             if map.size_hint().is_none_or(|hint| hint > 2) {
-                return Err(A::Error::custom(ErrVar::MissingClickMap))
+                Err(A::Error::custom(ErrVar::MissingClickMap))?;
             }
 
             let mut dur = None;
@@ -325,9 +325,9 @@ impl WindowShift {
 }
 impl_name!(WindowShift);
 
-fn hitbox_entry_inset_px() -> u16 { 10 }
-fn hitbox_exit_taskbar_offset_px() -> u16 { 100 }
-fn hitbox_exit_jump_list_offset_px() -> u16 { 60 }
+const fn hitbox_entry_inset_px() -> u16 { 10 }
+const fn hitbox_exit_taskbar_offset_px() -> u16 { 100 }
+const fn hitbox_exit_jump_list_offset_px() -> u16 { 60 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -548,7 +548,7 @@ impl PrimariesSource {
     }
 }
 
-fn novideo_srgb_enable_clamp() -> bool { true }
+const fn novideo_srgb_enable_clamp() -> bool { true }
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]

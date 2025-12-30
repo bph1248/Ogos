@@ -478,16 +478,19 @@ pub(crate) unsafe fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>
     let mut monitor_info = MONITORINFOEXW::default();
     monitor_info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
 
-    let mut droid = None;
-    for hnd in monitor_hnds {
-        let hnd = HMONITOR(hnd as *mut _); // Different Windows APIs
-        GetMonitorInfoW(hnd, &mut monitor_info as *mut _ as _).ok()?;
-        let gdi_name_ = U16CString::from_ptr_truncate(&monitor_info.szDevice as _, monitor_info.szDevice.len());
+    let droid = (|| -> windows::core::Result<_> {
+        for hnd in monitor_hnds {
+            let hnd = HMONITOR(hnd as *mut _); // Different Windows APIs
+            GetMonitorInfoW(hnd, &mut monitor_info as *mut _ as _).ok()?;
+            let gdi_name_ = U16CString::from_ptr_truncate(&monitor_info.szDevice as _, monitor_info.szDevice.len());
 
-        if gdi_name_ == gdi_name {
-            droid = Some(hnd);
+            if gdi_name_ == gdi_name {
+                return Ok(Some(hnd));
+            }
         }
-    }
+
+        Ok(None)
+    })()?;
 
     let phys_monitors = ddc_winapi::get_physical_monitors_from_hmonitor(droid.unwrap().0 as *mut _)?;
     let mut monitor = ddc_winapi::Monitor::new(phys_monitors[0]);
@@ -559,7 +562,7 @@ pub(crate) unsafe fn get_display_friendly_name(path: DISPLAYCONFIG_PATH_INFO) ->
     let mut target_device_name = DISPLAYCONFIG_TARGET_DEVICE_NAME {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
             r#type: DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
-            size: size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>().try_into()?,
+            size: size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32,
             adapterId: path.targetInfo.adapterId,
             id: path.targetInfo.id
         },
@@ -575,7 +578,7 @@ pub(crate) unsafe fn get_display_gdi_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1
     let mut source_device_name = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
             r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
-            size: size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>().try_into()?,
+            size: size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32,
             adapterId: path.sourceInfo.adapterId,
             id: path.sourceInfo.id
         },

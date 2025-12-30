@@ -47,11 +47,11 @@ unsafe fn begin(send_ready: mpsc::Sender<ReadyMsg>) -> Res<()> {
 
     // Init a SID for the well-known Everyone group
     let mut everyone_sid = PSID::default();
-    AllocateAndInitializeSid(&SECURITY_WORLD_SID_AUTHORITY, 1, SECURITY_WORLD_RID.try_into().unwrap(), 0, 0, 0, 0, 0, 0, 0, &mut everyone_sid)?;
+    AllocateAndInitializeSid(&SECURITY_WORLD_SID_AUTHORITY, 1, SECURITY_WORLD_RID as u32, 0, 0, 0, 0, 0, 0, 0, &mut everyone_sid)?;
 
     // Init a SID for the BUILTIN\Administrators group
     let mut builtin_admins_sid = PSID::default();
-    AllocateAndInitializeSid(&SECURITY_NT_AUTHORITY, 2, SECURITY_BUILTIN_DOMAIN_RID.try_into().unwrap(), DOMAIN_ALIAS_RID_ADMINS.try_into().unwrap(), 0, 0, 0, 0, 0, 0, &mut builtin_admins_sid)?;
+    AllocateAndInitializeSid(&SECURITY_NT_AUTHORITY, 2, SECURITY_BUILTIN_DOMAIN_RID as u32, DOMAIN_ALIAS_RID_ADMINS as u32, 0, 0, 0, 0, 0, 0, &mut builtin_admins_sid)?;
 
     // Set entries in the ACL (access control list)
     let explicit_accesses = [
@@ -118,7 +118,7 @@ unsafe fn begin(send_ready: mpsc::Sender<ReadyMsg>) -> Res<()> {
         ReadFile(pipe_hnd, Some(&mut buf), None, None)?;
 
         let msg = bincode::deserialize::<PipeMsg>(&buf)?;
-        info!("{}: received: {}", module_path!(), msg);
+        info!("{}: recvd: {}", module_path!(), msg);
 
         let ack = bincode::serialize(&PipeMsg::Ack)?;
         WriteFile(pipe_hnd, Some(&ack), None, None)?;

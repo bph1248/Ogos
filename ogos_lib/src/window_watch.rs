@@ -186,7 +186,7 @@ unsafe extern "system" fn taskbar_location_change_proc(_: HWINEVENTHOOK, _: u32,
     }
 }
 
-unsafe extern "system" fn window_foreground_all_foreground_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
+unsafe extern "system" fn all_foreground_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
     if !hwnd.is_invalid() {
         dispatch_msg(WindowForegroundMsg::WinEventHookAllForeground { hwnd: hwnd.as_usize() });
     }
@@ -194,7 +194,7 @@ unsafe extern "system" fn window_foreground_all_foreground_proc(_: HWINEVENTHOOK
 
 unsafe extern "system" fn window_shift_proc(_: HWINEVENTHOOK, event: u32, hwnd: HWND, id_obj: i32, _id_child: i32, _: u32, _: u32) {
     #[cfg(feature = "dbg_window_watch_win_events")]
-    info!("{}: {} ({:#06x}): hwnd: {:p}, id_obj: {:#x}, id_child: {:#x}", module_path!(), event.to_event_string(), event, hwnd.0, id_obj, _id_child);
+    info!("{}: {} ({:#06x}): hwnd: {:p}, id_obj: {:#x}, id_child: {:#x}", module_path!(), event._to_event_string(), event, hwnd.0, id_obj, _id_child);
 
     let msg = match event {
         EVENT_OBJECT_DESTROY if id_obj == OBJID_WINDOW.0 => WindowShiftMsg::Destroy(hwnd.as_usize()),
@@ -242,7 +242,7 @@ unsafe extern "system" fn message_only_proc(hwnd: HWND, msg: u32, wparam: WPARAM
 }
 
 unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
-    SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(window_foreground_all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
+    SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
 
     let config = config::get().read()?;
     let taskbar_config = config.taskbar.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Taskbar::NAME })?;
@@ -356,7 +356,7 @@ unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Send
         }
 
         if enable.contains(WindowForegroundComponents::DYNAMIC_BINDS | !WindowForegroundComponents::TASKBAR) {
-            SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(window_foreground_all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
+            SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
         }
 
         if enable.contains(WindowForegroundComponents::WINDOW_SHIFT) {

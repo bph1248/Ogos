@@ -29,16 +29,16 @@ use std::{
     thread,
     time::*
 };
+use windows::Win32::System::Power::*;
+
+#[cfg(feature = "dbg_window_info")]
 use windows::{
     core::*,
     Win32::{
         Foundation::*,
-        System::Power::*
+        UI::WindowsAndMessaging::*
     }
 };
-
-#[cfg(feature = "dbg_window_info")]
-use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub(crate) mod qmk_deser {
     use super::*;
@@ -100,6 +100,7 @@ mod trigger_watch {
     }
 }
 
+#[cfg(feature = "dbg_window_info")]
 struct EligibleForShiftInfo {
     eligibles: Vec<HWND>,
     screen_extent: Extent2d
@@ -150,6 +151,7 @@ struct ThreadState {
     prefixes_pressed: HashSet<Key>
 }
 
+#[cfg(feature = "dbg_window_info")]
 struct TopLevelSiblingsInfo {
     fg_pid: u32,
     siblings: Vec<HWND>

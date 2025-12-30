@@ -371,7 +371,7 @@ struct Cache {
 struct DetailsInfo {
     image_file_name: Option<Arc<str>>,
     dir_name: Rc<str>,
-    dir_entry_infos: Vec<DirEntryInfo>
+    dir_entries: Vec<DirEntryInfo>
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
@@ -545,7 +545,7 @@ impl MediaBrowser {
         let grid_cell_size_changed = cache.grid_cell_size != grid_cell_size;
         let details_cell_size_changed = cache.details_cell_size != details_cell_size;
 
-        let mut grid_entry_infos = media_dirs.iter()
+        let mut grid_entries = media_dirs.iter()
             .map(|dir| Path::new(dir).read_dir())
             .filter_map(|read_dir| match read_dir {
                 Ok(read_dir) => Some(read_dir),
@@ -594,13 +594,13 @@ impl MediaBrowser {
                 })
             })
             .collect::<Vec<_>>();
-        grid_entry_infos.sort_by(|a, b| a.stem.cmp(&b.stem));
+        grid_entries.sort_by(|a, b| a.stem.cmp(&b.stem));
 
         let discord_app_ids = config.discord.app_ids.clone();
         let discord_display_kind = config.discord.display_kind;
         drop(config);
 
-        for (entry_i, info) in grid_entry_infos.iter().enumerate() {
+        for (entry_i, info) in grid_entries.iter().enumerate() {
             // Fill tags
             if let Some(CacheEntryInfo { tags: tag_is, .. }) = cache.entries.get_mut(&info.path) {
                 for tag_i in tag_is {
@@ -746,7 +746,7 @@ impl MediaBrowser {
             cache,
             frame,
             view_kind: ViewKind::Grid,
-            grid_entries: grid_entry_infos,
+            grid_entries,
             grid_cell_size,
             tags,
             active_tag: default!(),
@@ -970,7 +970,7 @@ impl MediaBrowser {
         };
 
         if cell_resp.clicked() && grid_entry_info.path.is_dir() {
-            let dir_entry_infos = || -> Res<_> {
+            let dir_entries = || -> Res<_> {
                 let read_dir = grid_entry_info.path.read_dir()
                     .inspect_err(|err| error!("{}: failed to read dir: {}", module_path!(), err))?;
 
@@ -991,7 +991,7 @@ impl MediaBrowser {
             self.details_info = DetailsInfo {
                 image_file_name: image_info.map(|info| info.0.clone()),
                 dir_name: self.grid_entries[grid_entry_i].stem.clone(),
-                dir_entry_infos: dir_entry_infos().unwrap_or_default()
+                dir_entries: dir_entries().unwrap_or_default()
             };
             self.view_kind = ViewKind::Details;
         }
@@ -1148,7 +1148,7 @@ impl MediaBrowser {
                     let button_height = ui.spacing().interact_size.y;
                     let button_spacing = ui.spacing().item_spacing[1];
                     #[allow(clippy::cast_precision_loss)]
-                    let button_count = self.details_info.dir_entry_infos.len() as f32;
+                    let button_count = self.details_info.dir_entries.len() as f32;
                     let buttons_height = button_count * (button_height + button_spacing);
 
                     let remaining_space = ui.available_height() - buttons_height;
@@ -1157,7 +1157,7 @@ impl MediaBrowser {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
                         ui.add_space(top_padding);
 
-                        if self.details_info.dir_entry_infos.is_empty() {
+                        if self.details_info.dir_entries.is_empty() {
                             ui.take_available_space();
                         } else {
                             self.dir_entries(ui);
@@ -1182,7 +1182,7 @@ impl MediaBrowser {
             .show(ui, |ui| {
                 self.details_button_resps.clear();
                 self.details_button_resps.extend(
-                    self.details_info.dir_entry_infos.iter()
+                    self.details_info.dir_entries.iter()
                         .map(|info| ui.button(info.stem.as_str()).interact(egui::Sense::click()))
                 );
 
@@ -1196,8 +1196,8 @@ impl MediaBrowser {
 
                         unsafe {
                             open_media(
-                                self.details_info.dir_entry_infos[i].path.clone(),
-                                self.details_info.dir_entry_infos[i].file_kind,
+                                self.details_info.dir_entries[i].path.clone(),
+                                self.details_info.dir_entries[i].file_kind,
                                 self.maintain_sample_rate,
                                 self.use_glsl_shaders,
                                 discord_info
@@ -1219,20 +1219,20 @@ impl MediaBrowser {
             details: match self.discord_details.is_empty() {
                 true => match self.discord_watching {
                     Watching::TV => self.details_info.dir_name.to_string(),
-                    _ => self.details_info.dir_entry_infos[i].stem.clone()
+                    _ => self.details_info.dir_entries[i].stem.clone()
                 },
                 false => self.discord_details.clone()
             },
             state: self.discord_watching.eq(&Watching::TV).then(|| {
                 match self.discord_state.is_empty() {
-                    true => self.details_info.dir_entry_infos[i].stem.clone(),
+                    true => self.details_info.dir_entries[i].stem.clone(),
                     false => self.discord_state.clone()
                 }
             }),
             display_kind: self.discord_display_kind,
             large_image: match self.discord_watching {
                 Watching::TV => Some(to_discord_asset_name(self.details_info.dir_name.as_ref())),
-                _ => Some(to_discord_asset_name(self.details_info.dir_entry_infos[i].stem.as_str()))
+                _ => Some(to_discord_asset_name(self.details_info.dir_entries[i].stem.as_str()))
             },
             chess_username: None
         }
@@ -1242,7 +1242,7 @@ impl MediaBrowser {
         egui::Popup::context_menu(total_alloc_resp)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                ui.add_enabled_ui(!self.details_info.dir_entry_infos.is_empty(), |ui| {
+                ui.add_enabled_ui(!self.details_info.dir_entries.is_empty(), |ui| {
                     ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
                     ui.checkbox(&mut self.use_glsl_shaders, "Override GLSL shaders");
                     ui.menu_button("Discord Rich Presence", |ui| self.discord_menu(ui));
@@ -1287,7 +1287,7 @@ impl MediaBrowser {
 
             let details_hint_text = match self.discord_watching {
                 Watching::TV => self.details_info.dir_name.as_ref(),
-                _ => self.details_info.dir_entry_infos[self.hovered_details_entry_i].stem.as_str()
+                _ => self.details_info.dir_entries[self.hovered_details_entry_i].stem.as_str()
             };
             let details_hint_galley = egui::WidgetText::from(details_hint_text)
                 .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
@@ -1302,7 +1302,7 @@ impl MediaBrowser {
             if self.discord_watching == Watching::TV {
                 ui.label("State");
 
-                let state_hint_text = self.details_info.dir_entry_infos[self.hovered_details_entry_i].stem.as_str();
+                let state_hint_text = self.details_info.dir_entries[self.hovered_details_entry_i].stem.as_str();
                 let state_hint_galley = egui::WidgetText::from(state_hint_text)
                     .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
                 let state_text_edit = egui::TextEdit::singleline(&mut self.discord_state)

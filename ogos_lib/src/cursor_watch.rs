@@ -30,14 +30,14 @@ pub(crate) unsafe fn begin(snap_ordinate: i32, screen_extent: Extent2d) -> Arc<C
     let inner = move |cursor_watch_: &Arc<CursorWatch>, screen_extent| -> Res<()> {
         let mut cursor_pos = POINT::default();
 
-        for i in 0..20 {
+        for _i in 0..20 {
             GetCursorPos(&mut cursor_pos)?;
             if cursor_pos.y <= snap_ordinate {
                 break
             }
 
             #[cfg(feature = "dbg_cursor_watch")]
-            info!("{}: cursor hasn't snapped: {}", module_path!(), i);
+            info!("{}: cursor hasn't snapped: {}", module_path!(), _i);
 
             send_cursor_pos(cursor_pos.x, snap_ordinate, screen_extent)?;
 

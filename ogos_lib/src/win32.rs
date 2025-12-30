@@ -339,7 +339,7 @@ macro_rules! impl_ConstString {
 
 pub(crate) trait ConstString {
     fn _to_dbt_string(&self) -> String;
-    fn to_event_string(&self) -> String;
+    fn _to_event_string(&self) -> String;
     fn to_wm_string(&self) -> String;
 }
 impl ConstString for u32 {
@@ -360,7 +360,7 @@ impl ConstString for u32 {
     );
 
     impl_ConstString!(
-        to_event_string,
+        _to_event_string,
         EVENT_OBJECT_CLOAKED,
         EVENT_OBJECT_CREATE,
         EVENT_OBJECT_DESTROY,

@@ -325,7 +325,7 @@ pub(crate) trait PathExt {
 impl PathExt for Path {
     fn confirm(&self) -> ResVar<&Self> {
         if !self.try_exists()? {
-            return Err(ErrVar::MissingFile { path: self.into() })
+            Err(ErrVar::MissingFile { path: self.into() })?;
         }
 
         Ok(self)
@@ -391,7 +391,7 @@ pub(crate) trait RectExt {
     fn height(&self) -> i32;
     fn is_centered(&self, screen_extent: Extent2d) -> bool;
     fn sub(&self, rhs: Self) -> Self;
-    fn to_string(&self) -> String;
+    fn _to_string(&self) -> String;
     fn width(&self) -> i32;
 }
 impl RectExt for RECT {
@@ -430,7 +430,7 @@ impl RectExt for RECT {
         }
     }
 
-    fn to_string(&self) -> String {
+    fn _to_string(&self) -> String {
         format!("{{{}, {}, {}, {}}}{{{}, {}}}", self.left, self.top, self.right, self.bottom, self.width(), self.height())
     }
 

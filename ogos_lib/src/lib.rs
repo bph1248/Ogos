@@ -323,7 +323,7 @@ unsafe fn begin(system: System) -> Res<()> {
             };
             control_novideo_srgb(&info)?;
         } else {
-            return Err(ErrVar::InvalidDisplayMode.into())
+            Err(ErrVar::InvalidDisplayMode)?;
         }
     }
 
@@ -352,7 +352,7 @@ unsafe fn begin(system: System) -> Res<()> {
 
                 match get_file_kind(ext) {
                     FileKind::Vid => video::launch_mpv(path, video::MaintainSampleRate::CheckGuard, false)?,
-                    _ => return Err(ErrVar::InvalidFileExt.into())
+                    _ => Err(ErrVar::InvalidFileExt)?
                 }
             }
 
@@ -428,13 +428,11 @@ unsafe fn begin(system: System) -> Res<()> {
             Ok(())
         };
 
+        // Message loop
         match init_long_lived_tasks() {
             Ok(_) => {
-                // Message loop
                 let mut msg = MSG::default();
-                while GetMessageW(&mut msg, None, WM_CREATE, WmOgos::Close as u32).as_bool() {
-                    DispatchMessageW(&msg);
-                }
+                while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
             }
             Err(err) => error!("{}: failure initializing long-lived tasks: {}", module_path!(), err)
         }
@@ -524,13 +522,12 @@ unsafe fn init() -> Res<System> {
                     pdcstr!("NovideoSrgbApply")
                 )?;
 
-                NOVIDEO_SRGB_FFI.set(Some(
-                    NovideoSrgbFfi {
-                        _hostfxr: hostfxr,
-                        novideo_srgb_apply_fn
-                    }
-                ))
-                .map_err(|_| ErrVar::FailedSetOnceCell)?;
+                let novideo_srgb_ffi = NovideoSrgbFfi {
+                    _hostfxr: hostfxr,
+                    novideo_srgb_apply_fn
+                };
+                NOVIDEO_SRGB_FFI.set(Some(novideo_srgb_ffi))
+                    .map_err(|_| ErrVar::FailedSetOnceCell)?;
             },
             false => NOVIDEO_SRGB_FFI.set(None).map_err(|_| ErrVar::FailedSetOnceCell)?
         }
@@ -567,7 +564,7 @@ pub unsafe fn entry() -> Res<()> {
 
         error!("{}: {}", module_path!(), err);
 
-        return Err(err)
+        Err(err)?;
     }
 
     Ok(())
