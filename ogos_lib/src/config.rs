@@ -386,13 +386,17 @@ pub(crate) struct Mpv {
 }
 impl_name!(Mpv);
 
+const fn vscroll_multiplier() -> f32 { 1.0 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MediaBrowser {
     pub(crate) dirs: Vec<PathBuf>,
     pub(crate) window_inner_size: Option<Extent2dU>,
     pub(crate) grid_cell_width: u32,
-    pub(crate) details_cell_width: u32
+    pub(crate) details_cell_width: u32,
+    #[serde(default = "vscroll_multiplier")]
+    pub(crate) vscroll_multiplier: f32
 }
 impl_name!(MediaBrowser);
 

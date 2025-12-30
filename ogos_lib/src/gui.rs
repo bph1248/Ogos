@@ -429,6 +429,7 @@ struct MediaBrowser {
     details_info: DetailsInfo,
     details_cell_size: egui::Vec2,
     details_button_resps: Vec<egui::Response>,
+    vscroll_multiplier: f32,
     hovered_details_entry_i: usize,
     maintain_sample_rate: bool,
     use_glsl_shaders: bool,
@@ -526,14 +527,16 @@ impl MediaBrowser {
         let config = config::get().read()?;
         let (media_dirs,
             grid_cell_width,
-            details_cell_width
+            details_cell_width,
+            vscroll_multiplier
         ) = config.media_browser.as_ref()
             .map(|media_browser_config| {
                 #[allow(clippy::cast_precision_loss)]
                 (
                     &media_browser_config.dirs,
                     media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.details_cell_width.next_multiple_of(2) as f32
+                    media_browser_config.details_cell_width.next_multiple_of(2) as f32,
+                    media_browser_config.vscroll_multiplier
                 )
             })
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
@@ -758,6 +761,7 @@ impl MediaBrowser {
             details_cell_size,
             details_button_resps: Vec::with_capacity(24),
             hovered_details_entry_i: default!(),
+            vscroll_multiplier,
             maintain_sample_rate: default!(),
             use_glsl_shaders: default!(),
             discord_app_ids,
@@ -878,7 +882,7 @@ impl MediaBrowser {
             egui::ScrollArea::new([false, true])
                 .auto_shrink(false)
                 .scroll_source(egui::scroll_area::ScrollSource::SCROLL_BAR | egui::scroll_area::ScrollSource::MOUSE_WHEEL)
-                .wheel_scroll_multiplier([1.0, 2.0].into())
+                .wheel_scroll_multiplier([1.0, self.vscroll_multiplier].into())
                 .show(ui, |ui| {
                     ui.add_space(FRAME_MARGIN);
 
@@ -1138,26 +1142,28 @@ impl MediaBrowser {
         );
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(right_subd_rect), |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let button_height = ui.spacing().interact_size.y;
-                let button_spacing = ui.spacing().item_spacing[1];
-                #[allow(clippy::cast_precision_loss)]
-                let button_count = self.details_info.dir_entry_infos.len() as f32;
-                let buttons_height = button_count * (button_height + button_spacing);
+            egui::ScrollArea::vertical()
+                .wheel_scroll_multiplier([1.0, self.vscroll_multiplier].into())
+                .show(ui, |ui| {
+                    let button_height = ui.spacing().interact_size.y;
+                    let button_spacing = ui.spacing().item_spacing[1];
+                    #[allow(clippy::cast_precision_loss)]
+                    let button_count = self.details_info.dir_entry_infos.len() as f32;
+                    let buttons_height = button_count * (button_height + button_spacing);
 
-                let remaining_space = ui.available_height() - buttons_height;
-                let top_padding = (remaining_space / 2.0).floor().max(0.0);
+                    let remaining_space = ui.available_height() - buttons_height;
+                    let top_padding = (remaining_space / 2.0).floor().max(0.0);
 
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
-                    ui.add_space(top_padding);
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                        ui.add_space(top_padding);
 
-                    if self.details_info.dir_entry_infos.is_empty() {
-                        ui.take_available_space();
-                    } else {
-                        self.dir_entries(ui);
-                    }
+                        if self.details_info.dir_entry_infos.is_empty() {
+                            ui.take_available_space();
+                        } else {
+                            self.dir_entries(ui);
+                        }
+                    });
                 });
-            });
         });
 
         self.details_context_menu(&total_alloc_resp);
