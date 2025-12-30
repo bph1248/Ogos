@@ -122,9 +122,9 @@ unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WP
 
                     const RELOAD_CONFIG: usize = 1;
                     const QUIT: usize = 2;
-                    let menu_entry_reload_config = "Reload config".to_win_str();
+                    // let menu_entry_reload_config = "Reload config".to_win_str();
                     let menu_entry_quit = "Quit".to_win_str();
-                    AppendMenuW(menu_hnd, MF_STRING, RELOAD_CONFIG, *menu_entry_reload_config)?;
+                    // AppendMenuW(menu_hnd, MF_STRING, RELOAD_CONFIG, *menu_entry_reload_config)?;
                     AppendMenuW(menu_hnd, MF_STRING, QUIT, *menu_entry_quit)?;
 
                     let mut cursor_pos = POINT::default();
