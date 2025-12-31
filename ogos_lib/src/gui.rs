@@ -446,6 +446,7 @@ impl eframe::App for MediaBrowser {
             .frame(self.frame)
             .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
 
+        // Close and save cache to file
         if ctx.input(|state| state.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 
@@ -453,6 +454,7 @@ impl eframe::App for MediaBrowser {
             self.cache.details_cell_size = self.details_cell_size;
             self.cache.tags = self.tags.keys().cloned().collect();
             self.cache.images = self.images.keys().map(|key| key.to_string()).collect();
+            self.cache.entries.clear();
 
             let mut grid_entry_tags = vec![Some(Vec::with_capacity(self.tags.len())); self.grid_entries.len()];
             for (tag_i, (_, set)) in self.tags.iter().enumerate() {
