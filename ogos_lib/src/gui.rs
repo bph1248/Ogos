@@ -361,7 +361,7 @@ struct Cache {
     #[serde(default)]
     details_cell_size: egui::Vec2,
     #[serde(default)]
-    images: IndexSet<String>,
+    images: IndexSet<Rc<str>>,
     #[serde(default)]
     tags: Vec<Rc<str>>,
     entries: HashMap<PathBuf, CacheEntryInfo>
@@ -380,6 +380,12 @@ struct GridEntryInfo {
     stem: Rc<str>,
     image_file_name_i: Option<usize>,
     hash: Option<Arc<str>>
+}
+
+struct ImageDirs {
+    base: PathBuf,
+    grid: PathBuf,
+    details: PathBuf
 }
 
 struct ImageFerryInfo {
@@ -409,10 +415,12 @@ struct PointerContained(bool);
 
 struct MediaBrowser {
     _thread_pool: Arc<rayon::ThreadPool>,
+    image_dirs: Arc<ImageDirs>,
     images: IndexMap<Arc<str>, ImageStates>,
     hash_rx: mpsc::Receiver<(usize, Arc<str>)>,
     cache_path: PathBuf,
     cache: Cache,
+    cached_images_to_remove: Vec<Rc<str>>,
     frame: egui::Frame,
     view_kind: ViewKind,
     grid_entries: Vec<GridEntryInfo>,
@@ -450,10 +458,21 @@ impl eframe::App for MediaBrowser {
         if ctx.input(|state| state.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 
+            for image_file_name in self.cached_images_to_remove.drain(..) {
+                let paths = [
+                    self.image_dirs.grid.join(image_file_name.as_ref()).with_extension("webp"),
+                    self.image_dirs.details.join(image_file_name.as_ref()).with_extension("webp")
+                ];
+
+                for path in paths {
+                    fs::remove_file(path.as_path()).unwrap_or_else(|err| error!("{}: failed to remove cached image: {}: {}", module_path!(), path.display(), err));
+                }
+            }
+
             self.cache.grid_cell_size = self.grid_cell_size;
             self.cache.details_cell_size = self.details_cell_size;
             self.cache.tags = self.tags.keys().cloned().collect();
-            self.cache.images = self.images.keys().map(|key| key.to_string()).collect();
+            self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
             self.cache.entries.clear();
 
             let mut grid_entry_tags = vec![Some(Vec::with_capacity(self.tags.len())); self.grid_entries.len()];
@@ -472,7 +491,7 @@ impl eframe::App for MediaBrowser {
                     info.path,
                     CacheEntryInfo {
                         image_file_name_i: info.image_file_name_i,
-                        hash: info.hash,
+                        hash: info.image_file_name_i.map(|_| info.hash).unwrap_or_default(),
                         tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
                     }
                 );
@@ -500,17 +519,25 @@ impl MediaBrowser {
         let (ferry_sx, ferry_rx) = mpsc::channel();
 
         let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
-        let image_dir = Arc::new(current_exe_dir.join("images"));
+        let image_dir = current_exe_dir.join("images");
+        let grid_image_dir = image_dir.join("grid");
+        let details_image_dir = image_dir.join("details");
+        let image_dirs = Arc::new(ImageDirs {
+            base: image_dir,
+            grid: grid_image_dir,
+            details: details_image_dir
+        });
 
-        let cache_path = image_dir.join("cache").with_extension("json");
+        let cache_path = image_dirs.base.join("cache").with_extension("json");
         let cache_slc = fs::read(&cache_path)?;
         let mut cache: Cache = serde_json::from_slice(&cache_slc)?;
+        let mut cached_images_to_remove = Vec::new();
 
         let mut tags = cache.tags.iter()
             .map(|tag| (tag.clone(), default!())) // Clone these - cache entries need to reference them later
             .collect::<BTreeMap::<Rc<str>, BTreeSet<_>>>();
 
-        let mut images = image_dir.read_dir()?
+        let mut images = image_dirs.base.read_dir()?
             .filter_map(|dir_entry| {
                 dir_entry.map_err(ErrLoc::from).and_then(|dir_entry| -> Res<_> {
                     let path = dir_entry.path();
@@ -568,23 +595,39 @@ impl MediaBrowser {
 
                     let stem = Rc::from(path.get_file_stem()?);
                     let cache_entry_info = cache.entries.get_mut(&path);
-                    let image_file_name_i = cache_entry_info.as_ref()
-                        .and_then(|info| info.image_file_name_i)
-                        .and_then(|image_file_name_i| cache.images.get_index(image_file_name_i))
-                        .and_then(|image_file_name| images.get_index_of(image_file_name.as_str()))
-                        .or_else(|| {
-                            let exts = [ ".jpg", ".jpeg", ".png", ".webp"];
 
-                            for ext in exts {
-                                let attempt = concat_string!(stem, ext);
+                    let try_get_image_file_name_i = || {
+                        let exts = [ ".jpg", ".jpeg", ".png", ".webp"];
 
-                                if let Some(image_file_name_i) = images.get_index_of(attempt.as_str()) {
-                                    return Some(image_file_name_i)
-                                }
+                        for ext in exts {
+                            let attempt = concat_string!(stem, ext);
+
+                            if let Some(image_file_name_i) = images.get_index_of(attempt.as_str()) {
+                                return Some(image_file_name_i)
                             }
+                        }
 
-                            None
-                        });
+                        None
+                    };
+                    let image_file_name_i = match cache_entry_info.as_ref() {
+                        Some(info) => {
+                            let image_file_name = info.image_file_name_i
+                                .and_then(|image_file_name_i| cache.images.get_index(image_file_name_i));
+                            let image_file_name_i = image_file_name
+                                .and_then(|image_file_name| images.get_index_of(image_file_name.as_ref()));
+
+                            image_file_name_i.or_else(|| {
+                                if let Some(image_file_name) = image_file_name {
+                                    // Entry was cached but its image was moved or deleted - remove cached images
+                                    cached_images_to_remove.push(image_file_name.clone());
+                                }
+
+                                try_get_image_file_name_i()
+                            })
+                        },
+                        None => try_get_image_file_name_i()
+                    };
+
                     let hash = cache_entry_info.and_then(|info| info.hash.clone());
 
                     Ok(Some(GridEntryInfo { path, stem, image_file_name_i, hash }))
@@ -620,7 +663,7 @@ impl MediaBrowser {
                 let ctx = ctx.clone();
                 let hash_sx = hash_sx.clone();
                 let ferry_sx = ferry_sx.clone();
-                let image_dir = image_dir.clone();
+                let image_dirs = image_dirs.clone();
                 let (image_file_name, ImageStates { grid_state, details_state }) = images.get_index_mut(image_file_name_i).unwrap();
                 let image_file_name = image_file_name.clone();
                 let expected_hash = info.hash.clone();
@@ -631,9 +674,9 @@ impl MediaBrowser {
 
                 thread_pool.spawn_fifo(move || {
                     (|| -> Res<()> {
-                        let image_path = image_dir.join(image_file_name.as_ref());
-                        let grid_image_path = image_dir.join("grid").join(image_file_name.as_ref()).with_extension("webp");
-                        let details_image_path = image_dir.join("details").join(image_file_name.as_ref()).with_extension("webp");
+                        let image_path = image_dirs.base.join(image_file_name.as_ref());
+                        let grid_image_path = image_dirs.grid.join(image_file_name.as_ref()).with_extension("webp");
+                        let details_image_path = image_dirs.details.join(image_file_name.as_ref()).with_extension("webp");
 
                         // Compute hash on chunk
                         let mut image_file = File::open(image_path.as_path())?;
@@ -742,10 +785,12 @@ impl MediaBrowser {
 
         Ok(Self {
             _thread_pool: thread_pool,
+            image_dirs,
             images,
             hash_rx,
             cache_path,
             cache,
+            cached_images_to_remove,
             frame,
             view_kind: ViewKind::Grid,
             grid_entries,
