@@ -9,6 +9,7 @@ use crate::{
 };
 
 use discord_rich_presence::*;
+use log::*;
 use once_cell::sync::*;
 use paste::*;
 use serde::*;
@@ -471,22 +472,22 @@ pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, slee
     f()
 }
 
-pub(crate) fn confirm_or_find_app<T>(name: &str, confirm: Option<T>) -> ResVar<PathBuf> where
-    PathBuf: From<T>
+pub(crate) fn confirm_or_find_app<P>(name: &str, path: Option<P>) -> ResVar<PathBuf> where
+    P: AsRef<Path>
 {
-    fn inner(name: &str, confirm: Option<PathBuf>) -> ResVar<PathBuf> {
+    fn inner(name: &str, confirm: Option<&Path>) -> ResVar<PathBuf> {
         if let Some(path) = confirm {
             match path.confirm() {
-                Ok(path) => return Ok(path),
-                Err(ErrVar::MissingFile { .. }) => (),
-                err => return err
+                Ok(path) => return Ok(path.to_owned()),
+                Err(ErrVar::MissingFile { path }) => error!("{}: failed to find app: {} - searching Path env var", module_path!(), path.display()),
+                Err(err) => return Err(err)
             }
         }
 
         Ok(which::which(name)?)
     }
 
-    inner(name, confirm.map(|path| path.into()))
+    inner(name, path.as_ref().map(|path| path.as_ref()))
 }
 
 pub(crate) fn get_file_kind(ext: &str) -> FileKind {
