@@ -101,9 +101,9 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
         let launcher_or_game_path = match using_launcher {
             Some(launcher) => {
                 match launcher {
-                    Launcher::Epic => config.app_paths.epic.as_str(),
-                    Launcher::Gog => config.app_paths.gog.as_str(),
-                    Launcher::Steam => config.app_paths.steam.as_str()
+                    Launcher::Epic => config.app_paths.epic,
+                    Launcher::Gog => config.app_paths.gog,
+                    Launcher::Steam => config.app_paths.steam
                 }
             },
             None => game_info.proc.as_str()

@@ -429,7 +429,7 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
         ..
     } = window_shift_config;
 
-    let win_info = match constraints.get(&win_exe) {
+    let win_info = match constraints.get(win_exe.as_str()) {
         Some(constraints) => {
             let (anchor_rel,
                 anchor_abs,

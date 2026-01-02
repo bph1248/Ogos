@@ -44,12 +44,12 @@ pub(crate) const WORKERW_CLASS_NAME: &str = "WorkerW";
 pub(crate) const WINDOW_WATCH_CLASS_NAME: &str = "OgosWindowWatch";
 
 #[derive(Default)]
-struct Binds {
+struct Binds<'a> {
     qmk: Option<Qmk>,
-    maps: Option<HashMap<String, InputEventMaps>>,
+    maps: Option<HashMap<&'a str, InputEventMaps>>,
     bound: Vec<InputEventMap>
 }
-impl Drop for Binds {
+impl<'a> Drop for Binds<'a> {
     fn drop(&mut self) {
         unbind_maps(self);
     }
@@ -148,13 +148,13 @@ pub(crate) struct Taskbar {
 unsafe impl Send for Taskbar {}
 
 #[derive(Default)]
-struct ThreadState {
+struct ThreadState<'a> {
     hook_mgr_tid: u32,
     win_infos: HashMap<usize, WinInfo>,
     win_errored: HashMap<usize, Errored>,
     last_foreground_tpids: Tpids,
     thread_hwnd_counts: HashMap<Tid, u32>,
-    binds: Option<Binds>,
+    binds: Option<Binds<'a>>,
     tb: Option<Taskbar>
 }
 
@@ -809,7 +809,7 @@ pub(crate) unsafe fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2
     }
 }
 
-fn init_binds() -> Res1<Binds> {
+fn init_binds<'a>() -> Res1<Binds<'a>> {
     const QMK_VID: u16 = 0x3434;
     const QMK_PID: u16 = 0x0140;
     const USAGE_PAGE: u16 = 0xff60;

@@ -413,7 +413,7 @@ struct MenuPointerState {
 #[derive(Default)]
 struct PointerContained(bool);
 
-struct MediaBrowser {
+struct MediaBrowser<'a> {
     _thread_pool: Arc<rayon::ThreadPool>,
     image_dirs: Arc<ImageDirs>,
     images: IndexMap<Arc<str>, ImageStates>,
@@ -441,14 +441,14 @@ struct MediaBrowser {
     hovered_details_entry_i: usize,
     maintain_sample_rate: bool,
     use_glsl_shaders: bool,
-    discord_app_ids: DiscordAppIds,
+    discord_app_ids: DiscordAppIds<'a>,
     discord_enabled: bool,
     discord_watching: Watching,
     discord_details: String,
     discord_state: String,
     discord_display_kind: DiscordDisplayKind
 }
-impl eframe::App for MediaBrowser {
+impl<'a> eframe::App for MediaBrowser<'a> {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default()
             .frame(self.frame)
@@ -505,7 +505,7 @@ impl eframe::App for MediaBrowser {
         }
     }
 }
-impl MediaBrowser {
+impl<'a> MediaBrowser<'a> {
     fn new(ctx: &egui::Context) -> Res<Self> {
         // let now = now!();
 
@@ -1258,9 +1258,9 @@ impl MediaBrowser {
     fn make_discord_info(&self, i: usize) -> config::DiscordInfo {
         config::DiscordInfo {
             client_id: match self.discord_watching {
-                Watching::Movie => self.discord_app_ids.movies.clone().unwrap(), // App ID is Some when Discord is enabled
-                Watching::TV => self.discord_app_ids.tv.clone().unwrap(),
-                Watching::Words => self.discord_app_ids.words.clone().unwrap()
+                Watching::Movie => self.discord_app_ids.movies.unwrap().to_string(), // App ID is Some when Discord is enabled
+                Watching::TV => self.discord_app_ids.tv.unwrap().to_string(),
+                Watching::Words => self.discord_app_ids.words.unwrap().to_string()
             },
             activity: config::DiscordActivity::Watching,
             details: match self.discord_details.is_empty() {

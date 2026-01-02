@@ -196,7 +196,7 @@ pub(crate) fn set_eq(name: &str) -> Res1<()> {
 
     let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or_else(|| ErrVar::UnknownEq { name: name.into() })?;
 
-    fs::copy(custom_config_path, eq_apo.master_config_path.as_str())?;
+    fs::copy(custom_config_path, eq_apo.master_config_path)?;
 
     info!("{}: set eq: {}", module_path!(), name);
 
