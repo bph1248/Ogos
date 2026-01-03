@@ -99,15 +99,10 @@ impl PlayNice for IPolicyConfig {
     }
 }
 
-pub(crate) unsafe fn set_endpoint(name: &str) -> Res1<()> {
-    let config = config::get().read()?;
-    let endpoints = config.audio.as_ref()
-        .and_then(|audio_config| audio_config.endpoints.as_ref())
-        .ok_or(ErrVar::MissingConfigKey { name: config::Endpoints::NAME })?;
-
+pub(crate) unsafe fn set_endpoint(name: &str) -> Res<()> {
     CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
-    let inner = || -> Res<()> {
+    let set_endpoint_res = (|| -> Res<()> {
         let device_enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         let device_collection = device_enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
 
@@ -118,26 +113,31 @@ pub(crate) unsafe fn set_endpoint(name: &str) -> Res1<()> {
             let device_desc = device_desc_prop_var.Anonymous.Anonymous.Anonymous.pwszVal.to_string()?;
 
             if device_desc == name {
-                let device_id = PCWSTR(device.GetId()?.0);
+                let device_id = device.GetId()?;
 
                 let policy_config: IPolicyConfig = CoCreateInstance(&PolicyConfigClient, None, CLSCTX_ALL)?;
+                policy_config.SetDefaultEndpoint(device_id, eCommunications)?;
+                policy_config.SetDefaultEndpoint(device_id, eConsole)?;
                 policy_config.SetDefaultEndpoint(device_id, eMultimedia)?;
 
-                break
+                return Ok(())
             }
         }
 
-        Ok(())
-    };
-    let res = inner();
+        Err(ErrVar::UnknownEndpoint)?
+    })();
 
     CoUninitialize();
 
-    res?;
+    set_endpoint_res?;
 
     info!("{}: set endpoint: {}", module_path!(), name);
 
-    if let Some(app) = endpoints.0.get(name) {
+    let config = config::get().read()?;
+    let endpoints = config.audio.as_ref().and_then(|audio_config| audio_config.endpoints.as_ref());
+    if let Some(endpoints) = endpoints &&
+        let Some(app) = endpoints.0.get(name)
+    {
         let mut cmd = Command::new(&app.path);
         cmd.args(&app.args);
 
@@ -149,10 +149,10 @@ pub(crate) unsafe fn set_endpoint(name: &str) -> Res1<()> {
     Ok(())
 }
 
-pub(crate) unsafe fn set_sample_rate(hz: Hz) -> Res1<Option<Hz>> {
+pub(crate) unsafe fn set_sample_rate(hz: Hz) -> Res<Option<Hz>> {
     CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
-    let inner = || -> Res<Option<Hz>> {
+    let prev_hz = (|| -> Res<Option<Hz>> {
         let device_enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         let device = device_enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)?;
         let device_id = PCWSTR(device.GetId()?.0);
@@ -180,21 +180,20 @@ pub(crate) unsafe fn set_sample_rate(hz: Hz) -> Res1<Option<Hz>> {
         } else {
             Ok(None)
         }
-    };
-    let prev_hz = inner();
+    })();
 
     CoUninitialize();
 
-    Ok(prev_hz?)
+    prev_hz
 }
 
-pub(crate) fn set_eq(name: &str) -> Res1<()> {
+pub(crate) fn set_eq(name: &str) -> Res<()> {
     let config = config::get().read()?;
     let eq_apo = config.audio.as_ref()
         .and_then(|audio_config| audio_config.eq_apo.as_ref())
         .ok_or(ErrVar::MissingConfigKey { name: config::EqApo::NAME })?;
 
-    let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or_else(|| ErrVar::UnknownEq { name: name.into() })?;
+    let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or(ErrVar::UnknownEq)?;
 
     fs::copy(custom_config_path, eq_apo.master_config_path)?;
 

@@ -727,7 +727,6 @@ impl App {
 #[derive(Deserialize)]
 #[serde(transparent)]
 pub(crate) struct Endpoints<'a>(#[serde(borrow)] pub(crate) HashMap<&'a str, App>);
-impl_name!(Endpoints, 'a);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -273,9 +273,7 @@ unsafe fn begin(system: System) -> Res<()> {
     }
 
     // Audio
-    if let Some(name) = cli.set_endpoint.as_ref() &&
-        pipe_msg(PipeMsg::Endpoint(name.clone())).is_err()
-    {
+    if let Some(name) = cli.set_endpoint.as_ref() {
         audio::set_endpoint(name.as_str()).unwrap_or_else(|err| {
             error!("{}: failed to set endpoint: {}: {}", module_path!(), name, err);
         });

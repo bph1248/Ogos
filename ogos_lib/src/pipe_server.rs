@@ -1,5 +1,4 @@
 use crate::{
-    audio,
     binds,
     common::*,
     config,
@@ -135,8 +134,7 @@ unsafe fn begin(send_ready: mpsc::Sender<ReadyMsg>) -> Res<()> {
 
                 break
             },
-            PipeMsg::Endpoint(name) => audio::set_endpoint(name.as_str())?,
-            _ => ()
+            PipeMsg::Ack => ()
         }
 
         DisconnectNamedPipe(pipe_hnd)?;

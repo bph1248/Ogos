@@ -137,8 +137,6 @@ pub(crate) enum Msg {
     Destroy(usize),
     #[subenum(CursorWatchMsg)]
     DisplayChange(Extent2d),
-    #[subenum(PipeMsg)]
-    Endpoint(String),
     #[subenum(WindowShiftMsg)]
     MenuStart,
     #[subenum(WindowShiftMsg)]
