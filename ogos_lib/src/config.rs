@@ -41,25 +41,7 @@ macro_rules! impl_name {
 fn deserialize_key<'de, D>(deserializer: D) -> Result<Key, D::Error> where
     D: Deserializer<'de>
 {
-    struct KeyVisitor;
-
-    impl Visitor<'_> for KeyVisitor {
-        type Value = Key;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a key")
-        }
-
-        fn visit_str<E>(self, key: &str) -> Result<Self::Value, E> where
-            E: Error
-        {
-            key.try_as_key().map_err(E::custom)
-        }
-    }
-
-    let key = deserializer.deserialize_string(KeyVisitor {})?;
-
-    Ok(key)
+    BindVar::deserialize(deserializer)?.try_as_key().map_err(D::Error::custom)
 }
 
 fn deserialize_keys<'de, D>(deserializer: D) -> Result<Vec<Key>, D::Error> where
@@ -79,7 +61,7 @@ fn deserialize_keys<'de, D>(deserializer: D) -> Result<Vec<Key>, D::Error> where
         {
             let mut keys = Vec::with_capacity(seq.size_hint().unwrap_or_default());
 
-            while let Some(key) = seq.next_element::<&str>()? {
+            while let Some(key) = seq.next_element::<BindVar>()? {
                 keys.push(key.try_as_key().map_err(A::Error::custom)?);
             };
 
@@ -109,7 +91,7 @@ fn deserialize_hotkey_tasks<'de, D>(deserializer: D) -> Result<HashMap<Key, Task
         {
             let mut hotkey_tasks: HashMap<Key, Task> = HashMap::with_capacity(map.size_hint().unwrap_or_default());
 
-            while let Some((key, task)) = map.next_entry::<&str, Task>()? {
+            while let Some((key, task)) = map.next_entry::<BindVar, Task>()? {
                 let key = key.try_as_key().map_err(A::Error::custom)?;
 
                 hotkey_tasks.insert(key, task);
@@ -124,7 +106,7 @@ fn deserialize_hotkey_tasks<'de, D>(deserializer: D) -> Result<HashMap<Key, Task
     Ok(hotkey_tasks)
 }
 
-fn make_input_event_map(from: &str, to: &str, click_dur_ms: Option<u64>) -> ResVar<InputEventMap> {
+fn make_input_event_map(from: BindVar, to: BindVar, click_dur_ms: Option<u64>) -> ResVar<InputEventMap> {
     let from = from.try_as_input_event()?;
     let to = to.try_as_input_event()?;
 
@@ -162,11 +144,11 @@ fn deserialize_click_map<'de, D>(deserializer: D) -> Result<InputEventMap, D::Er
             let (mut from, mut to) = (None, None);
 
             for _ in 0..2 {
-                match map.next_key::<&str>()? {
-                    Some("dur") => dur = Some(map.next_value::<u64>()?),
+                match map.next_key::<BindVar>()? {
+                    Some(BindVar::Dur) => dur = Some(map.next_value::<u64>()?),
                     Some(from_) => {
                         from = Some(from_);
-                        to = Some(map.next_value::<&str>()?);
+                        to = Some(map.next_value::<BindVar>()?);
                     },
                     None => Err(A::Error::custom(ErrVar::MissingClickParams))?
                 }
@@ -200,17 +182,19 @@ fn deserialize_input_event_maps<'de, D>(deserializer: D) -> Result<Vec<InputEven
         {
             let mut input_event_maps: Vec<InputEventMap> = Vec::with_capacity(map.size_hint().unwrap_or_default());
 
-            while let Some(key_str) = map.next_key::<&str>()? {
-                if key_str == "click" {
-                    let click_map = map.next_value::<ClickMap>()?.0;
+            while let Some(from) = map.next_key::<BindVar>()? {
 
-                    input_event_maps.push(click_map);
+                match from {
+                    BindVar::Click => {
+                        let click_map = map.next_value::<ClickMap>()?.0;
 
-                    continue
-                }
+                        input_event_maps.push(click_map);
+                    },
+                    _ => {
+                        let to = map.next_value::<BindVar>()?;
 
-                if let Ok(val_str) = map.next_value::<&str>() {
-                    input_event_maps.push(make_input_event_map(key_str, val_str, None).map_err(A::Error::custom)?);
+                        input_event_maps.push(make_input_event_map(from, to, None).map_err(A::Error::custom)?);
+                    }
                 }
             }
 
