@@ -1,9 +1,3 @@
-use crate::{
-    common::*,
-    win32::*,
-    window_watch::*
-};
-
 use mki::*;
 use nvapi_sys as nvapi;
 use nvapi::NvAPI_Status;
@@ -115,6 +109,11 @@ err_loc_sets! {
     Res2 = { Res1 }
 }
 
+macro_rules! into {
+    () => {
+        |x| x.into()
+    };
+}
 macro_rules! loc_var {
     ($var:ident) => {
         LocVar::$var as u32
@@ -150,10 +149,7 @@ pub(crate) enum ErrVar {
     RecvTimeout(#[from] sync::mpsc::RecvTimeoutError),
     Resize(#[from] resize::Error),
     Ron(#[from] ron::de::SpannedError),
-    SendMsg(#[from] sync::mpsc::SendError<Msg>),
-    SendReadyMsg(#[from] sync::mpsc::SendError<ReadyMsg>),
-    SendWindowForegroundMsg2(#[from] sync::mpsc::SendError<WindowForegroundMsg>),
-    SendWindowShiftMsg2(#[from] sync::mpsc::SendError<WindowShiftMsg>),
+    SendMsg(String),
     SerdeJson(#[from] serde_json::Error),
     SystemTime(#[from] time::SystemTimeError),
     ThreadPoolBuild(#[from] rayon::ThreadPoolBuildError),
@@ -178,10 +174,10 @@ pub(crate) enum ErrVar {
     FailedQmkKeyboardInit { vid: u16, pid: u16, usage_page: u16 },
     FailedSetConfig,
     FailedSetOnceCell,
-    FailedSetWinEventHooks { ctx: WinEventHookContext },
+    FailedSetWinEventHooks { ctx: String },
     FailedSpawnCommand { inner: io::Error, cmd: String },
     FailedToStr,
-    FailedWmMouseMouse { inner: windows::core::Error, fg_hwnd: SafeHwnd, fg_exe: String },
+    FailedWmMouseMouse { inner: windows::core::Error, fg_hwnd: String, fg_exe: String },
     FailedWriteFile { inner: io::Error, path: String },
     InvalidDisplayMode,
     InvalidDisplayName,
@@ -248,9 +244,6 @@ impl Display for ErrVar {
             Resize(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Ron(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SendMsg(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            SendReadyMsg(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            SendWindowForegroundMsg2(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            SendWindowShiftMsg2(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SerdeJson(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             SystemTime(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             ThreadPoolBuild(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
@@ -278,7 +271,7 @@ impl Display for ErrVar {
             FailedSetWinEventHooks { ctx } => write!(f, "failed to set win event hooks: {}", ctx),
             FailedSpawnCommand { inner, cmd } => write!(f, "failed to spawn command: {}: {}", cmd, inner),
             FailedToStr => write!(f, "failed to convert value to str"),
-            FailedWmMouseMouse { inner, fg_hwnd, fg_exe} => write!(f, "failed on wm mouse move: fg_hwnd: {:p}, fg_exe: {}: {}", **fg_hwnd, fg_exe, inner),
+            FailedWmMouseMouse { inner, fg_hwnd, fg_exe} => write!(f, "failed on wm mouse move: fg_hwnd: {}, fg_exe: {}: {}", fg_hwnd, fg_exe, inner),
             FailedWriteFile { inner, path } => write!(f, "failed to write file: path: {}: {}", path, inner),
             InvalidDisplayMode => write!(f, "invalid display mode"),
             InvalidDisplayName => write!(f, "invalid display name"),

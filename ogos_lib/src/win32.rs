@@ -5,7 +5,6 @@ use crate::{
 
 use log::*;
 use std::{
-    ffi::*,
     ops::*,
     path::*
 };
@@ -38,18 +37,6 @@ impl WinErrorExt for windows::core::Error {
         WIN32_ERROR((self.code().0 & 0xFFFF) as u32) // Assume facility is FACILITY_WIN32
     }
 }
-
-#[derive(Debug)]
-pub(crate) struct SafeHwnd(pub(crate) HWND);
-impl Deref for SafeHwnd {
-    type Target = *mut c_void;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0.0
-    }
-}
-unsafe impl Send for SafeHwnd {}
-unsafe impl Sync for SafeHwnd {}
 
 pub(crate) struct WinStr {
     _wide: U16CString,
@@ -152,6 +139,7 @@ pub(crate) trait HwndExt {
     unsafe fn is_visible(&self) -> bool;
     unsafe fn may_hook_location_change(&self) -> Res1<bool>;
     unsafe fn show_na(&self);
+    fn to_string(&self) -> String;
 }
 impl HwndExt for HWND {
     fn as_usize(&self) -> usize {
@@ -321,6 +309,10 @@ impl HwndExt for HWND {
 
     unsafe fn show_na(&self) {
         _ = ShowWindow(*self, SW_SHOWNA);
+    }
+
+    fn to_string(&self) -> String {
+        format!("{:p}", self.0)
     }
 }
 

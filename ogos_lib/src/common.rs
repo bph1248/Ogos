@@ -111,13 +111,14 @@ pub(crate) enum FileKind {
     Other
 }
 
+#[derive(Display)]
 #[subenum(
     BroadcastMsg(derive(Clone, Copy, IntoStaticStr)),
     CursorWatchMsg,
     PipeMsg(derive(Deserialize, Display, Serialize)),
-    ReadyMsg,
+    ReadyMsg(derive(Display)),
     WindowForegroundMsg(derive(Display, IntoStaticStr)),
-    WindowShiftMsg(derive(IntoStaticStr))
+    WindowShiftMsg(derive(Display, IntoStaticStr))
 )]
 pub(crate) enum Msg {
     #[subenum(PipeMsg)]
@@ -166,6 +167,23 @@ pub(crate) enum Msg {
     WmMouseMove(LPARAM, Instant),
     #[subenum(BroadcastMsg)]
     WmReloadConfig
+}
+macro_rules! impl_FromSendErrorMsgForErrVar {
+    ($($t:ident),+) => {
+        $(
+            impl From<mpsc::SendError<$t>> for ErrVar {
+                fn from(value: mpsc::SendError<$t>) -> Self {
+                    Self::SendMsg(value.0.to_string())
+                }
+            }
+        )+
+    };
+}
+impl_FromSendErrorMsgForErrVar! {
+    Msg,
+    ReadyMsg,
+    WindowForegroundMsg,
+    WindowShiftMsg
 }
 impl Name for BroadcastMsg {
     fn name(&self) -> &'static str {

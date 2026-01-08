@@ -432,7 +432,7 @@ unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Send
                                     dispatch_msg(WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook: 0, hwnd });
                                 }
 
-                                ErrVar::FailedSetWinEventHooks { ctx: info.ctx }
+                                ErrVar::FailedSetWinEventHooks { ctx: info.ctx.to_string() }
                             })?;
 
                         hooks.push(hook);
