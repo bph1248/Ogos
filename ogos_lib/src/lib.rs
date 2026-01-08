@@ -374,7 +374,20 @@ unsafe fn begin(system: System) -> Res<()> {
 
         let init_long_lived_tasks = || -> Res<()> {
             let mut can_reload_config = Vec::new();
+            let long_lived_channels = get_long_lived_channels(cli.binds || cli.taskbar, cli.window_shift);
+
+            // Window watch
             let mut window_foreground_comps = WindowForegroundComponents::empty();
+            let window_foreground_sx = match cli.binds {
+                true => {
+                    window_foreground_comps |= WindowForegroundComponents::DYNAMIC_BINDS;
+
+                    long_lived_channels.sxs.window_foreground.clone()
+                },
+                false => None
+            };
+            if cli.taskbar { window_foreground_comps |= WindowForegroundComponents::TASKBAR; }
+            thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx.clone()));
 
             // Binds
             if cli.binds {
@@ -384,18 +397,9 @@ unsafe fn begin(system: System) -> Res<()> {
                     error!("{}: failed to configure static binds: {}", module_path!(), err);
                 });
 
-                thread_hnds.push(pipe_server::spawn(ready_sx.clone()));
+                thread_hnds.push(pipe_server::spawn(ready_sx, window_foreground_sx));
             }
 
-            let long_lived_channels = get_long_lived_channels(cli.binds || cli.taskbar, cli.window_shift);
-
-            // Window watch
-            if !long_lived_channels.enabled.is_empty() {
-                if cli.binds { window_foreground_comps |= WindowForegroundComponents::DYNAMIC_BINDS };
-                if cli.taskbar { window_foreground_comps |= WindowForegroundComponents::TASKBAR; }
-
-                thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx));
-            }
             let hook_mgr_tid = receive_ready(&mut to_close, ready_rx);
 
             match long_lived_channels.enabled {

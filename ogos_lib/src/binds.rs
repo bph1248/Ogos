@@ -892,37 +892,6 @@ pub(crate) fn unmap_qmk(qmk: &Qmk, from: Key) {
     }
 }
 
-pub(crate) fn set_bind(binds_config: &Binds, msg: BindMsg)  {
-    match msg {
-        BindMsg::Bind(BindName::Underscore) => {
-            if let Some(underscore) = binds_config.underscore {
-                let action = Action {
-                    callback: Box::new(move |_, state| {
-                        if state == State::Pressed && underscore.while_pressed.is_pressed() {
-                            click_with_sleep(Keyboard(Key::Minus));
-                        }
-                    }),
-                    inhibit: InhibitEvent::maybe(move || {
-                        match underscore.while_pressed.is_pressed() {
-                            true => InhibitEvent::Yes,
-                            false => InhibitEvent::No
-                        }
-                    }),
-                    defer: true,
-                    sequencer: false
-                };
-
-                underscore.act_on.act_on(action);
-            }
-        },
-        BindMsg::Unbind(BindName::Underscore) => {
-            if let Some(underscore) = binds_config.underscore {
-                mki::remove_key_bind(underscore.act_on);
-            }
-        }
-    }
-}
-
 pub(crate) unsafe fn configure_static_binds() -> Res<()> {
     let config = config::get().read()?;
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: Binds::NAME })?;
@@ -1010,26 +979,34 @@ pub(crate) unsafe fn configure_static_binds() -> Res<()> {
     }
 
     if let Some(underscore) = binds_config.underscore {
-        underscore.act_on.act_on(
-            Action {
-                callback: Box::new(move |_, state| {
-                    if state == State::Pressed && underscore.while_pressed.is_pressed() {
-                        click_with_sleep(Keyboard(Key::Minus));
-                    }
-                }),
-                inhibit: InhibitEvent::maybe(move || {
-                    match underscore.while_pressed.is_pressed() {
-                        true => InhibitEvent::Yes,
-                        false => InhibitEvent::No
-                    }
-                }),
-                defer: false,
-                sequencer: true
-            }
-        );
+        let action = Action {
+            callback: Box::new(move |_, state| {
+                if state == State::Pressed && underscore.while_pressed.is_pressed() {
+                    click_with_sleep(Keyboard(Key::Minus));
+                }
+            }),
+            inhibit: InhibitEvent::maybe(move || {
+                match underscore.while_pressed.is_pressed() {
+                    true => InhibitEvent::Yes,
+                    false => InhibitEvent::No
+                }
+            }),
+            defer: true,
+            sequencer: false
+        };
+
+        underscore.act_on.act_on(action);
     }
 
     info!("{}: configured", module_path!());
 
     Ok(())
+}
+
+pub(crate) unsafe fn reconfigure_static_binds() {
+    mki::clear();
+
+    configure_static_binds().unwrap_or_else(|err| {
+        error!("{}: failed to reconfigure static binds: {}", module_path!(), err);
+    });
 }

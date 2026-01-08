@@ -112,7 +112,6 @@ pub(crate) enum FileKind {
 }
 
 #[subenum(
-    BindMsg(derive(Deserialize, Serialize)),
     BroadcastMsg(derive(Clone, Copy, IntoStaticStr)),
     CursorWatchMsg,
     PipeMsg(derive(Deserialize, Display, Serialize)),
@@ -123,12 +122,10 @@ pub(crate) enum FileKind {
 pub(crate) enum Msg {
     #[subenum(PipeMsg)]
     Ack,
+    #[subenum(PipeMsg)]
+    ActiveGame(Option<String>),
     #[subenum(CursorWatchMsg)]
     Begin,
-    #[subenum(BindMsg)]
-    Bind(BindName),
-    #[subenum(PipeMsg)]
-    BindMsg(BindMsg),
     #[subenum(WindowForegroundMsg, WindowShiftMsg)]
     BroadcastMsg(BroadcastMsg),
     #[subenum(PipeMsg)]
@@ -141,12 +138,12 @@ pub(crate) enum Msg {
     MenuStart,
     #[subenum(WindowShiftMsg)]
     MenuEnd,
+    #[subenum(WindowForegroundMsg)]
+    PipeMsg(PipeMsg),
     #[subenum(ReadyMsg)]
     PipeServer,
     #[subenum(WindowForegroundMsg)]
     Taskbar(Box<window_foreground::Taskbar>),
-    #[subenum(BindMsg)]
-    Unbind(BindName),
     #[subenum(ReadyMsg)]
     WindowWatch(Tid),
     #[subenum(WindowForegroundMsg)]
@@ -189,7 +186,7 @@ impl Name for WindowShiftMsg {
 #[subenum(GamesSetting, VideoSetting)]
 pub(crate) enum Setting {
     #[subenum(GamesSetting)]
-    Bind(BindName),
+    ActiveGame,
     #[subenum(GamesSetting)]
     CursorSize(usize),
     #[subenum(GamesSetting)]

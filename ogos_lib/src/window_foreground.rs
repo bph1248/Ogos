@@ -47,7 +47,8 @@ pub(crate) const WINDOW_WATCH_CLASS_NAME: &str = "OgosWindowWatch";
 struct Binds<'a> {
     qmk: Option<Qmk>,
     maps: Option<HashMap<&'a str, InputEventMaps>>,
-    bound: Vec<InputEventMap>
+    bound: Vec<InputEventMap>,
+    input_hooks_disabled: bool
 }
 impl<'a> Drop for Binds<'a> {
     fn drop(&mut self) {
@@ -153,6 +154,7 @@ struct ThreadState<'a> {
     win_infos: HashMap<usize, WinInfo>,
     win_errored: HashMap<usize, Errored>,
     last_foreground_tpids: Tpids,
+    active_game: Option<String>,
     thread_hwnd_counts: HashMap<Tid, u32>,
     binds: Option<Binds<'a>>,
     tb: Option<Taskbar>
@@ -646,10 +648,30 @@ unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND)
 
                 // Binds
                 if let Some(binds) = ts.binds.as_mut() {
-                    unbind_maps(binds);
+                    match ts.active_game.as_ref() {
+                        Some(exe) if exe == win_info.exe.as_str() => { // Game is foreground
+                            if binds.qmk.is_some() || !win_info.has_maps {
+                                mki::clear();
+                                mki::uninstall_hooks();
 
-                    if win_info.has_maps {
-                        bind_maps(binds, win_info.exe.as_str());
+                                binds.input_hooks_disabled = true;
+                            }
+                        },
+                        _ => { // Game is not foreground (active or not)
+                            match binds.input_hooks_disabled {
+                                true => { // Game was foreground
+                                    mki::install_hooks();
+                                    binds::reconfigure_static_binds();
+
+                                    binds.input_hooks_disabled = false;
+                                },
+                                false => unbind_maps(binds) // Some other app was foreground
+                            }
+
+                            if win_info.has_maps {
+                                bind_maps(binds, win_info.exe.as_str());
+                            }
+                        }
                     }
                 }
             },
@@ -667,7 +689,6 @@ unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND)
                 true => tb.hitbox_hwnd.hide(),
                 false => {
                     tb.hitbox_hwnd.show_na();
-
                     SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), 0,0, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOSIZE)?;
                 }
             }
@@ -679,9 +700,7 @@ unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND)
 
 fn has_maps(binds: &Binds, exe: &str) -> bool {
     binds.maps.as_ref()
-        .map(|maps| {
-            maps.contains_key(exe)
-        })
+        .map(|maps| maps.contains_key(exe))
         .unwrap_or_default()
 }
 
@@ -818,7 +837,7 @@ fn init_binds<'a>() -> Res1<Binds<'a>> {
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Binds::NAME })?;
     let qmk_config = binds_config.qmk.as_ref();
 
-    let qmk = qmk_config.map(|qmk_config| -> Res<Qmk> {
+    let qmk = qmk_config.map(|qmk_config| {
         binds::Qmk::new(QMK_VID, QMK_PID, USAGE_PAGE, qmk_config)
     })
     .transpose()?;
@@ -826,7 +845,8 @@ fn init_binds<'a>() -> Res1<Binds<'a>> {
     Ok(Binds {
         qmk,
         maps: binds_config.maps.clone(),
-        bound: default!()
+        bound: default!(),
+        input_hooks_disabled: default!()
     })
 }
 
@@ -869,6 +889,9 @@ unsafe fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroun
                         win_info.has_maps = has_maps(ts.binds.as_ref().unwrap(), win_info.exe.as_ref());
                     }
                 }
+            },
+            WindowForegroundMsg::PipeMsg(pipe_msg) => if let PipeMsg::ActiveGame(exe) = pipe_msg {
+                ts.active_game = exe;
             },
             WindowForegroundMsg::WmMouseMove(lparam, stamp) => {
                 if let Err(mut err) = handle_wm_mouse_move(ts.tb.as_mut().unwrap(), lparam, stamp) {

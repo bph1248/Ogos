@@ -422,12 +422,6 @@ pub(crate) struct DiscordInfo {
     pub(crate) chess_username: Option<String>
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum BindName {
-    Underscore
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GameInfo {
@@ -435,7 +429,6 @@ pub(crate) struct GameInfo {
     pub(crate) url: Option<String>,
     pub(crate) args: Option<Vec<String>>,
     pub(crate) res: Option<Extent2dU>,
-    pub(crate) unbind: Option<BindName>,
     pub(crate) discord: Option<DiscordInfo>
 }
 

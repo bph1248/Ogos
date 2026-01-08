@@ -54,11 +54,8 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
         let game_info = games_config.0.get(name).ok_or_else(|| ErrVar::UnknownGame { name: name.into() })?;
         let discord_info = game_info.discord.clone();
 
-        if let Some(name) = game_info.unbind {
-            pipe_msg(PipeMsg::BindMsg(BindMsg::Unbind(BindName::Underscore)))?;
-
-            revert_to.push(GamesSetting::Bind(name));
-        }
+        pipe_msg(PipeMsg::ActiveGame(Some(game_info.proc.clone())))?;
+        revert_to.push(GamesSetting::ActiveGame);
 
         if let Some(cursor_size) = cli.gaming.cursor_size {
             set_cursor_size(cursor_size)?;
@@ -283,9 +280,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
     while let Some(setting) = revert_to.pop() {
         (|| -> Res<()> {
             match setting {
-                GamesSetting::Bind(name) => {
-                    pipe_msg(PipeMsg::BindMsg(BindMsg::Bind(name)))?;
-                },
+                GamesSetting::ActiveGame => pipe_msg(PipeMsg::ActiveGame(None))?,
                 GamesSetting::CursorSize(size) => {
                     set_cursor_size(size)?;
                 },
