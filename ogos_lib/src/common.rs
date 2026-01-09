@@ -468,19 +468,26 @@ pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, slee
     f()
 }
 
+fn find_app(name: &str) -> ResVar<PathBuf> {
+    which::which(name).map_err(|_| ErrVar::MissingFile { path: name.into() })
+}
+
 pub(crate) fn confirm_or_find_app<P>(name: &str, path: Option<P>) -> ResVar<PathBuf> where
     P: AsRef<Path>
 {
     fn inner(name: &str, confirm: Option<&Path>) -> ResVar<PathBuf> {
-        if let Some(path) = confirm {
-            match path.confirm() {
-                Ok(path) => return Ok(path.to_owned()),
-                Err(ErrVar::MissingFile { path }) => error!("{}: failed to find app: {} - searching Path env var", module_path!(), path.display()),
-                Err(err) => return Err(err)
-            }
-        }
+        confirm.map(|path| match path.confirm() {
+            Ok(path) => Ok(path.to_owned()),
+            Err(err) => match err {
+                ErrVar::MissingFile { path } => {
+                    error!("{}: invalid app path: {} - searching for {}", module_path!(), path.display(), name);
 
-        Ok(which::which(name)?)
+                    find_app(name).inspect(|path| info!("{}: found app: {}", module_path!(), path.display()))
+                },
+                _ => Err(err)
+            }
+        })
+        .unwrap_or_else(|| find_app(name))
     }
 
     inner(name, path.as_ref().map(|path| path.as_ref()))

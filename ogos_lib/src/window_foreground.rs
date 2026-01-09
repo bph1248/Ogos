@@ -827,25 +827,28 @@ pub(crate) unsafe fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2
 }
 
 fn init_binds<'a>() -> Res1<Binds<'a>> {
-    const QMK_VID: u16 = 0x3434;
-    const QMK_PID: u16 = 0x0140;
-    const USAGE_PAGE: u16 = 0xff60;
+    (|| -> Res1<_> {
+        const QMK_VID: u16 = 0x3434;
+        const QMK_PID: u16 = 0x0140;
+        const USAGE_PAGE: u16 = 0xff60;
 
-    let config = config::get().read()?;
-    let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Binds::NAME })?;
-    let qmk_config = binds_config.qmk.as_ref();
+        let config = config::get().read()?;
+        let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Binds::NAME })?;
+        let qmk_config = binds_config.qmk.as_ref();
 
-    let qmk = qmk_config.map(|qmk_config| {
-        binds::Qmk::new(QMK_VID, QMK_PID, USAGE_PAGE, qmk_config)
-    })
-    .transpose()?;
+        let qmk = qmk_config.map(|qmk_config| {
+            binds::Qmk::new(QMK_VID, QMK_PID, USAGE_PAGE, qmk_config)
+        })
+        .transpose()?;
 
-    Ok(Binds {
-        qmk,
-        maps: binds_config.maps.clone(),
-        bound: default!(),
-        input_hooks_disabled: default!()
-    })
+        Ok(Binds {
+            qmk,
+            maps: binds_config.maps.clone(),
+            bound: default!(),
+            input_hooks_disabled: default!()
+        })
+    })()
+    .map_err(|err| err.msg("failed to init binds"))
 }
 
 unsafe fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
@@ -878,14 +881,16 @@ unsafe fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroun
                 }
             },
             WindowForegroundMsg::BroadcastMsg(BroadcastMsg::WmReloadConfig) => {
-                if let Some(binds) = ts.binds.as_mut() {
-                    unbind_maps(binds);
+                if ts.binds.is_some() {
+                    init_binds().map(|mut binds| {
+                        unbind_maps(&mut binds);
 
-                    ts.binds = Some(init_binds()?);
+                        for (_, win_info) in ts.win_infos.iter_mut() {
+                            win_info.has_maps = has_maps(&binds, win_info.exe.as_ref());
+                        }
 
-                    for (_, win_info) in ts.win_infos.iter_mut() {
-                        win_info.has_maps = has_maps(ts.binds.as_ref().unwrap(), win_info.exe.as_ref());
-                    }
+                        ts.binds = Some(binds);
+                    })?;
                 }
             },
             WindowForegroundMsg::PipeMsg(pipe_msg) => if let PipeMsg::ActiveGame(exe) = pipe_msg {

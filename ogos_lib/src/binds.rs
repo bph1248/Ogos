@@ -123,7 +123,7 @@ impl Qmk {
         let api = qmk_api::KeyboardApi::new(vid, pid, usage_page)
             .map_err(|_| ErrVar::FailedQmkKeyboardInit { vid, pid, usage_page })?;
 
-        let layout_str = fs::read_to_string(qmk_config.layout_path)?;
+        let layout_str = fs::read_to_string(qmk_config.layout_path).map_err(|err| ErrVar::FailedReadFile { inner: err, path: qmk_config.layout_path.into() })?;
         let layout_deser = serde_json::from_str::<qmk_deser::Layout>(&layout_str)?;
 
         let mut layout = HashMap::new();
