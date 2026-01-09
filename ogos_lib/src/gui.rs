@@ -2,9 +2,9 @@ use crate::{
     common::*,
     config::{self, *},
     discord,
-    err::*,
     video
 };
+use ogos_err::*;
 
 use concat_string::*;
 use discord_rich_presence::*;

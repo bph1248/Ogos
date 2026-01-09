@@ -2,9 +2,9 @@ use crate::{
     audio::*,
     common::*,
     config::{self, *},
-    display::*,
-    err::*
+    display::*
 };
+use ogos_err::*;
 
 use concat_string::*;
 use log::*;

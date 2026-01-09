@@ -1,10 +1,10 @@
 use crate::{
     common::*,
     config::{self, *},
-    err::*,
     nvapi_shadow::*,
     window_foreground
 };
+use ogos_err::*;
 
 use ddc::Ddc;
 use log::*;

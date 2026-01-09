@@ -2,11 +2,11 @@ use crate::{
     audio::*,
     config::*,
     display::*,
-    err::*,
     win32::*,
     window_foreground,
     window_shift::*
 };
+use ogos_err::*;
 
 use discord_rich_presence::*;
 use log::*;
@@ -167,23 +167,6 @@ pub(crate) enum Msg {
     WmMouseMove(LPARAM, Instant),
     #[subenum(BroadcastMsg)]
     WmReloadConfig
-}
-macro_rules! impl_FromSendErrorMsgForErrVar {
-    ($($t:ident),+) => {
-        $(
-            impl From<mpsc::SendError<$t>> for ErrVar {
-                fn from(value: mpsc::SendError<$t>) -> Self {
-                    Self::SendMsg(value.0.to_string())
-                }
-            }
-        )+
-    };
-}
-impl_FromSendErrorMsgForErrVar! {
-    Msg,
-    ReadyMsg,
-    WindowForegroundMsg,
-    WindowShiftMsg
 }
 impl Name for BroadcastMsg {
     fn name(&self) -> &'static str {

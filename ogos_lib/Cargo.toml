@@ -9,57 +9,57 @@ version = { workspace = true }
 crate-type = ["lib"]
 
 [dependencies]
-anyhow = { version = "1.0.92", default-features = false }
 argfile = "0.2.1"
-bincode = "1.3.3"
+bincode = { workspace = true }
 bitflags = "2.9.1"
 blake3 = { version = "1.8.2", default-features = false }
 cfg-if = "1.0.3"
-clap = { version = "4.3.0", default-features = false, features = ["derive", "help", "std"] }
+clap = { workspace = true }
 com-policy-config = "0.6.0"
 concat-string = "1.0.1"
 const_format = { version = "0.2.34", default-features = false }
 ddc = "0.2.2"
 ddc-winapi = "0.2.2"
-discord-rich-presence = "1.0.0"
-eframe = { version = "0.33.0", default-features = false, features = ["default_fonts", "wgpu"] }
+discord-rich-presence = { workspace = true }
+eframe = { workspace = true }
 egui = { version = "*", default-features = false, features = ["serde"] }
 egui_extras = { version = "0.33.0", default-features = false }
 hidapi = { version = "*", default-features = false, features = ["windows-native"] }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+image = { workspace = true }
 indexmap = { version = "2.12.1", features = ["serde"] }
 log = { workspace = true }
 log-panics = { workspace = true }
-mki = { path = "../../mki-rust" }
-netcorehost = "0.19.0"
-nvapi-sys = "0.1.3"
+mki = { workspace = true }
+netcorehost = { workspace = true }
 nvapi_sys_new = "=0.1.5"
-ogos_proc_macros = { path = "../ogos_proc_macros" }
+nvapi-sys = { workspace = true }
+ogos_err = { path = "../ogos_err" }
+ogos_proc_macros = { workspace = true }
 once_cell = "1.19.0"
-opener = "0.8.3"
+opener = { workspace = true }
 paste = "1.0.15"
-qmk-via-api = { version = "0.5", default-features = false }
+qmk-via-api = { workspace = true }
 rand = { version = "0.9.2", default-features = false, features = ["thread_rng"] }
-rayon = "1.11.0"
-resize = { version = "0.8.8", default-features = false, features = ["std"] }
+rayon = { workspace = true }
+resize = { workspace = true }
 rgb = "0.8.52"
-ron = "0.12.0"
-rust-ini = "0.21.1"
+ron = { workspace = true }
+rust-ini = { workspace = true }
 serde = { version = "1.0.204", default-features = false, features = ["rc"] }
-serde_json = "1.0.121"
+serde_json = { workspace = true }
 simplelog = { workspace = true }
-strum = { version = "0.27.1", features = ["derive"] }
+strum = { workspace = true }
 subenum = { version = "1.1.2", default-features = false }
 sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "system"] }
-thiserror = "2.0.17"
-tokio = { version = "1.46.1", features = ["sync"] }
+tokio = { workspace = true }
 wgpu = { version = "*", features = ["dx12"] }
-which = "8.0.0"
-widestring = { version = "1.2.0", default-features = false, features = ["std"] }
+which = { workspace = true }
+widestring = { workspace = true }
 windows = { workspace = true }
-windows_061 = { version = "0.61", package = "windows", features = [
-    "Win32_Devices_FunctionDiscovery"
-] }
+windows_061 = { workspace = true }
+
+[package.metadata.cargo-shear]
+ignored = ["hidapi"]
 
 [features]
 dbg_console = []

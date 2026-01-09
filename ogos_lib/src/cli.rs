@@ -1,6 +1,4 @@
-use crate::{
-    err::*
-};
+use ogos_err::*;
 
 use clap::*;
 use const_format::*;

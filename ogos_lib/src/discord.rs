@@ -1,8 +1,8 @@
 use crate::{
     common::*,
-    config::*,
-    err::*
+    config::*
 };
+use ogos_err::*;
 
 use concat_string::*;
 use discord_rich_presence::{

@@ -35,7 +35,6 @@ pub(crate) mod config_watch;
 pub(crate) mod cursor_watch;
 pub(crate) mod discord;
 pub(crate) mod display;
-pub mod err;
 pub(crate) mod games;
 pub(crate) mod gui;
 pub(crate) mod nvapi_shadow;
@@ -52,7 +51,7 @@ use cli::*;
 use common::*;
 use config::*;
 use display::*;
-use err::*;
+use ogos_err::*;
 use win32::*;
 use window_foreground::*;
 

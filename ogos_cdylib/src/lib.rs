@@ -4,9 +4,9 @@ mod taskbar;
 
 use log::error;
 use ogos_lib::{
-    common::*,
-    err::*
+    common::*
 };
+use ogos_err::*;
 
 use simplelog::*;
 use std::{

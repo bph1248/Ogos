@@ -3,11 +3,11 @@ use crate::{
     common::*,
     config::{self, *},
     cursor_watch::*,
-    err::*,
     win32::*,
     window_watch::*,
     *
 };
+use ogos_err::*;
 
 use bitflags::bitflags;
 use log::*;
@@ -25,13 +25,11 @@ use std::{
     time::*
 };
 use tokio::sync::oneshot;
-use windows::{
-    Win32::{
-        Foundation::*,
-        UI::{
-            Accessibility::*,
-            WindowsAndMessaging::*
-        }
+use windows::Win32::{
+    Foundation::*,
+    UI::{
+        Accessibility::*,
+        WindowsAndMessaging::*
     }
 };
 

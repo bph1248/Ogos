@@ -1,13 +1,12 @@
 use crate::{
     common::*,
-    err::*,
     pipe_server::*
 };
-use windows::{
-    Win32::{
-        Foundation::*,
-        Storage::FileSystem::*
-    }
+use ogos_err::*;
+
+use windows::Win32::{
+    Foundation::*,
+    Storage::FileSystem::*
 };
 
 pub(crate) unsafe fn pipe_msg(msg: PipeMsg) -> Res1<()> {

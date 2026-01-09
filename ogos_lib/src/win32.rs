@@ -1,7 +1,5 @@
-use crate::{
-    common::*,
-    err::*
-};
+use crate::common::*;
+use ogos_err::*;
 
 use log::*;
 use std::{

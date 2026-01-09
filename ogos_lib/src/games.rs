@@ -4,11 +4,11 @@ use crate::{
     config::{self, *},
     discord,
     display::*,
-    err::*,
     gui,
     pipe_client::*,
     win32::*
 };
+use ogos_err::*;
 
 use concat_string::*;
 use discord_rich_presence::*;

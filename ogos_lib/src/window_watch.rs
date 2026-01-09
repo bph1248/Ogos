@@ -3,10 +3,10 @@ use crate::{
     config,
     cursor_watch,
     display::*,
-    err::*,
     win32::*,
     window_foreground::*
 };
+use ogos_err::*;
 
 use log::*;
 use std::{
@@ -17,17 +17,15 @@ use std::{
 };
 use strum::*;
 use tokio::sync::oneshot;
-use windows::{
-    Win32::{
-        Foundation::*,
-        System::{
-            LibraryLoader::*,
-            Threading::*
-        },
-        UI::{
-            Accessibility::*,
-            WindowsAndMessaging::*
-        }
+use windows::Win32::{
+    Foundation::*,
+    System::{
+        LibraryLoader::*,
+        Threading::*
+    },
+    UI::{
+        Accessibility::*,
+        WindowsAndMessaging::*
     }
 };
 

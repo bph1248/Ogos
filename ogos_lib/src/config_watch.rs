@@ -4,12 +4,11 @@ use crate::{
     binds,
     common::*,
     config::{self, *},
-    err::*,
     win32::*
 };
+use ogos_err::*;
 
 use log::*;
-use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
 use std::{
     ffi::*,
     os::windows::ffi::OsStringExt,
@@ -22,7 +21,8 @@ use windows::Win32::{
     System::{
         IO::*,
         Threading::*
-    }
+    },
+    UI::WindowsAndMessaging::*
 };
 
 const DEBOUNCE_INTERVAL_MS: u32 = 500;

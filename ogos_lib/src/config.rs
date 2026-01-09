@@ -2,10 +2,10 @@ use crate::{
     binds::*,
     common::*,
     display::*,
-    err::*,
     window_foreground::*,
     window_shift::*
 };
+use ogos_err::*;
 
 use const_format::*;
 use discord_rich_presence::activity as drpa;

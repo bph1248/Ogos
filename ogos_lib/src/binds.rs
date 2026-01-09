@@ -1,9 +1,9 @@
 use crate::{
     common::*,
     config::{self, *},
-    display::*,
-    err::*
+    display::*
 };
+use ogos_err::*;
 
 use cfg_if::*;
 use const_format::*;

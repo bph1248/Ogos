@@ -2,10 +2,10 @@ use crate::{
     common::*,
     config::{self, *},
     display::*,
-    err::*,
     win32::*,
     window_foreground
 };
+use ogos_err::*;
 
 use log::*;
 use serde::*;

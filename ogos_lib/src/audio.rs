@@ -1,8 +1,8 @@
 use crate::{
     common::*,
-    config,
-    err::*
+    config
 };
+use ogos_err::*;
 
 use com_policy_config::*;
 use log::*;

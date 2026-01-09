@@ -1,0 +1,37 @@
+[package]
+name = "ogos_err"
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+version = { workspace = true }
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+anyhow = { workspace = true }
+bincode = { workspace = true }
+clap = { workspace = true }
+discord-rich-presence = { workspace = true }
+eframe = { workspace = true }
+image = { workspace = true }
+log = { workspace = true }
+mki = { workspace = true }
+netcorehost = { workspace = true }
+nvapi-sys = { workspace = true }
+ogos_proc_macros = { workspace = true }
+opener = { workspace = true }
+qmk-via-api = { workspace = true }
+rayon = { workspace = true }
+resize = { workspace = true }
+ron = { workspace = true }
+rust-ini = { workspace = true }
+serde_json = { workspace = true }
+simplelog = { workspace = true }
+strum = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+which = { workspace = true }
+widestring = { workspace = true }
+windows = { workspace = true }
+windows_061 = { workspace = true }
