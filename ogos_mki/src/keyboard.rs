@@ -1,8 +1,5 @@
 use serde::*;
-use std::{
-    fmt::{self, Formatter},
-    str::*
-};
+use std::fmt::{self, *};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Key {
@@ -109,124 +106,11 @@ pub enum Key {
     KeypadPlus,
     KeypadDot
 }
-impl FromStr for Key {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use Key::*;
-
-        Ok(match s {
-            "escape" | "esc" => Escape,
-            "f1" => F1,
-            "f2" => F2,
-            "f3" => F3,
-            "f4" => F4,
-            "f5" => F5,
-            "f6" => F6,
-            "f7" => F7,
-            "f8" => F8,
-            "f9" => F9,
-            "f10" => F10,
-            "f11" => F11,
-            "f12" => F12,
-            "print_screen" | "pscr" => PrintScreen,
-            "scroll_lock" | "scrl" => ScrollLock,
-            "pause" | "paus" => Pause,
-            "grave" | "grv" => Grave,
-            "0" => N0,
-            "1" => N1,
-            "2" => N2,
-            "3" => N3,
-            "4" => N4,
-            "5" => N5,
-            "6" => N6,
-            "7" => N7,
-            "8" => N8,
-            "9" => N9,
-            "minus" | "mns" => Minus,
-            "equal" | "eql" => Equal,
-            "a" => A,
-            "b" => B,
-            "c" => C,
-            "d" => D,
-            "e" => E,
-            "f" => F,
-            "g" => G,
-            "h" => H,
-            "i" => I,
-            "j" => J,
-            "k" => K,
-            "l" => L,
-            "m" => M,
-            "n" => N,
-            "o" => O,
-            "p" => P,
-            "q" => Q,
-            "r" => R,
-            "s" => S,
-            "t" => T,
-            "u" => U,
-            "v" => V,
-            "w" => W,
-            "x" => X,
-            "y" => Y,
-            "z" => Z,
-            "left_bracket" | "lbrc" => LeftBracket,
-            "right_bracket" | "rbrc" => RightBracket,
-            "backslash" | "bsls" => Backslash,
-            "semicolon" | "scln" => Semicolon,
-            "quote" | "quot" => Quote,
-            "comma" | "comm" => Comma,
-            "dot" => Dot,
-            "slash" | "sls" => Slash,
-            "tab" => Tab,
-            "caps_lock" | "caps" => CapsLock,
-            "left_shift" | "lsft" => LeftShift,
-            "left_ctrl" | "lctrl" => LeftCtrl,
-            "left_win" | "lwin" => LeftWin,
-            "left_alt" | "lalt" => LeftAlt,
-            "space" | "spc" => Space,
-            "backspace" | "bspc" => Backspace,
-            "enter" | "ent" => Enter,
-            "right_shift" | "rsft" => RightShift,
-            "right_ctrl" | "rctrl" => RightCtrl,
-            "right_win" | "rwin" => RightWin,
-            "right_alt" | "ralt" => RightAlt,
-            "insert" | "ins" => Insert,
-            "delete" | "del" => Delete,
-            "home" => Home,
-            "end" => End,
-            "page_up" | "pgup" => PageUp,
-            "page_down" | "pgdn" => PageDown,
-            "left" => Left,
-            "up" => Up,
-            "right" => Right,
-            "down" => Down,
-            "num_lock" | "num" => NumLock,
-            "keypad_0" | "kp_0" => Keypad0,
-            "keypad_1" | "kp_1" => Keypad1,
-            "keypad_2" | "kp_2" => Keypad2,
-            "keypad_3" | "kp_3" => Keypad3,
-            "keypad_4" | "kp_4" => Keypad4,
-            "keypad_5" | "kp_5" => Keypad5,
-            "keypad_6" | "kp_6" => Keypad6,
-            "keypad_7" | "kp_7" => Keypad7,
-            "keypad_8" | "kp_8" => Keypad8,
-            "keypad_9" | "kp_9" => Keypad9,
-            "keypad_slash" | "kp_sls" => KeypadSlash,
-            "keypad_asterisk" | "kp_ast" => KeypadAsterisk,
-            "keypad_minus" | "kp_minus" | "kp_mns" => KeypadMinus,
-            "keypad_plus" | "kp_pls" => KeypadPlus,
-            "keypad_dot" | "kp_dot" => KeypadDot,
-            _ => Err(())?
-        })
-    }
-}
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let code: i32 = (*self).into();
 
-        f.write_fmt(format_args!("{:?}({})", self, code))?;
+        f.write_fmt(format_args!("{:?} ({})", self, code))?;
 
         Ok(())
     }
