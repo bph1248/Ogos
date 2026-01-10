@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 #![allow(clippy::uninlined_format_args)]
 
 pub(crate) mod details;
@@ -7,32 +8,36 @@ mod keyboard;
 mod linux;
 mod mouse;
 mod parse;
-mod sequence;
 #[cfg(target_os = "windows")]
 mod windows;
 
+use details::registry;
 #[cfg(target_os = "linux")]
-use crate::linux::keyboard_mouse::kimpl;
-#[cfg(target_os = "linux")]
-use crate::linux::keyboard_mouse::mimpl;
+use linux::{
+    keyboard_mouse::kimpl,
+    keyboard_mouse::mimpl
+};
+use std::{
+    fmt,
+    sync::*,
+    time::*
+};
 #[cfg(target_os = "windows")]
-use crate::windows::keyboard::kimpl;
-#[cfg(target_os = "windows")]
-use crate::windows::mouse::mimpl;
+use windows::{
+    keyboard::kimpl,
+    mouse::mimpl
+};
+
 pub use keyboard::*;
 #[cfg(target_os = "linux")]
 pub use linux::*;
 pub use mouse::*;
 pub use parse::load_config;
-pub use sequence::Sequence;
 #[cfg(target_os = "windows")]
-pub use windows::*;
-
-use crate::details::registry;
-use std::{
-    fmt,
-    sync::*,
-    time::*
+pub use windows::{
+    install_hooks,
+    uninstall_hooks,
+    *
 };
 
 #[derive(Copy, Clone, Ord, PartialOrd, Hash, Eq, PartialEq, Debug)]

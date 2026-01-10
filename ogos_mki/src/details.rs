@@ -1,4 +1,4 @@
-use crate::{install_hooks, process_message, Action, InputEvent, Button, State};
+use crate::{init_hooks, Action, InputEvent, Button, State};
 use crate::{InhibitEvent, Key, Wheel};
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -76,8 +76,8 @@ pub(crate) struct Registry {
 
     pressed: Mutex<Pressed>,
 
-    _handle: JoinHandle<()>,
-    sequencer: Mutex<Option<Sequencer>>,
+    pub(crate) hooks_tid: u32,
+    sequencer: RwLock<Option<Sequencer>>,
 
     state: Mutex<HashMap<String, String>>,
 
@@ -93,15 +93,29 @@ impl Registry {
             wheel_callbacks: Mutex::new(HashMap::new()),
             any_key_callback: Mutex::new(None),
             any_button_callback: Mutex::new(None),
-            _handle: thread::Builder::new()
-                .name("mki-lstn".into())
-                .spawn(|| {
-                    // For windows hooks need to be installed on the same thread that listens to the Messages.
-                    install_hooks();
-                    process_message();
-                })
-                .unwrap(),
-            sequencer: Mutex::new(None),
+            hooks_tid: {
+                let (sx, rx) = std::sync::mpsc::channel();
+                unsafe { init_hooks(sx); }
+
+                rx.recv().unwrap()
+            },
+            sequencer: {
+                let (sx, rx) = mpsc::channel::<Box<dyn Fn() + Send + Sync>>();
+
+                RwLock::new(
+                    Some(Sequencer {
+                        _handle: thread::Builder::new()
+                            .name("Sequencer".into())
+                            .spawn(move || {
+                                while let Ok(action) = rx.recv() {
+                                    action()
+                                }
+                            })
+                            .unwrap(),
+                        sx,
+                    })
+                )
+            },
             pressed: Mutex::new(Pressed::default()),
             hotkeys: Mutex::new(HashMap::new()),
             state: Mutex::new(HashMap::new()),

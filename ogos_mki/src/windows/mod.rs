@@ -1,41 +1,108 @@
 pub mod keyboard;
 pub mod mouse;
 
-use crate::details::registry;
-use crate::{InputEvent, InhibitEvent, Key, Button, Wheel};
-use std::convert::*;
-use std::mem::MaybeUninit;
-use std::ptr::null_mut;
-use winapi::shared::minwindef::{HINSTANCE, LPARAM, LRESULT, WPARAM};
-use winapi::shared::windef::HHOOK__;
-use winapi::um::winuser::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, GET_XBUTTON_WPARAM, KBDLLHOOKSTRUCT, MSG,
-    LLKHF_INJECTED, LLMHF_INJECTED, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
-    WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
+use crate::*;
+use log::info;
+use std::{
+    convert::*,
+    mem::*,
+    ptr::*,
+    sync::mpsc::*
 };
-use winapi::um::winuser::{
-    MSLLHOOKSTRUCT, WM_LBUTTONDBLCLK, WM_MBUTTONDBLCLK, WM_RBUTTONDBLCLK, WM_XBUTTONDBLCLK,
+use winapi::{
+    shared::{
+        minwindef::*,
+        windef::*
+    },
+    um::{
+        processthreadsapi::*,
+        winuser::*
+    }
 };
 
-pub(crate) fn install_hooks() {
-    install_hook(WH_KEYBOARD_LL, keybd_hook);
-    install_hook(WH_MOUSE_LL, mouse_hook);
+const MKI_INSTALL_HOOKS: u32 = WM_USER + 1;
+const MKI_UNINSTALL_HOOKS: u32 = MKI_INSTALL_HOOKS + 1;
+
+struct Hooks {
+    keyboard: Option<HHOOK>,
+    mouse: Option<HHOOK>
+}
+unsafe impl Send for Hooks {}
+unsafe impl Sync for Hooks {}
+
+pub unsafe fn install_hooks() {
+    PostThreadMessageW(registry().hooks_tid, MKI_INSTALL_HOOKS, 0, 0);
 }
 
-pub(crate) fn process_message() {
-    let mut msg: MSG = unsafe { MaybeUninit::zeroed().assume_init() };
-    unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) };
+pub unsafe fn uninstall_hooks() {
+    PostThreadMessageW(registry().hooks_tid, MKI_UNINSTALL_HOOKS, 0, 0);
+}
+
+pub(crate) unsafe fn init_hooks(sx: Sender<u32>) {
+    std::thread::spawn(move || {
+        let tid = GetCurrentThreadId();
+        let mut hooks = Hooks {
+            keyboard: Some(install_hook(WH_KEYBOARD_LL, keyboard_proc)),
+            mouse: Some(install_hook(WH_MOUSE_LL, mouse_proc))
+        };
+
+        sx.send(tid).unwrap();
+
+        let mut msg: MSG = MaybeUninit::zeroed().assume_init();
+        while GetMessageW(&mut msg, null_mut(), 0, 0) != 0 {
+            match msg.message {
+                MKI_INSTALL_HOOKS => {
+                    if hooks.keyboard.is_none() {
+                        hooks.keyboard = Some(install_hook(WH_KEYBOARD_LL, keyboard_proc));
+
+                        info!("{}: installed keyboard hook", module_path!());
+                    }
+                    if hooks.mouse.is_none() {
+                        hooks.mouse = Some(install_hook(WH_MOUSE_LL, mouse_proc));
+
+                        info!("{}: installed mouse hook", module_path!());
+                    }
+                },
+                MKI_UNINSTALL_HOOKS => {
+                    hooks.keyboard.take_if(|hook| {
+                        match UnhookWindowsHookEx(*hook) {
+                            0 => {
+                                info!("{}: failed to uninstall keyboard hook", module_path!());
+                                false
+                            },
+                            _ => {
+                                info!("{}: uninstalled keyboard hook", module_path!());
+                                true
+                            }
+                        }
+                    });
+                    hooks.mouse.take_if(|hook| {
+                        match UnhookWindowsHookEx(*hook) {
+                            0 => {
+                                info!("{}: failed to uninstall mouse hook", module_path!());
+                                false
+                            },
+                            _ => {
+                                info!("{}: uninstalled mouse hook", module_path!());
+                                true
+                            }
+                        }
+                    });
+                },
+                _ => ()
+            }
+        }
+    });
 }
 
 fn install_hook(
     hook_id: libc::c_int,
     hook_proc: unsafe extern "system" fn(libc::c_int, WPARAM, LPARAM) -> LRESULT,
-) -> *mut HHOOK__ {
+) -> HHOOK {
     unsafe { SetWindowsHookExW(hook_id, Some(hook_proc), 0 as HINSTANCE, 0) }
 }
 
-unsafe extern "system" fn keybd_hook(
+unsafe extern "system" fn keyboard_proc(
     code: libc::c_int,
     w_param: WPARAM,
     l_param: LPARAM,
@@ -85,7 +152,7 @@ unsafe extern "system" fn keybd_hook(
     CallNextHookEx(null_mut(), code, w_param, l_param)
 }
 
-unsafe extern "system" fn mouse_hook(
+unsafe extern "system" fn mouse_proc(
     code: libc::c_int,
     w_param: WPARAM,
     l_param: LPARAM,
