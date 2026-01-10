@@ -191,29 +191,29 @@ impl Registry {
     }
 
     pub(crate) fn event_down(&self, event: InputEvent) -> InhibitEvent {
-        self.maybe_log_event("down", event);
+        // self.maybe_log_event("down", event);
         self.pressed.lock().unwrap().pressed(event);
-        let mut callbacks = Vec::new();
-        if let InputEvent::Keyboard(key) = event {
-            for (sequence, callback) in self.hotkeys.lock().unwrap().iter() {
-                if sequence.last() == Some(&key)
-                    && self.pressed.lock().unwrap().are_pressed(sequence)
-                {
-                    callbacks.push(callback.clone());
-                }
-            }
-        }
-        for callback in callbacks {
-            // Should we not invoke actions if there is any hotkey present?
-            thread::spawn(move || callback());
-        }
+        // let mut callbacks = Vec::new();
+        // if let InputEvent::Keyboard(key) = event {
+        //     for (sequence, callback) in self.hotkeys.lock().unwrap().iter() {
+        //         if sequence.last() == Some(&key)
+        //             && self.pressed.lock().unwrap().are_pressed(sequence)
+        //         {
+        //             callbacks.push(callback.clone());
+        //         }
+        //     }
+        // }
+        // for callback in callbacks {
+        //     // Should we not invoke actions if there is any hotkey present?
+        //     thread::spawn(move || callback());
+        // }
         let state = State::Pressed;
         let mut inhibit = InhibitEvent::No;
-        let (global_action, key_action) = self.map_event_to_actions(event);
-        if let Some(action) = global_action {
-            inhibit = action.inhibit.clone();
-            self.invoke_action(action, event, state);
-        }
+        let (_, key_action) = self.map_event_to_actions(event);
+        // if let Some(action) = global_action {
+        //     inhibit = action.inhibit.clone();
+        //     self.invoke_action(action, event, state);
+        // }
         if let Some(action) = key_action {
             inhibit = action.inhibit.clone();
             self.invoke_action(action, event, state);
@@ -223,13 +223,13 @@ impl Registry {
     }
 
     pub(crate) fn event_up(&self, event: InputEvent) -> InhibitEvent {
-        self.maybe_log_event("up", event);
+        // self.maybe_log_event("up", event);
         self.pressed.lock().unwrap().released(event);
         let state = State::Released;
-        let (global_action, key_action) = self.map_event_to_actions(event);
-        if let Some(action) = global_action {
-            self.invoke_action(action, event, state);
-        }
+        let (_, key_action) = self.map_event_to_actions(event);
+        // if let Some(action) = global_action {
+        //     self.invoke_action(action, event, state);
+        // }
         if let Some(action) = key_action {
             self.invoke_action(action, event, state);
         }
