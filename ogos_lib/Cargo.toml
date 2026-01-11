@@ -22,7 +22,7 @@ ddc = "0.2.2"
 ddc-winapi = "0.2.2"
 discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
-egui = { version = "*", default-features = false, features = ["serde"] }
+egui = { version = "0.33.0", default-features = false, features = ["serde"] }
 egui_extras = { version = "0.33.0", default-features = false }
 hidapi = { version = "*", default-features = false, features = ["windows-native"] }
 image = { workspace = true }
@@ -52,7 +52,7 @@ strum = { workspace = true }
 subenum = { version = "1.1.2", default-features = false }
 sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "system"] }
 tokio = { workspace = true }
-wgpu = { version = "*", features = ["dx12"] }
+wgpu = { version = "27.0.1", features = ["dx12"] }
 which = { workspace = true }
 widestring = { workspace = true }
 windows = { workspace = true }
