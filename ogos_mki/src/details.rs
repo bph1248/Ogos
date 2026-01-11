@@ -1,12 +1,16 @@
-use crate::{init_hooks, Action, InputEvent, Button, State};
-use crate::{InhibitEvent, Key, Wheel};
-use std::collections::HashMap;
-use std::fmt::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
-use std::thread::JoinHandle;
-use std::time::SystemTime;
+use crate::*;
+
+use std::{
+    collections::*,
+    fmt::*,
+    sync::{
+        atomic::*,
+        mpsc,
+        *
+    },
+    thread::{self, *},
+    time::*
+};
 
 pub(crate) fn registry() -> &'static Registry {
     lazy_static::lazy_static! {
@@ -18,7 +22,7 @@ pub(crate) fn registry() -> &'static Registry {
 struct Sequencer {
     _handle: JoinHandle<()>,
 
-    tx: mpsc::Sender<Box<dyn Fn() + Send + Sync>>,
+    sx: mpsc::Sender<Box<dyn Fn() + Send + Sync>>,
 }
 
 #[derive(Default)]
@@ -160,7 +164,7 @@ impl Registry {
                 (action.callback)(event, state);
             });
         } else if action.sequencer {
-            self.sequence(event, state, action)
+            self.sequence(action, event, state)
         } else {
             (action.callback)(event, state);
         }
