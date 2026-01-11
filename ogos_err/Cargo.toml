@@ -16,9 +16,9 @@ discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
 image = { workspace = true }
 log = { workspace = true }
-mki = { workspace = true }
 netcorehost = { workspace = true }
 nvapi-sys = { workspace = true }
+ogos_mki = { workspace = true }
 ogos_proc_macros = { workspace = true }
 opener = { workspace = true }
 qmk-via-api = { workspace = true }

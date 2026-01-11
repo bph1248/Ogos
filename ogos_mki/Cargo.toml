@@ -1,20 +1,15 @@
 [package]
-name = "mki"
-version = "0.2.2"
-description = "Windows and Linux library for registring global input hooks and simulating keyboard and mouse events."
-authors = ["fulara <ntszar@gmail.com>"]
-keywords = ["mouse", "keyboard", "input", "hook", "autohotkey"]
-readme = "README.md"
-homepage = "https://github.com/fulara/mki-rust"
-repository = "https://github.com/fulara/mki-rust"
-categories = ["api-bindings"]
-documentation = "https://docs.rs/mki-rust"
+name = "ogos_mki"
+authors = ["fulara <ntszar@gmail.com> (original author)"]
 license = "MIT"
-edition = "2018"
+edition = { workspace = true }
+publish = { workspace = true }
+version = { workspace = true }
 
 [dependencies]
 lazy_static = "1"
 libc = "0.2"
+log = { workspace = true }
 serde = { version = "1", features = ["derive"]}
 serde_yaml = "0.8"
 

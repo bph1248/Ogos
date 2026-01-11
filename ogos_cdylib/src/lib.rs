@@ -2,12 +2,12 @@
 
 mod taskbar;
 
-use log::error;
 use ogos_lib::{
     common::*
 };
 use ogos_err::*;
 
+use log::error;
 use simplelog::*;
 use std::{
     fs::File,

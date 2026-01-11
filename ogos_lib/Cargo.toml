@@ -29,11 +29,11 @@ image = { workspace = true }
 indexmap = { version = "2.12.1", features = ["serde"] }
 log = { workspace = true }
 log-panics = { workspace = true }
-mki = { workspace = true }
 netcorehost = { workspace = true }
 nvapi_sys_new = "=0.1.5"
 nvapi-sys = { workspace = true }
 ogos_err = { path = "../ogos_err" }
+ogos_mki = { workspace = true }
 ogos_proc_macros = { workspace = true }
 once_cell = "1.19.0"
 opener = { workspace = true }

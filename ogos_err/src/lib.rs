@@ -1,9 +1,10 @@
 #![allow(clippy::missing_safety_doc)]
 
-use mki::*;
+use ogos_mki::*;
+use ogos_proc_macros::*;
+
 use nvapi_sys as nvapi;
 use nvapi::NvAPI_Status;
-use ogos_proc_macros::*;
 use qmk_via_api::keycodes::*;
 use std::{
     collections::*,

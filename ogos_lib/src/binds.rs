@@ -4,16 +4,17 @@ use crate::{
     display::*
 };
 use ogos_err::*;
-
-use cfg_if::*;
-use const_format::*;
-use log::*;
+use ogos_mki as mki;
 use mki::{
     InputEvent::*,
     Key,
     Button,
     *
 };
+
+use cfg_if::*;
+use const_format::*;
+use log::*;
 use qmk_via_api::{
     api as qmk_api,
     keycodes::*
