@@ -1,0 +1,47 @@
+[workspace]
+members = [
+    "ogos",
+    "ogos_cdylib",
+    "ogos_lib",
+    "ogos_proc_macros"
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+version = "0.4.0"
+
+[workspace.dependencies]
+log = "0.4.17"
+log-panics = "2.1.0"
+simplelog = "0.12.1"
+windows = { version = "0.58", features = [
+    "Win32_Devices_Display",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Pipes",
+    "Win32_System_Power",
+    "Win32_System_ProcessStatus",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging"
+] }
+windows_052 = { version = "0.52", package = "windows", features = [
+    "Win32_Devices_FunctionDiscovery"
+] }
+
+# [profile.release]
+# lto = "thin"

@@ -1,0 +1,465 @@
+use crate::{
+    audio::*,
+    config::*,
+    display::*,
+    err::*,
+    win32::*,
+    window_foreground,
+    window_shift::*
+};
+
+use discord_rich_presence::*;
+use once_cell::sync::*;
+use serde::*;
+use strum::*;
+use subenum::*;
+use std::{
+    fmt::{self, Display, Write},
+    ops::*,
+    path::*,
+    process::*,
+    sync::*,
+    thread,
+    time::*
+};
+use sysinfo::*;
+use windows::Win32::{
+    Foundation::*,
+    UI::WindowsAndMessaging::*
+};
+
+pub        const MAX_PATH_WITH_NULL_BUF: [u16; MAX_PATH_WITH_NULL_LEN] = [0_u16; MAX_PATH_WITH_NULL_LEN];
+pub(crate) const MAX_PATH_WITH_NULL_LEN: usize = (MAX_PATH + 1) as usize;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[derive(Clone, Copy, Default)]
+pub struct Extent2d {
+    pub width: i32,
+    pub height: i32
+}
+impl Extent2d {
+    pub fn into_rect(self) -> RECT {
+        RECT {
+            left: 0,
+            top: 0,
+            right: self.width,
+            bottom: self.height
+        }
+    }
+}
+impl Display for Extent2d {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}x{}", self.width, self.height)
+    }
+}
+impl Into<RECT> for Extent2d {
+    fn into(self) -> RECT {
+        RECT {
+            left: 0,
+            top: 0,
+            right: self.width,
+            bottom: self.height
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+pub struct Extent2dU {
+    pub(crate) width: u32,
+    pub(crate) height: u32
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct Tid(pub(crate) u32);
+impl From<u32> for Tid {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Tpids {
+    pub thread: u32,
+    pub proc: u32
+}
+impl Display for Tpids {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}, {}", self.thread, self.proc)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum FileKind {
+    Vid,
+    Other
+}
+
+#[subenum(
+    BindMsg(derive(Deserialize, Serialize)),
+    BroadcastMsg(derive(Clone, Copy, IntoStaticStr)),
+    PipeMsg(derive(Deserialize, Display, Serialize)),
+    ReadyMsg,
+    WindowForegroundMsg(derive(Display, IntoStaticStr)),
+    WindowShiftMsg(derive(IntoStaticStr))
+)]
+pub enum Msg {
+    #[subenum(PipeMsg)]
+    Ack,
+    #[subenum(BindMsg)]
+    Bind(BindName),
+    #[subenum(PipeMsg)]
+    BindMsg(BindMsg),
+    #[subenum(WindowForegroundMsg, WindowShiftMsg)]
+    BroadcastMsg(BroadcastMsg),
+    #[subenum(PipeMsg)]
+    Close,
+    #[subenum(WindowShiftMsg)]
+    Destroy(usize),
+    #[subenum(PipeMsg)]
+    Endpoint(String),
+    #[subenum(WindowShiftMsg)]
+    MenuStart,
+    #[subenum(WindowShiftMsg)]
+    MenuEnd,
+    #[subenum(ReadyMsg)]
+    PipeServer,
+    #[subenum(WindowForegroundMsg)]
+    Taskbar(Box<window_foreground::Taskbar>),
+    #[subenum(BindMsg)]
+    Unbind(BindName),
+    #[subenum(ReadyMsg)]
+    WindowWatch(Tid),
+    #[subenum(WindowForegroundMsg)]
+    WinEventHookAllForeground { hwnd: usize },
+    #[subenum(WindowForegroundMsg)]
+    WinEventHookAllOtherForegroundDestroy { hook: usize, hwnd: usize },
+    #[subenum(WindowForegroundMsg)]
+    WinEventHookExplorerDestroy { hwnd: usize },
+    #[subenum(WindowForegroundMsg)]
+    WinEventHookForegroundLocationChange { hwnd: usize },
+    #[subenum(WindowForegroundMsg)]
+    WinEventHookShellExperienceHostDestroy { hook: usize, hwnd: usize },
+    #[subenum(WindowForegroundMsg)]
+    WinEventHookShellExperienceHostLocationChange { hook: usize, hwnd: usize },
+    #[subenum(WindowForegroundMsg)]
+    WinEventHookTaskbarLocationChange { hwnd: usize },
+    #[subenum(BroadcastMsg)]
+    WmDisplayChange(LPARAM),
+    #[subenum(WindowForegroundMsg)]
+    WmMouseMove(LPARAM, Instant),
+    #[subenum(BroadcastMsg)]
+    WmReloadConfig
+}
+impl Name for BroadcastMsg {
+    fn name(&self) -> &'static str{
+        self.into()
+    }
+}
+impl Name for WindowForegroundMsg {
+    fn name(&self) -> &'static str {
+        self.into()
+    }
+}
+impl Name for WindowShiftMsg {
+    fn name(&self) -> &'static str{
+        self.into()
+    }
+}
+
+#[subenum(VideoSetting)]
+pub enum Setting {
+    Bind(BindName),
+    CursorSize(usize),
+    Discord(DiscordIpcClient),
+    #[subenum(VideoSetting)]
+    DisplayMode(DisplayMode),
+    #[subenum(VideoSetting)]
+    NovideoSrgb(NovideoSrgbInfo),
+    #[subenum(VideoSetting)]
+    SampleRate(Hz),
+    ScreenExtent(Extent2dU)
+}
+
+#[repr(u32)]
+pub(crate) enum WmOgos {
+    Close = WM_USER + 1,
+    ReloadConfig,
+    Tray,
+    RequestWinEventHooks,
+    RequestWinEventUnhooks
+}
+
+pub(crate) static CONFIG: OnceCell<Option<RwLock<Config>>> = OnceCell::new();
+pub(crate) static CURRENT_EXE_PARENT_PATH: OnceCell<PathBuf> = OnceCell::new();
+
+macro_rules! default {
+    () => {
+        std::default::Default::default()
+    };
+}
+macro_rules! now {
+    () => {
+        std::time::Instant::now()
+    };
+}
+pub(crate) use default;
+pub(crate) use now;
+
+pub(crate) trait BoolExt {
+    fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T>;
+    fn _as_str(&self) -> &'static str;
+    fn as_win32_bool(&self) -> BOOL;
+}
+impl BoolExt for bool {
+    fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T> {
+        match self {
+            true => f(),
+            false => None
+        }
+    }
+
+    fn _as_str(&self) -> &'static str {
+        match *self {
+            true => "true",
+            false => "false"
+        }
+    }
+
+    fn as_win32_bool(&self) -> BOOL {
+        match self {
+            true => BOOL(1),
+            false => BOOL(0)
+        }
+    }
+}
+
+pub(crate) trait Name {
+    fn name(&self) -> &'static str;
+}
+
+pub(crate) trait PathExt {
+    fn confirm(&self) -> ResVar<()>;
+    fn get_extension(&self) -> ResVar<&str>;
+    fn get_file_name(&self) -> ResVar<&str>; // With extension
+    fn get_file_stem(&self) -> ResVar<&str>; // Without extension
+    fn get_parent(&self) -> ResVar<&Path>;
+}
+impl PathExt for Path {
+    fn confirm(&self) -> ResVar<()> {
+        if !self.try_exists()? {
+            return Err(ErrVar::MissingFile { path: self.into() })
+        }
+
+        Ok(())
+    }
+
+    fn get_extension(&self) -> ResVar<&str> {
+        self.extension()
+            .ok_or(ErrVar::InvalidFileExt)?
+            .to_str()
+            .ok_or(ErrVar::FailedToStr)
+    }
+
+    fn get_file_name(&self) -> ResVar<&str> {
+        self.file_name()
+            .ok_or(ErrVar::InvalidFileName)?
+            .to_str()
+            .ok_or(ErrVar::FailedToStr)
+    }
+
+    fn get_file_stem(&self) -> ResVar<&str> {
+        self.file_stem()
+            .ok_or(ErrVar::InvalidFileStem)?
+            .to_str()
+            .ok_or(ErrVar::FailedToStr)
+    }
+
+    fn get_parent(&self) -> ResVar<&Path> {
+        self.parent()
+            .ok_or(ErrVar::InvalidPathParent)
+    }
+}
+
+pub(crate) trait PathBufExt {
+    fn confirm(self) -> ResVar<PathBuf>;
+}
+impl PathBufExt for PathBuf {
+    fn confirm(self) -> ResVar<Self> {
+        if !self.try_exists()? {
+            return Err(ErrVar::MissingFile { path: self })
+        }
+
+        Ok(self)
+    }
+}
+
+pub(crate) trait RectExt {
+    fn get_congruent_delta_from_anchor(&self, anchor_abs: AnchorAbsolute, leeway: u32) -> Option<Delta>;
+    fn height(&self) -> i32;
+    fn is_centered(&self, screen_extent: Extent2d) -> bool;
+    fn sub(&self, rhs: Self) -> Self;
+    fn to_string(&self) -> String;
+    fn width(&self) -> i32;
+}
+impl RectExt for RECT {
+    fn get_congruent_delta_from_anchor(&self, anchor_abs: AnchorAbsolute, leeway: u32) -> Option<Delta> {
+        let diffs = self.sub(anchor_abs.into());
+
+        let is_congruent =
+            diffs.left == diffs.right &&
+            diffs.top == diffs.bottom &&
+            diffs.left.unsigned_abs() <= leeway &&
+            diffs.top.unsigned_abs() <= leeway;
+
+        is_congruent.then_some(
+            Delta {
+                x: diffs.left,
+                y: diffs.top
+            }
+        )
+    }
+
+    fn height(&self) -> i32 {
+        self.bottom - self.top
+    }
+
+    fn is_centered(&self, screen_extent: Extent2d) -> bool {
+        self.left == (screen_extent.width - self.right) &&
+        self.top == (screen_extent.height - self.bottom)
+    }
+
+    fn sub(&self, rhs: Self) -> Self {
+        Self {
+            left: self.left - rhs.left,
+            top: self.top - rhs.top,
+            right: self.right - rhs.right,
+            bottom: self.bottom - rhs.bottom
+        }
+    }
+
+    fn to_string(&self) -> String {
+        format!("{{{}, {}, {}, {}}}{{{}, {}}}", self.left, self.top, self.right, self.bottom, self.width(), self.height())
+    }
+
+    fn width(&self) -> i32 {
+        self.right - self.left
+    }
+}
+
+pub(crate) trait StrExt {
+    fn to_wide_128(&self) -> [u16; 128];
+    unsafe fn to_win_str(&self) -> WinStr;
+}
+impl StrExt for &str {
+    fn to_wide_128(&self) -> [u16; 128] {
+        let mut buf = [0_u16; 128];
+        let encoded = self.encode_utf16().collect::<Vec<_>>();
+
+        let len = encoded.len().min(127);
+        buf[..len].copy_from_slice(&encoded[..len]);
+
+        buf
+    }
+
+    unsafe fn to_win_str(&self) -> WinStr {
+        WinStr::new(self)
+    }
+}
+
+pub(crate) trait ToString {
+    fn to_string(&self) -> String;
+}
+impl ToString for Command {
+    fn to_string(&self) -> String {
+        let program = self.get_program().to_string_lossy();
+        let args = self.get_args().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
+
+        let get_quoted_bytes = |s: &str| s.len() + 2 * "\"".len();
+        let capacity = get_quoted_bytes(&program) + args.iter().map(|arg| get_quoted_bytes(arg) + " ".len()).sum::<usize>();
+
+        let mut s = String::with_capacity(capacity);
+
+        write!(&mut s, "\"{}\"", self.get_program().to_string_lossy()).unwrap();
+        for arg in self.get_args() {
+            write!(&mut s, " \"{}\"", arg.to_string_lossy()).unwrap();
+        }
+
+        s
+    }
+}
+
+pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, sleep_dur: Duration) -> Res<T> {
+    for _ in 0..attempt_count.saturating_sub(1) {
+        if let Ok(t) = f() {
+            return Ok(t)
+        }
+
+        thread::sleep(sleep_dur);
+    }
+
+    f()
+}
+
+pub(crate) fn find_app<T>(name: &str, check_path: Option<T>) -> ResVar<PathBuf> where
+    PathBuf: From<T>
+{
+    if let Some(path) = check_path {
+        let path = PathBuf::from(path);
+
+        match path.confirm() {
+            Ok(path) => return Ok(path),
+            Err(ErrVar::MissingFile { .. }) => (),
+            err => return err
+        }
+    }
+
+    Ok(which::which(name)?)
+}
+
+pub(crate) fn get_file_kind(ext: &str) -> FileKind {
+    match ext {
+        "m2ts" |
+        "mkv" |
+        "mp4" |
+        "mts" |
+        "ts" |
+        "webm" => FileKind::Vid,
+        _ => FileKind::Other
+    }
+}
+
+pub(crate) fn get_first_process<'a>(proc_name: &str, system: &'a mut System) -> Option<&'a Process> {
+    system.refresh_processes_specifics(default!());
+
+    system.processes_by_exact_name(proc_name)
+        .find(|process| {
+            process.name() == proc_name
+        })
+}
+
+pub(crate) fn get_process_count(proc_name: &str, system: &mut System) -> usize {
+    system.refresh_processes_specifics(default!());
+
+    system.processes_by_exact_name(proc_name).count()
+}
+
+pub(crate) fn output_command(cmd: &mut Command) -> ResVar<Output> {
+    let output = cmd.output()
+        .map_err(|err| {
+            ErrVar::FailedOutputCommand { inner: err, cmd: cmd.to_string() }
+        })?;
+
+    match output.status.success() {
+        true => Ok(output),
+        false => Err(ErrVar::UnsuccessfulExitCode { code: output.status.code(), cmd: cmd.to_string() })
+    }
+}
+
+pub(crate) fn spawn_command(cmd: &mut Command) -> ResVar<Child> {
+    let output = cmd.spawn()
+        .map_err(|err| {
+            ErrVar::FailedSpawnCommand { inner: err, cmd: cmd.to_string() }
+        })?;
+
+    Ok(output)
+}

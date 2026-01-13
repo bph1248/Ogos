@@ -1,0 +1,16 @@
+[package]
+name = "ogos_proc_macros"
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+version = { workspace = true }
+
+[lib]
+name = "ogos_proc_macros"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+syn = { version = "2.0.101", features = ["extra-traits", "full"] }
