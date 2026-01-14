@@ -163,9 +163,9 @@ pub enum ErrVar {
 
     FailedBindVarFrom { from: String },
     FailedBuildLoggerConfig,
-    FailedColorBitDepthFrom { from: u32 },
+    FailedColorBitDepthFrom { from: String },
     FailedContactHookMgr { inner: windows::core::Error },
-    FailedDitherBitDepthFrom { from: u32 },
+    FailedDitherBitDepthFrom { from: String },
     FailedHzFrom { from: String },
     FailedIniOp { inner: ini::Error, path: String },
     FailedInputEventFrom { from: String },

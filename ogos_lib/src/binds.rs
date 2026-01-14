@@ -162,7 +162,7 @@ struct TopLevelSiblingsInfo {
 
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum BindRepr<'a> {
+pub(crate) enum BindRepr<'a> {
     Enum(BindVarRaw),
     Num(u32),
     Str(&'a str)
@@ -172,7 +172,7 @@ macro_rules! impl_BindVar {
     ($($variant:ident),+) => {
         #[derive(Deserialize)]
         #[serde(rename_all = "snake_case")]
-        enum BindVarRaw {
+        pub(crate) enum BindVarRaw {
             $($variant,)+
         }
 
@@ -198,7 +198,7 @@ macro_rules! impl_BindVar {
     };
 }
 impl_BindVar! {
-    N0, N1, N2, N3, N4, N5, N6, N7, N8, N9,
+    N0, N1, N2, N3, N4, N5, N6, N7, N8, N9, N10, N12, N16,
     F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
     A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
     Minus, Mns,
@@ -266,6 +266,7 @@ impl_BindVar! {
     ForwardButton, Xb2, Fb,
 
     Click,
+    Default,
     Dur
 }
 impl BindVar {
@@ -500,6 +501,9 @@ impl TryFrom<u32> for BindVar {
             7 => Self::N7,
             8 => Self::N8,
             9 => Self::N9,
+            10 => Self::N10,
+            12 => Self::N12,
+            16 => Self::N16,
             _ => Err(ErrVar::FailedBindVarFrom { from: value.to_string() })?
         })
     }

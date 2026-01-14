@@ -1,4 +1,5 @@
 use crate::{
+    binds::*,
     common::*,
     config::{self, *},
     nvapi_shadow::*,
@@ -134,17 +135,13 @@ pub(crate) struct NovideoSrgbFfi {
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(try_from = "BindVar")]
 pub(crate) enum ColorBitDepth {
     Default,
-    #[serde(rename = "6")]
     N6,
-    #[serde(rename = "8")]
     N8,
-    #[serde(rename = "10")]
     N10,
-    #[serde(rename = "12")]
     N12,
-    #[serde(rename = "16")]
     N16
 }
 impl Deref for ColorBitDepth {
@@ -175,20 +172,19 @@ impl Display for ColorBitDepth {
         }
     }
 }
-impl TryFrom<u32> for ColorBitDepth {
+impl TryFrom<BindVar> for ColorBitDepth {
     type Error = ErrVar;
 
-    fn try_from(value: u32) -> ResVar<Self> {
-        Ok(
-            match value {
-                6 => Self::N6,
-                8 => Self::N8,
-                10 => Self::N10,
-                12 => Self::N12,
-                16 => Self::N16,
-                _ => Err(ErrVar::FailedColorBitDepthFrom { from: value })?
-            }
-        )
+    fn try_from(value: BindVar) -> Result<Self, Self::Error> {
+        Ok(match value {
+            BindVar::Default => Self::Default,
+            BindVar::N6 => Self::N6,
+            BindVar::N8 => Self::N8,
+            BindVar::N10 => Self::N10,
+            BindVar::N12 => Self::N12,
+            BindVar::N16 => Self::N16,
+            _ => Err(ErrVar::FailedColorBitDepthFrom { from: value.as_str().into() })?
+        })
     }
 }
 
@@ -230,12 +226,10 @@ impl Not for DisplayMode {
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(try_from = "BindVar")]
 pub(crate) enum DitherBitDepth {
-    #[serde(rename = "6")]
     N6,
-    #[serde(rename = "8")]
     N8,
-    #[serde(rename = "10")]
     N10
 }
 impl Deref for DitherBitDepth {
@@ -258,18 +252,16 @@ impl Display for DitherBitDepth {
         }
     }
 }
-impl TryFrom<u32> for DitherBitDepth {
+impl TryFrom<BindVar> for DitherBitDepth {
     type Error = ErrVar;
 
-    fn try_from(value: u32) -> ResVar<Self> {
-        Ok(
-            match value {
-                6 => Self::N6,
-                8 => Self::N8,
-                10 => Self::N10,
-                _ => Err(ErrVar::FailedDitherBitDepthFrom { from: value })?
-            }
-        )
+    fn try_from(value: BindVar) -> Result<Self, Self::Error> {
+        Ok(match value {
+            BindVar::N6 => Self::N6,
+            BindVar::N8 => Self::N8,
+            BindVar::N10 => Self::N10,
+            _ => Err(ErrVar::FailedDitherBitDepthFrom { from: value.as_str().into() })?
+        })
     }
 }
 
