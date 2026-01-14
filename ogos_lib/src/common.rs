@@ -258,6 +258,14 @@ pub(crate) use default;
 pub(crate) use _elapsed;
 pub(crate) use into;
 pub(crate) use now;
+pub(crate) trait AsStr {
+    fn as_str(&self) -> &str;
+}
+impl AsStr for Option<String> {
+    fn as_str(&self) -> &str {
+        self.as_ref().map_or("<None>", |s| s.as_str())
+    }
+}
 
 pub(crate) trait BoolExt {
     fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T>;

@@ -94,7 +94,7 @@ pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfo) -> Re
 
     ipc_client.set_activity(activity)?;
 
-    info!("{}: set discord activity: id: {}, details: {}, state: {:?}, large_image: {:?}", module_path!(), ipc_client.client_id, info.details, info.state, info.large_image);
+    info!("{}: set discord activity: id: {}, details: {}, state: {}, large_image: {}", module_path!(), ipc_client.client_id, info.details, info.state.as_str(), info.large_image.as_str());
 
     Ok(())
 }
@@ -136,7 +136,7 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
 
         ipc_client.set_activity(activity)?;
 
-        info!("{}: set discord activity: chess username: {}, id: {}, details: {}, state: {}, large_image: {:?}", module_path!(), username, ipc_client.client_id, details, state, large_image);
+        info!("{}: set discord activity: chess username: {}, id: {}, details: {}, state: {}, large_image: {}", module_path!(), username, ipc_client.client_id, details, state, large_image.as_str());
 
         Ok((initial_stats, time_start))
     };
