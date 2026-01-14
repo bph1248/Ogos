@@ -16,7 +16,7 @@ use serde::*;
 use strum::*;
 use subenum::*;
 use std::{
-    fmt::{self, Display, Write},
+    fmt::{self, Display},
     ops::*,
     path::*,
     process::*,
@@ -37,6 +37,45 @@ use windows::{
 };
 
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+pub(crate) struct DisplayWrap<'a, T>(pub(crate) &'a T);
+impl<T> Deref for DisplayWrap<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+impl Display for DisplayWrap<'_, Command> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_command(self, f)
+    }
+}
+impl Display for DisplayWrap<'_, &mut Command> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_command(self, f)
+    }
+}
+impl Display for DisplayWrap<'_, HWND> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:p}", self)
+    }
+}
+impl Display for DisplayWrap<'_, RECT> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{{}, {}, {}, {}}}{{{}, {}}}", self.left, self.top, self.right, self.bottom, self.width(), self.height())
+    }
+}
+fn fmt_command(cmd: &Command, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let program = cmd.get_program().display();
+
+    write!(f, "\"{}\"", program)?;
+    for arg in cmd.get_args() {
+        write!(f, " \"{}\"", arg.display())?;
+    }
+
+    Ok(())
+}
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Extent2d {
@@ -258,6 +297,16 @@ pub(crate) use default;
 pub(crate) use _elapsed;
 pub(crate) use into;
 pub(crate) use now;
+
+pub(crate) trait AsDisplay {
+    fn as_display(&self) -> DisplayWrap<'_, Self> where Self: Sized;
+}
+impl<T> AsDisplay for T {
+    fn as_display(&self) -> DisplayWrap<'_, Self> {
+        DisplayWrap(self)
+    }
+}
+
 pub(crate) trait AsStr {
     fn as_str(&self) -> &str;
 }
@@ -292,26 +341,6 @@ impl BoolExt for bool {
             true => BOOL(1),
             false => BOOL(0)
         }
-    }
-}
-
-pub(crate) trait CmdExt {
-    fn display(&self) -> String;
-}
-impl CmdExt for Command {
-    fn display(&self) -> String {
-        let program = self.get_program().to_string_lossy();
-
-        let get_quoted_bytes = |s: &str| s.len() + 2 * "\"".len();
-        let capacity = get_quoted_bytes(program.as_ref()) + self.get_args().map(|arg| " ".len() + get_quoted_bytes(arg.to_string_lossy().as_ref())).sum::<usize>();
-
-        let mut s = String::with_capacity(capacity);
-        write!(&mut s, "\"{}\"", program).unwrap();
-        for arg in self.get_args() {
-            write!(&mut s, " \"{}\"", arg.to_string_lossy()).unwrap();
-        }
-
-        s
     }
 }
 
@@ -396,7 +425,6 @@ pub(crate) trait RectExt {
     fn height(&self) -> i32;
     fn is_centered(&self, screen_extent: Extent2d) -> bool;
     fn sub(&self, rhs: Self) -> Self;
-    fn _to_string(&self) -> String;
     fn width(&self) -> i32;
 }
 impl RectExt for RECT {
@@ -433,10 +461,6 @@ impl RectExt for RECT {
             right: self.right - rhs.right,
             bottom: self.bottom - rhs.bottom
         }
-    }
-
-    fn _to_string(&self) -> String {
-        format!("{{{}, {}, {}, {}}}{{{}, {}}}", self.left, self.top, self.right, self.bottom, self.width(), self.height())
     }
 
     fn width(&self) -> i32 {
@@ -535,19 +559,19 @@ pub(crate) fn get_process_count(proc_name: &str, system: &mut System) -> usize {
 pub(crate) fn output_command(cmd: &mut Command) -> ResVar<Output> {
     let output = cmd.output()
         .map_err(|err| {
-            ErrVar::FailedOutputCommand { inner: err, cmd: cmd.display() }
+            ErrVar::FailedOutputCommand { inner: err, cmd: cmd.as_display().to_string() }
         })?;
 
     match output.status.success() {
         true => Ok(output),
-        false => Err(ErrVar::UnsuccessfulExitCode { code: output.status.code(), cmd: cmd.display() })
+        false => Err(ErrVar::UnsuccessfulExitCode { code: output.status.code(), cmd: cmd.as_display().to_string() })
     }
 }
 
 pub(crate) fn spawn_command(cmd: &mut Command) -> ResVar<Child> {
     let output = cmd.spawn()
         .map_err(|err| {
-            ErrVar::FailedSpawnCommand { inner: err, cmd: cmd.display() }
+            ErrVar::FailedSpawnCommand { inner: err, cmd: cmd.as_display().to_string() }
         })?;
 
     Ok(output)

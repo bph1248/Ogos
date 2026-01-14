@@ -137,7 +137,6 @@ pub(crate) trait HwndExt {
     unsafe fn is_visible(&self) -> bool;
     unsafe fn may_hook_location_change(&self) -> Res1<bool>;
     unsafe fn show_na(&self);
-    fn to_string(&self) -> String;
 }
 impl HwndExt for HWND {
     fn as_usize(&self) -> usize {
@@ -307,10 +306,6 @@ impl HwndExt for HWND {
 
     unsafe fn show_na(&self) {
         _ = ShowWindow(*self, SW_SHOWNA);
-    }
-
-    fn to_string(&self) -> String {
-        format!("{:p}", self.0)
     }
 }
 

@@ -404,7 +404,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
         args.push(profile_arg.as_str());
         cmd.args(args).arg(vid_path);
 
-        info!("{}: launching: {}", module_path!(), cmd.display());
+        info!("{}: launching: {}", module_path!(), cmd.as_display());
         output_command(&mut cmd)?;
 
         if fs::remove_file(guard_path).is_ok() {

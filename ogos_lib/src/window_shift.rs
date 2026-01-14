@@ -228,7 +228,7 @@ macro_rules! dbg_window_shift_delta {
             $win_info.hwnd.0,
             $win_info.exe,
             $win_info.hwnd.get_caption_or_err(),
-            $win_rect.sub($win_info.anchor_abs.into())._to_string(),
+            $win_rect.sub($win_info.anchor_abs.into()).as_display(),
             $win_info.anchor_is_constrained
         );
     };

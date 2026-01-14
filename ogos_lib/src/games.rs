@@ -143,7 +143,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
         }
 
         spawn_command(&mut cmd)?;
-        info!("{}: spawned {}", module_path!(), cmd.display());
+        info!("{}: spawned {}", module_path!(), cmd.as_display());
 
         let pid = (0..30).find_map(|_| {
             get_first_process(&game_info.proc, &mut system)
