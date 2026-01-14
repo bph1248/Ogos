@@ -18,6 +18,7 @@ image = { workspace = true }
 log = { workspace = true }
 netcorehost = { workspace = true }
 nvapi-sys = { workspace = true }
+ogos_core = { workspace = true }
 ogos_mki = { workspace = true }
 ogos_proc_macros = { workspace = true }
 opener = { workspace = true }

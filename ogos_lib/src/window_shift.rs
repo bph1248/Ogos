@@ -5,6 +5,7 @@ use crate::{
     win32::*,
     window_foreground
 };
+use ogos_core::*;
 use ogos_err::*;
 
 use log::*;

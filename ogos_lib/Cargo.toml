@@ -32,6 +32,7 @@ log-panics = { workspace = true }
 netcorehost = { workspace = true }
 nvapi_sys_new = "=0.1.5"
 nvapi-sys = { workspace = true }
+ogos_core = { workspace = true }
 ogos_err = { path = "../ogos_err" }
 ogos_mki = { workspace = true }
 ogos_proc_macros = { workspace = true }

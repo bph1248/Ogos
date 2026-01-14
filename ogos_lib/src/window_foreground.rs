@@ -7,6 +7,7 @@ use crate::{
     window_watch::*,
     *
 };
+use ogos_core::*;
 use ogos_err::*;
 use ogos_mki as mki;
 use mki::*;
@@ -906,7 +907,7 @@ unsafe fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroun
                     if let ErrVar::WinCore(inner) = *err.var &&
                         win_errored.hresults.insert(inner.code())
                     {
-                        err.var = Box::new(ErrVar::FailedWmMouseMouse { inner, fg_hwnd: fg_hwnd.as_display().to_string(), fg_exe: fg_hwnd.get_exe_or_err() });
+                        err.var = Box::new(ErrVar::FailedWmMouseMouse { inner, fg_hwnd: fg_hwnd.as_display().to_string(), fg_exe: fg_hwnd.get_exe_or_err() }); //$
                         Err(err)?;
                     }
                 }

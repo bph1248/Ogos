@@ -8,6 +8,7 @@ use crate::{
     pipe_client::*,
     win32::*
 };
+use ogos_core::*;
 use ogos_err::*;
 
 use concat_string::*;

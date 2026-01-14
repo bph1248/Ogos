@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "ogos",
+    "ogos_core",
     "ogos_err",
     "ogos_lib",
     "ogos_mki",
@@ -25,6 +26,7 @@ log = "0.4.17"
 log-panics = "2.1.0"
 netcorehost = "0.19.0"
 nvapi-sys = "0.1.3"
+ogos_core = { path = "./ogos_core" }
 ogos_mki = { path = "./ogos_mki" }
 ogos_proc_macros = { path = "./ogos_proc_macros" }
 opener = "0.8.3"
