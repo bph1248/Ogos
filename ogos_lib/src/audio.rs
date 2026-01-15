@@ -138,7 +138,7 @@ pub(crate) unsafe fn set_endpoint(name: &str) -> Res<()> {
     if let Some(endpoints) = endpoints &&
         let Some(app) = endpoints.0.get(name)
     {
-        let mut cmd = Command::new(&app.path);
+        let mut cmd = Command::new(app.path);
         cmd.args(&app.args);
 
         spawn_command(&mut cmd)?;

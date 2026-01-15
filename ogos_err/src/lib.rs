@@ -197,7 +197,7 @@ pub enum ErrVar {
     MissingConfigKey { name: &'static str },
     MissingFile { path: PathBuf },
     MissingNovideoSrgbFfi,
-    MissingProcess { name: String },
+    MissingProcess { name: &'static str },
     MissingUsername,
     MissingTaskbarRelatedInfo,
     PoisonedLock,

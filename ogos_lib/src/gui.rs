@@ -48,7 +48,7 @@ struct DirEntryInfo {
 }
 
 pub(crate) enum Kind {
-    Discord { name: String, discord_info: DiscordInfo },
+    Discord { name: String, discord_info: DiscordInfoView<'static> },
     MediaBrowser
 }
 
@@ -75,10 +75,10 @@ fn to_discord_asset_name(s: impl AsRef<str>) -> String {
 
 pub(crate) struct Discord {
     name: String,
-    discord_info: DiscordInfo
+    discord_info: DiscordInfoView<'static>
 }
 impl Discord {
-    pub(crate) fn new(_cctx: &eframe::CreationContext<'_>, name: String, discord_info: DiscordInfo) -> Self {
+    pub(crate) fn new(_cctx: &eframe::CreationContext<'_>, name: String, discord_info: DiscordInfoView<'static>) -> Self {
         Self {
             name,
             discord_info
@@ -228,13 +228,13 @@ fn load_and_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::Col
     Ok((color_image, dst_pixels))
 }
 
-unsafe fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, mut discord_info: Option<DiscordInfo>) {
+unsafe fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordInfo>) {
     thread::spawn(move || {
         (|| -> Res<()> {
-            let ipc_client = discord_info.as_mut().map(|discord_info| -> Res<_> {
+            let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
                 let mut ipc_client = DiscordIpcClient::new(discord_info.client_id.as_str());
 
-                discord::begin(&mut ipc_client, discord_info)?;
+                discord::begin(&mut ipc_client, &discord_info.as_view())?;
 
                 Ok(ipc_client)
             })

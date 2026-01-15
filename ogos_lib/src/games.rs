@@ -55,7 +55,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
         let game_info = games_config.0.get(name).ok_or_else(|| ErrVar::UnknownGame { name: name.into() })?;
         let discord_info = game_info.discord.clone();
 
-        pipe_msg(PipeMsg::ActiveGame(Some(game_info.proc.clone())))?;
+        pipe_msg(PipeMsg::ActiveGame(Some(game_info.proc.into())))?;
         revert_to.push(GamesSetting::ActiveGame);
 
         if cli.gaming.set_cursor_size &&
@@ -105,7 +105,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
                     Launcher::Steam => config.app_paths.steam
                 }
             },
-            None => game_info.proc.as_str()
+            None => game_info.proc
         };
 
         let mut cmd;
@@ -148,7 +148,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
         info!("{}: spawned {}", module_path!(), cmd.as_display());
 
         let pid = (0..30).find_map(|_| {
-            get_first_process(&game_info.proc, &mut system)
+            get_first_process(game_info.proc, &mut system)
                 .map(|proc| proc.pid())
                 .or_else(|| {
                     thread::sleep(Duration::from_secs(1));
@@ -156,7 +156,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
                     None
                 })
         })
-        .ok_or_else(|| ErrVar::MissingProcess { name: game_info.proc.clone() })?;
+        .ok_or_else(|| ErrVar::MissingProcess { name: game_info.proc })?;
         info!("{}: process: {}, pid: {}", module_path!(), game_info.proc, pid);
 
         drop(config);
@@ -236,7 +236,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
 
         match discord_info {
             Some(discord_info) => {
-                let mut ipc_client = DiscordIpcClient::new(discord_info.client_id.as_str());
+                let mut ipc_client = DiscordIpcClient::new(discord_info.client_id);
 
                 info!("{}: calling discord and waiting for gui to terminate...", module_path!());
                 match name {
@@ -244,8 +244,8 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
                         thread::scope(|s| -> Res<()> {
                             let (discord_sx, rx) = mpsc::channel::<Msg>();
 
-                            let large_image = discord_info.large_image.clone();
-                            let chess_username = discord_info.chess_username.clone().ok_or(ErrVar::MissingUsername)?;
+                            let large_image = discord_info.large_image;
+                            let chess_username = discord_info.chess_username.ok_or(ErrVar::MissingUsername)?;
                             discord::spawn_scoped_chess(s, &mut ipc_client, large_image, chess_username, rx);
 
                             gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;

@@ -2,6 +2,7 @@ use crate::{
     common::*,
     config::*
 };
+use ogos_core::*;
 use ogos_err::*;
 
 use concat_string::*;
@@ -73,7 +74,7 @@ struct Stats {
     tactics: Tactics
 }
 
-pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfo) -> Res<()> {
+pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfoView) -> Res<()> {
     info!("{}: begin", module_path!());
 
     ipc_client.connect()?;
@@ -82,24 +83,24 @@ pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfo) -> Re
     let mut activity = Activity::new()
         .activity_type(info.activity.into())
         .timestamps(Timestamps::new().start(time_start))
-        .details(info.details.as_str())
+        .details(info.details)
         .status_display_type(info.display_kind.into());
 
-    if let Some(state) = info.state.as_ref() {
+    if let Some(state) = info.state {
         activity = activity.state(state);
     }
-    if let Some(large_image) = info.large_image.as_ref() {
+    if let Some(large_image) = info.large_image {
         activity = activity.assets(Assets::new().large_image(large_image));
     }
 
     ipc_client.set_activity(activity)?;
 
-    info!("{}: set discord activity: id: {}, details: {}, state: {}, large_image: {}", module_path!(), ipc_client.client_id, info.details, info.state.as_str(), info.large_image.as_str());
+    info!("{}: set discord activity: id: {}, details: {}, state: {}, large_image: {}", module_path!(), ipc_client.client_id, info.details, info.state.as_display(), info.large_image.as_display());
 
     Ok(())
 }
 
-fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, username: String, rx: Receiver<Msg>) -> Res<()> {
+fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<&'static str>, username: &'static str, rx: Receiver<Msg>) -> Res<()> {
     info!("{}: begin chess", module_path!());
 
     ipc_client.connect()?;
@@ -130,13 +131,13 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
             .details(details.as_str())
             .state(state.as_str());
 
-        if let Some(large_image) = large_image.as_ref() {
+        if let Some(large_image) = large_image {
             activity = activity.assets(Assets::new().large_image(large_image));
         }
 
         ipc_client.set_activity(activity)?;
 
-        info!("{}: set discord activity: chess username: {}, id: {}, details: {}, state: {}, large_image: {}", module_path!(), username, ipc_client.client_id, details, state, large_image.as_str());
+        info!("{}: set discord activity: chess username: {}, id: {}, details: {}, state: {}, large_image: {}", module_path!(), username, ipc_client.client_id, details, state, large_image.as_display());
 
         Ok((initial_stats, time_start))
     };
@@ -183,7 +184,7 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
                 .details(details.as_str())
                 .state(state.as_str());
 
-            if let Some(large_image) = large_image.as_ref() {
+            if let Some(large_image) = large_image {
                 activity = activity.assets(Assets::new().large_image(large_image));
             }
 
@@ -202,8 +203,8 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<String>, u
     Ok(())
 }
 
-pub(crate) fn spawn_scoped_chess<'a>(s: &'a Scope<'a, '_>, ipc_client: &'a mut DiscordIpcClient, large_image: Option<String>, username: String, rx: Receiver<Msg>) -> ScopedJoinHandle<'a, ()> {
-    s.spawn(|| {
+pub(crate) fn spawn_scoped_chess<'a>(s: &'a Scope<'a, '_>, ipc_client: &'a mut DiscordIpcClient, large_image: Option<&'static str>, username: &'static str, rx: Receiver<Msg>) -> ScopedJoinHandle<'a, ()> {
+    s.spawn(move || {
         begin_chess(ipc_client, large_image, username, rx).unwrap_or_else(|err| {
             error!("{}: failed to monitor chess stats: {}", module_path!(), err);
         });

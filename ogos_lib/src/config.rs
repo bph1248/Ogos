@@ -232,48 +232,54 @@ pub(crate) enum WindowRelation {
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Criteria {
+pub(crate) struct Criteria<'a> {
     #[serde(default)]
     pub(crate) relation: WindowRelation,
     pub(crate) against: Against,
-    pub(crate) text: Vec<String>,
+    #[serde(borrow)]
+    pub(crate) text: Vec<&'a str>,
     pub(crate) op: Op
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ShiftConstraint {
-    pub(crate) criteria: Criteria
+pub(crate) struct ShiftConstraint<'a> {
+    #[serde(borrow)]
+    pub(crate) criteria: Criteria<'a>
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CenterConstraint {
-    pub(crate) criteria: Criteria
+pub(crate) struct CenterConstraint<'a> {
+    #[serde(borrow)]
+    pub(crate) criteria: Criteria<'a>
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AttributesConstraint {
-    pub(crate) criteria: Criteria,
+pub(crate) struct AttributesConstraint<'a> {
+    #[serde(borrow)]
+    pub(crate) criteria: Criteria<'a>,
     pub(crate) border_disable: bool,
     pub(crate) round_corners_disable: bool
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AnchorConstraint {
-    pub(crate) criteria: Criteria,
+pub(crate) struct AnchorConstraint<'a> {
+    #[serde(borrow)]
+    pub(crate) criteria: Criteria<'a>,
     pub(crate) relative: AnchorRelative
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Constraints {
-    pub(crate) anchor: Option<AnchorConstraint>,
-    pub(crate) attributes: Option<AttributesConstraint>,
-    pub(crate) center: Option<CenterConstraint>,
-    pub(crate) shift: Option<ShiftConstraint>
+pub(crate) struct Constraints<'a> {
+    #[serde(borrow)]
+    pub(crate) anchor: Option<AnchorConstraint<'a>>,
+    pub(crate) attributes: Option<AttributesConstraint<'a>>,
+    pub(crate) center: Option<CenterConstraint<'a>>,
+    pub(crate) shift: Option<ShiftConstraint<'a>>
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -302,10 +308,10 @@ pub(crate) struct WindowShift<'a> {
     #[serde(rename = "stride_px")]
     pub(crate) stride: Stride,
     #[serde(borrow)]
-    pub(crate) constraints: HashMap<&'a str, Constraints>
+    pub(crate) constraints: HashMap<&'a str, Constraints<'a>>
 }
 impl<'a> WindowShift<'a> {
-    pub(crate) fn get_shift_constraint(&self, exe: &str) -> Option<&ShiftConstraint> {
+    pub(crate) fn get_shift_constraint(&self, exe: &str) -> Option<&ShiftConstraint<'_>> {
         self.constraints.get(exe)
             .and_then(|constraints| {
                 constraints.shift.as_ref()
@@ -409,33 +415,56 @@ impl Into<drpa::ActivityType> for DiscordActivity {
     }
 }
 
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct DiscordInfo {
     pub(crate) client_id: String,
     pub(crate) activity: DiscordActivity,
     pub(crate) details: String,
     pub(crate) state: Option<String>,
-    #[serde(default)]
     pub(crate) display_kind: DiscordDisplayKind,
     pub(crate) large_image: Option<String>,
     pub(crate) chess_username: Option<String>
 }
+impl DiscordInfo {
+    pub(crate) fn as_view(&self) -> DiscordInfoView<'_> {
+        DiscordInfoView {
+            client_id: self.client_id.as_str(),
+            activity: self.activity,
+            details: self.details.as_str(),
+            state: self.state.as_deref(),
+            display_kind: self.display_kind,
+            large_image: self.large_image.as_deref(),
+            chess_username: self.chess_username.as_deref()
+        }
+    }
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DiscordInfoView<'a> {
+    pub(crate) client_id: &'a str,
+    pub(crate) activity: DiscordActivity,
+    pub(crate) details: &'a str,
+    pub(crate) state: Option<&'a str>,
+    #[serde(default)]
+    pub(crate) display_kind: DiscordDisplayKind,
+    pub(crate) large_image: Option<&'a str>,
+    pub(crate) chess_username: Option<&'a str>
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct GameInfo {
-    pub(crate) proc: String,
-    pub(crate) url: Option<String>,
-    pub(crate) args: Option<Vec<String>>,
+pub(crate) struct GameInfo<'a> {
+    pub(crate) proc: &'a str,
+    pub(crate) url: Option<&'a str>,
+    pub(crate) args: Option<Vec<&'a str>>,
     pub(crate) cursor_size: Option<usize>,
     pub(crate) res: Option<Extent2dU>,
-    pub(crate) discord: Option<DiscordInfo>
+    pub(crate) discord: Option<DiscordInfoView<'a>>
 }
 
 #[derive(Deserialize)]
 #[serde(transparent)]
-pub(crate) struct Games<'a>(#[serde(borrow)] pub(crate) HashMap<&'a str, GameInfo>);
+pub(crate) struct Games<'a>(#[serde(borrow)] pub(crate) HashMap<&'a str, GameInfo<'a>>);
 impl_name!(Games, 'a);
 
 #[derive(Clone, Deserialize)]
@@ -518,12 +547,12 @@ pub(crate) enum ColorSpaceTarget {
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
-pub(crate) enum PrimariesSource {
+pub(crate) enum PrimariesSource<'a> {
     #[default]
     Edid,
-    Profile { path: String }
+    Profile { path: &'a str }
 }
-impl PrimariesSource {
+impl<'a> PrimariesSource<'a> {
     pub(crate) fn as_i32(&self) -> i32 {
         match self {
             Self::Edid => 0,
@@ -536,18 +565,18 @@ const fn novideo_srgb_enable_clamp() -> bool { true }
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct NovideoSrgbInfo {
+pub(crate) struct NovideoSrgbInfo<'a> {
     #[serde(default = "novideo_srgb_enable_clamp")]
     pub(crate) enable_clamp: bool,
-    #[serde(rename = "primaries")]
-    pub(crate) primaries_source: PrimariesSource,
+    #[serde(borrow, rename = "primaries")]
+    pub(crate) primaries_source: PrimariesSource<'a>,
     pub(crate) color_space_target: ColorSpaceTarget,
     #[serde(default)]
     pub(crate) gamma: Gamma,
     pub(crate) enable_optimization: bool
 }
-impl NovideoSrgbInfo {
-    pub(crate) const NAME: &str = "novideo_srgb";
+impl<'a> NovideoSrgbInfo<'a> {
+    pub(crate) const NAME: &'static str = "novideo_srgb";
 }
 
 #[derive(Deserialize)]
@@ -560,19 +589,21 @@ pub(crate) struct DitherInfo {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DisplayModeInfo {
+pub(crate) struct DisplayModeInfo<'a> {
     pub(crate) color_bit_depth: ColorBitDepth,
     pub(crate) dither: DitherInfo,
-    pub(crate) novideo_srgb: Option<NovideoSrgbInfo>
+    #[serde(borrow)]
+    pub(crate) novideo_srgb: Option<NovideoSrgbInfo<'a>>
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DisplayModes {
-    pub(crate) sdr: DisplayModeInfo,
-    pub(crate) hdr: DisplayModeInfo
+pub(crate) struct DisplayModes<'a> {
+    #[serde(borrow)]
+    pub(crate) sdr: DisplayModeInfo<'a>,
+    pub(crate) hdr: DisplayModeInfo<'a>
 }
-impl_name!(DisplayModes);
+impl_name!(DisplayModes, 'a);
 
 #[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -689,22 +720,23 @@ impl_name!(EqApo, 'a);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct App {
+pub(crate) struct App<'a> {
     #[serde(rename = "app")]
-    pub(crate) path: String,
-    pub(crate) args: Vec<String>
+    pub(crate) path: &'a str,
+    #[serde(borrow)]
+    pub(crate) args: Vec<&'a str>
 }
-impl App {
-    pub(crate) const FFPROBE:          &str = "ffprobe.exe";
-    pub(crate) const MPV:              &str = "mpv.exe";
-    pub(crate) const NOVIDEO_SRGB:     &str = "novideo_srgb.dll";
-    pub(crate) const SKIF:             &str = "SKIF.exe";
-    pub(crate) const WALLPAPER_ENGINE: &str = "wallpaper64.exe";
+impl<'a> App<'a> {
+    pub(crate) const FFPROBE:          &'static str = "ffprobe.exe";
+    pub(crate) const MPV:              &'static str = "mpv.exe";
+    pub(crate) const NOVIDEO_SRGB:     &'static str = "novideo_srgb.dll";
+    pub(crate) const SKIF:             &'static str = "SKIF.exe";
+    pub(crate) const WALLPAPER_ENGINE: &'static str = "wallpaper64.exe";
 }
 
 #[derive(Deserialize)]
 #[serde(transparent)]
-pub(crate) struct Endpoints<'a>(#[serde(borrow)] pub(crate) HashMap<&'a str, App>);
+pub(crate) struct Endpoints<'a>(#[serde(borrow)] pub(crate) HashMap<&'a str, App<'a>>);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -752,7 +784,7 @@ pub(crate) struct Config<'a> {
     pub(crate) binds: Option<Binds<'a>>,
     #[serde(default)]
     pub(crate) discord: Discord<'a>,
-    pub(crate) display_modes: Option<DisplayModes>,
+    pub(crate) display_modes: Option<DisplayModes<'a>>,
     pub(crate) games: Option<Games<'a>>,
     pub(crate) media_browser: Option<MediaBrowser<'a>>,
     pub(crate) mpv: Option<Mpv<'a>>,

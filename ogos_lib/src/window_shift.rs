@@ -269,7 +269,7 @@ fn criteria_text_matches(criteria: &Criteria, win_text: &WindowText) -> bool {
         criteria.text.iter()
             .any(|criteria_text| {
                 match criteria.op {
-                    Op::Equals => win_text == criteria_text,
+                    Op::Equals => win_text == *criteria_text,
                     Op::Contains => win_text.contains(criteria_text)
                 }
             })

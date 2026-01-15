@@ -186,7 +186,7 @@ impl Name for WindowShiftMsg {
 }
 
 #[subenum(GamesSetting, VideoSetting)]
-pub(crate) enum Setting {
+pub(crate) enum Setting<'a> {
     #[subenum(GamesSetting)]
     ActiveGame,
     #[subenum(GamesSetting)]
@@ -196,7 +196,7 @@ pub(crate) enum Setting {
     #[subenum(GamesSetting, VideoSetting)]
     DisplayMode(DisplayMode),
     #[subenum(VideoSetting)]
-    NovideoSrgb(NovideoSrgbInfo),
+    NovideoSrgb(NovideoSrgbInfo<'a>),
     #[subenum(VideoSetting)]
     SampleRate(Hz),
     #[subenum(GamesSetting)]
