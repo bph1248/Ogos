@@ -58,11 +58,12 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
         pipe_msg(PipeMsg::ActiveGame(Some(game_info.proc.clone())))?;
         revert_to.push(GamesSetting::ActiveGame);
 
-        if let Some(cursor_size) = cli.gaming.cursor_size {
+        if cli.gaming.set_cursor_size &&
+            let Some(cursor_size) = game_info.cursor_size
+        {
             set_cursor_size(cursor_size)?;
 
             revert_to.push(GamesSetting::CursorSize(32));
-
         }
 
         if cli.gaming.set_res &&

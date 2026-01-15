@@ -428,6 +428,7 @@ pub(crate) struct GameInfo {
     pub(crate) proc: String,
     pub(crate) url: Option<String>,
     pub(crate) args: Option<Vec<String>>,
+    pub(crate) cursor_size: Option<usize>,
     pub(crate) res: Option<Extent2dU>,
     pub(crate) discord: Option<DiscordInfo>
 }

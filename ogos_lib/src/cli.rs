@@ -8,7 +8,6 @@ use std::{
     path::*
 };
 
-const CURSOR_SIZE: &str = "cursor-size";
 const ENDPOINT: &str = "endpoint";
 const EQ: &str = "eq";
 const GAME: &str = "game";
@@ -21,8 +20,8 @@ pub(crate) enum NovideoSrgbOp {
 #[derive(Args)]
 #[group(requires = GAME, multiple = true)]
 pub(crate) struct Gaming {
-    #[arg(long, name = CURSOR_SIZE, help = concatcp!("Set the cursor size before launching a game. Requires --", GAME, ". Reverts on game exit"))]
-    pub(crate) cursor_size: Option<usize>,
+    #[arg(long = "cursor-size", alias = "cursor", help = concatcp!("Set the cursor size before launching a game. Requires --", GAME, ". Reverts on game exit"))]
+    pub(crate) set_cursor_size: bool,
     #[arg(long = "hdr", help = concatcp!("Switch to HDR mode before launching a game. Requires --", GAME, ". Reverts on game exit"))]
     pub(crate) set_display_mode_hdr: bool,
     #[arg(long = "res", help = concatcp!("Set the desktop resolution before launching a game. Requires --", GAME, ". Reverts on game exit"))]
