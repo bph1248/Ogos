@@ -246,6 +246,7 @@ unsafe fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: b
             }
 
             if let Some(mut ipc_client) = ipc_client {
+                ipc_client.clear_activity()?;
                 ipc_client.close()?;
             }
 

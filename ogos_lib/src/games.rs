@@ -259,6 +259,7 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
 
                         gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;
 
+                        ipc_client.clear_activity()?;
                         ipc_client.close()?;
                     }
                 }
