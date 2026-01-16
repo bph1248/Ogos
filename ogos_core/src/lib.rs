@@ -1,6 +1,8 @@
 use std::{
-    fmt::*,
+    borrow::*,
+    fmt::{self, *},
     ops::*,
+    path::*,
     process::*
 };
 use windows::Win32::Foundation::*;
@@ -20,27 +22,27 @@ impl<T> Deref for Displayer<'_, T> {
         }
     }
 }
-impl Display for Displayer<'_, Command> {
+impl fmt::Display for Displayer<'_, Command> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         fmt_command(self, f)
     }
 }
-impl Display for Displayer<'_, &mut Command> {
+impl fmt::Display for Displayer<'_, &mut Command> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         fmt_command(self, f)
     }
 }
-impl Display for Displayer<'_, HWND> {
+impl fmt::Display for Displayer<'_, HWND> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "{:p}", self)
     }
 }
-impl Display for Displayer<'_, Option<&str>> {
+impl fmt::Display for Displayer<'_, Option<&str>> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "{}", self.as_ref().map_or("<None>", |s| s))
     }
 }
-impl Display for Displayer<'_, RECT> {
+impl fmt::Display for Displayer<'_, RECT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "{{{}, {}, {}, {}}}{{{}, {}}}", self.left, self.top, self.right, self.bottom, self.width(), self.height())
     }
@@ -71,6 +73,15 @@ pub trait IntoDisplay {
 impl<T> IntoDisplay for T {
     fn into_display(self) -> Displayer<'static, Self> {
         Displayer::Owned(self)
+    }
+}
+
+pub trait AsStaticCowPath {
+    fn as_static_cow_path(&'static self) -> Cow<'static, Path>;
+}
+impl AsStaticCowPath for str {
+    fn as_static_cow_path(&'static self) -> Cow<'static, Path> {
+        Path::new(self).into()
     }
 }
 

@@ -640,7 +640,7 @@ pub(crate) struct Discord<'a> {
     pub(crate) display_kind: DiscordDisplayKind
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Qmk<'a> {
     pub(crate) layer: u8,

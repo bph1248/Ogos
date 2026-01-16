@@ -3,6 +3,7 @@ use crate::{
     config::{self, *},
     display::*
 };
+use ogos_core::*;
 use ogos_err::*;
 use ogos_mki as mki;
 use mki::{
@@ -114,17 +115,17 @@ struct KeyCoord {
     col: u8
 }
 
-pub(crate) struct Qmk {
+pub(crate) struct QmkRuntime {
     api: qmk_api::KeyboardApi,
     layer: u8,
     layout: HashMap<Key, KeyCoord>
 }
-impl Qmk {
-    pub(crate) fn new(vid: u16, pid: u16, usage_page: u16, qmk_config: &config::Qmk) -> Res<Self> {
+impl QmkRuntime {
+    pub(crate) fn new(vid: u16, pid: u16, usage_page: u16, qmk_config: &config::Qmk<'static>) -> Res<Self> {
         let api = qmk_api::KeyboardApi::new(vid, pid, usage_page)
             .map_err(|_| ErrVar::FailedQmkKeyboardInit { vid, pid, usage_page })?;
 
-        let layout_str = fs::read_to_string(qmk_config.layout_path).map_err(|err| ErrVar::FailedReadFile { inner: err, path: qmk_config.layout_path.into() })?;
+        let layout_str = fs::read_to_string(qmk_config.layout_path).map_err(|err| ErrVar::FailedReadFile { inner: err, path: qmk_config.layout_path.as_static_cow_path() })?;
         let layout_deser = serde_json::from_str::<qmk_deser::Layout>(&layout_str)?;
 
         let mut layout = HashMap::new();
@@ -885,13 +886,13 @@ pub(crate) fn unmap_mki(from: InputEvent) {
     }
 }
 
-pub(crate) fn map_qmk(qmk: &Qmk, from: Key, to: Keycode) {
+pub(crate) fn map_qmk(qmk: &QmkRuntime, from: Key, to: Keycode) {
     if let Some(coord) = qmk.layout.get(&from) {
         _ = qmk.api.set_key(qmk.layer, coord.row, coord.col, to.clone() as u16); // Ignore response from KeyboardApi::hid_command(ViaCommandId::DynamicKeymapSetKeycode, ..)
     }
 }
 
-pub(crate) fn unmap_qmk(qmk: &Qmk, from: Key) {
+pub(crate) fn unmap_qmk(qmk: &QmkRuntime, from: Key) {
     if let Some(coord) = qmk.layout.get(&from) {
         _ = qmk.api.set_key(qmk.layer, coord.row, coord.col, from.as_keycode() as u16);
     }

@@ -35,8 +35,6 @@ use windows::Win32::{
     }
 };
 
-use binds::Qmk as Qmk;
-
 pub(crate) const PROGMAN_CLASS_NAME: &str = "Progman";
 pub(crate) const TASKBAR_CLASS_NAME: &str = "Shell_TrayWnd";
 pub(crate) const TASKBAR_START_MENU_CLASS_NAME: &str = "Start";
@@ -45,7 +43,7 @@ pub(crate) const WINDOW_WATCH_CLASS_NAME: &str = "OgosWindowWatch";
 
 #[derive(Default)]
 struct Binds<'a> {
-    qmk: Option<Qmk>,
+    qmk: Option<QmkRuntime>,
     maps: Option<HashMap<&'a str, InputEventMaps>>,
     bound: Vec<InputEventMap>,
     input_hooks_disabled: bool
@@ -839,7 +837,7 @@ fn init_binds<'a>() -> Res1<Binds<'a>> {
         let qmk_config = binds_config.qmk.as_ref();
 
         let qmk = qmk_config.map(|qmk_config| {
-            binds::Qmk::new(QMK_VID, QMK_PID, USAGE_PAGE, qmk_config)
+            binds::QmkRuntime::new(QMK_VID, QMK_PID, USAGE_PAGE, qmk_config)
         })
         .transpose()?;
 

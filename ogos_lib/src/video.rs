@@ -301,7 +301,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
 
         let mut disable_reshade = || -> Res1<()> {
             if let Some(reshade_config) = reshade_config {
-                let manifest_str = fs::read_to_string(reshade_config.layer_path)?;
+                let manifest_str = fs::read_to_string(reshade_config.layer_path).map_err(|err| ErrVar::FailedReadFile { inner: err, path: reshade_config.layer_path.as_static_cow_path() })?;
                 let manifest = serde_json::from_str::<ReShadeVkLayerManifest>(&manifest_str)?;
 
                 cmd.env("VK_LOADER_LAYERS_DISABLE", manifest.layer.name);
@@ -326,7 +326,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
                             }
 
                             // Check ReShade.ini exists before symlinking
-                            Path::new(reshade_config.settings_path).confirm()?;
+                            Path::new(reshade_config.settings_path).static_confirm()?;
 
                             if let Err(err) = os::windows::fs::symlink_file(reshade_config.settings_path, &reshade_settings_sym_link_path) {
                                 let question = match err.raw_os_error().map(|code| WIN32_ERROR(code as u32)) {
@@ -344,10 +344,9 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
                         info!("{}: max luminance: {}", module_path!(), max_content);
 
                         // Write max luminance to preset
-                        let reshade_preset_path = Path::new(&reshade_config.preset_path);
-                        let mut reshade_preset_ini = Ini::load_from_file(reshade_preset_path).map_err(|err| ErrVar::FailedIniOp { inner: err, path: reshade_config.preset_path.to_string() })?;
+                        let mut reshade_preset_ini = Ini::load_from_file(reshade_config.preset_path).map_err(|err| ErrVar::FailedIniOp { inner: err, path: reshade_config.preset_path.as_static_cow_path() })?;
                         reshade_preset_ini.with_section(Some("lilium__tone_mapping.fx")).set("InputLuminanceMax", max_content.to_string());
-                        reshade_preset_ini.write_to_file(reshade_preset_path).map_err(|err| ErrVar::FailedWriteFile { inner: err, path: reshade_config.preset_path.to_string() })?;
+                        reshade_preset_ini.write_to_file(reshade_config.preset_path).map_err(|err| ErrVar::FailedWriteFile { inner: err, path: reshade_config.preset_path.as_static_cow_path() })?;
 
                         profile_arg = MpvArg::Profile(reshade_config.profile).to_arg_string();
                     },

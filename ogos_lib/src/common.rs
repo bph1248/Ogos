@@ -17,6 +17,7 @@ use serde::*;
 use strum::*;
 use subenum::*;
 use std::{
+    borrow::*,
     fmt::{self, Display},
     ops::*,
     path::*,
@@ -260,15 +261,6 @@ pub(crate) use _elapsed;
 pub(crate) use into;
 pub(crate) use now;
 
-pub(crate) trait AsStr {
-    fn as_str(&self) -> &str;
-}
-impl AsStr for Option<String> {
-    fn as_str(&self) -> &str {
-        self.as_ref().map_or("<None>", |s| s.as_str())
-    }
-}
-
 pub(crate) trait BoolExt {
     fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T>;
     fn _as_str(&self) -> &'static str;
@@ -303,6 +295,7 @@ pub(crate) trait Name {
 
 pub(crate) trait PathExt {
     fn confirm(&self) -> ResVar<&Self>;
+    fn static_confirm(&'static self) -> ResVar<&'static Self>;
     fn get_dir(&self) -> ResVar<&Path>;
     fn get_file_ext(&self) -> ResVar<&str>;
     fn get_file_kind(&self) -> ResVar<FileKind>;
@@ -311,6 +304,14 @@ pub(crate) trait PathExt {
 }
 impl PathExt for Path {
     fn confirm(&self) -> ResVar<&Self> {
+        if !self.try_exists()? {
+            Err(ErrVar::MissingFile { path: self.to_owned().into() })?;
+        }
+
+        Ok(self)
+    }
+
+    fn static_confirm(&'static self) -> ResVar<&'static Self> {
         if !self.try_exists()? {
             Err(ErrVar::MissingFile { path: self.into() })?;
         }
@@ -366,7 +367,7 @@ pub(crate) trait PathBufExt {
 impl PathBufExt for PathBuf {
     fn confirm(self) -> ResVar<Self> {
         if !self.try_exists()? {
-            return Err(ErrVar::MissingFile { path: self })
+            return Err(ErrVar::MissingFile { path: self.into() })
         }
 
         Ok(self)
@@ -453,14 +454,14 @@ pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, slee
     f()
 }
 
-fn find_app(name: &str) -> ResVar<PathBuf> {
-    which::which(name).map_err(|_| ErrVar::MissingFile { path: name.into() })
+fn find_app(name: &'static str) -> ResVar<PathBuf> {
+    which::which(name).map_err(|_| ErrVar::MissingFile { path: name.as_static_cow_path() })
 }
 
-pub(crate) fn confirm_or_find_app<P>(name: &str, path: Option<P>) -> ResVar<PathBuf> where
+pub(crate) fn confirm_or_find_app<P>(name: &'static str, path: Option<P>) -> ResVar<PathBuf> where
     P: AsRef<Path>
 {
-    fn inner(name: &str, confirm: Option<&Path>) -> ResVar<PathBuf> {
+    fn inner(name: &'static str, confirm: Option<&Path>) -> ResVar<PathBuf> {
         confirm.map(|path| match path.confirm() {
             Ok(path) => Ok(path.to_owned()),
             Err(err) => match err {

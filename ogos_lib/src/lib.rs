@@ -501,7 +501,7 @@ unsafe fn init() -> Res<System> {
     log_panics::init();
 
     // Config
-    let config = load().map_err(|err| err.msg("failed to load config"))?;
+    let config = config::load().map_err(|err| err.msg("failed to load config"))?;
     CONFIG.set(RwLock::new(config)).map_err(|_| ErrVar::FailedSetConfig)?;
 
     // NovideoSrgb
