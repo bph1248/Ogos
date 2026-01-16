@@ -802,7 +802,11 @@ pub(crate) fn load<'a>() -> Res1<Config<'a>> {
 
     let config_str = fs::read_to_string(current_exe_dir.join(CONFIG_FILE_NAME))?;
     let config_str = config_str.leak();
-    let config = ron::from_str::<Config>(config_str)?;
+    let config = ron::Options::default()
+        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+        .with_default_extension(ron::extensions::Extensions::UNWRAP_NEWTYPES)
+        .with_default_extension(ron::extensions::Extensions::UNWRAP_VARIANT_NEWTYPES)
+        .from_str::<Config>(config_str)?;
 
     Ok(config)
 }
