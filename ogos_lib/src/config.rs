@@ -260,8 +260,10 @@ pub(crate) struct CenterConstraint<'a> {
 pub(crate) struct AttributesConstraint<'a> {
     #[serde(borrow)]
     pub(crate) criteria: Criteria<'a>,
-    pub(crate) border_disable: bool,
-    pub(crate) round_corners_disable: bool
+    #[serde(default)]
+    pub(crate) disable_border: bool,
+    #[serde(default)]
+    pub(crate) disable_round_corners: bool
 }
 
 #[derive(Clone, Deserialize)]

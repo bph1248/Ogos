@@ -155,8 +155,8 @@ struct WinInfo {
     anchor_is_constrained: bool,
     delta_from_anchor: Delta,
     keep_centered: bool,
-    border_disable: bool,
-    round_corners_disable: bool,
+    disable_border: bool,
+    disable_round_corners: bool,
     papers: Papers
 }
 impl WinInfo {
@@ -398,11 +398,11 @@ unsafe fn evaluate_for_shift<'a>(win_info: &'a mut WinInfo, window_shift_config:
 
 unsafe fn set_win_attributes(win_info: &WinInfo, window_shift_config: &WindowShift) {
     (|| -> Res<()> {
-        if win_info.border_disable {
+        if win_info.disable_border {
             DwmSetWindowAttribute(win_info.hwnd, DWMWA_BORDER_COLOR, &DWMWA_COLOR_NONE as *const _ as *const c_void, size_of_val(&DWMWA_COLOR_NONE) as u32)?;
         }
 
-        if win_info.round_corners_disable {
+        if win_info.disable_round_corners {
             DwmSetWindowAttribute(win_info.hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &DWMWCP_DONOTROUND as *const _ as *const c_void, size_of_val(&DWMWCP_DONOTROUND) as u32)?;
         }
 
@@ -465,16 +465,16 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
                 })
                 .unwrap_or_default();
 
-            let (border_disable,
-                round_corners_disable
+            let (disable_border,
+                disable_round_corners
             ) = constraints.attributes.as_ref()
                 .filter(|&attributes_constraint| {
                     criteria_text_matches(&attributes_constraint.criteria, &win_text)
                 })
                 .map(|attributes_constraint| {
                     (
-                        attributes_constraint.border_disable,
-                        attributes_constraint.round_corners_disable
+                        attributes_constraint.disable_border,
+                        attributes_constraint.disable_round_corners
                     )
                 })
                 .unwrap_or_default();
@@ -504,8 +504,8 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
                 anchor_is_constrained,
                 delta_from_anchor,
                 keep_centered,
-                border_disable,
-                round_corners_disable,
+                disable_border,
+                disable_round_corners,
                 papers
             }
         },
