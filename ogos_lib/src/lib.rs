@@ -98,20 +98,19 @@ pub(crate) enum LongLivedTask {
 unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => {
-            DestroyWindow(hwnd).x()
-                .unwrap_or_else(|err| {
-                    panic!("{}: failed to destroy window: {:p}: {}", module_path!(), hwnd.0, err)
-                });
+            info!("{}: closing tray notify icon", module_path!());
 
-            return LRESULT(0)
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         },
-        WM_CREATE => return LRESULT(0),
+        WM_CREATE => LRESULT(0),
         WM_DESTROY => {
+            info!("{}: destroying tray notify icon", module_path!());
+
             PostQuitMessage(0);
 
-            return LRESULT(0)
+            LRESULT(0)
         },
-        WM_NCCREATE => return LRESULT(1),
+        WM_NCCREATE => LRESULT(1),
         WM_OGOS_TRAY => {
             (|| -> Res<()> {
                 if lparam.0 as u32 == WM_RBUTTONUP {
@@ -142,11 +141,11 @@ unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WP
             .unwrap_or_else(|err| {
                 error!("{}: failed to handle {}: {}", module_path!(), msg.to_wm_string(), err);
             });
-        },
-        _ => ()
-    }
 
-    DefWindowProcW(hwnd, msg, wparam, lparam)
+            LRESULT(0)
+        },
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
 }
 
 pub(crate) unsafe fn add_tray_notify_icon(register_class: bool) -> Res1<()> {
