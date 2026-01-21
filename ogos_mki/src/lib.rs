@@ -7,7 +7,6 @@ mod keyboard;
 #[cfg(target_os = "linux")]
 mod linux;
 mod mouse;
-mod parse;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -32,7 +31,6 @@ pub use keyboard::*;
 #[cfg(target_os = "linux")]
 pub use linux::*;
 pub use mouse::*;
-pub use parse::load_config;
 #[cfg(target_os = "windows")]
 pub use windows::{
     install_hooks,
