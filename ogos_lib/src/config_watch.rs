@@ -27,7 +27,7 @@ use windows::Win32::{
 
 const DEBOUNCE_INTERVAL_MS: u32 = 500;
 
-unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> Res<()> {
+fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let watch_dir_name = WinStr::from(CURRENT_EXE_DIR.get_unchecked());
@@ -92,7 +92,7 @@ unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> 
 
                             for can_reload_config in can_reload_config.iter() {
                                 match can_reload_config {
-                                    CanReloadConfig::StaticBinds => { thread::spawn(|| binds::reconfigure_static_binds()); },
+                                    CanReloadConfig::StaticBinds => { thread::spawn(binds::reconfigure_static_binds); },
                                     CanReloadConfig::WindowWatch(hook_mgr_tid) => PostThreadMessageW(hook_mgr_tid.0, WM_OGOS_RELOAD_CONFIG, WPARAM(0), LPARAM(0))?
                                 }
                             }
@@ -111,9 +111,9 @@ unsafe fn begin(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> 
     info!("{}: closed", module_path!());
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn spawn(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> JoinHandle<()> {
+pub(crate) fn spawn(can_reload_config: Vec<CanReloadConfig>, event_close: usize) -> JoinHandle<()> {
     thread::spawn(move || {
         begin(can_reload_config, event_close).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

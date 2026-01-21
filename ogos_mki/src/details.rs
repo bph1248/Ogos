@@ -99,7 +99,7 @@ impl Registry {
             any_button_callback: Mutex::new(None),
             hooks_tid: {
                 let (sx, rx) = std::sync::mpsc::channel();
-                unsafe { init_hooks(sx); }
+                init_hooks(sx);
 
                 rx.recv().unwrap()
             },

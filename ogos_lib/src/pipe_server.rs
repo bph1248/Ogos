@@ -37,7 +37,7 @@ pub(crate) const PIPE_NAME: &str = r"\\.\pipe\ogos";
 pub(crate) const PIPE_SIZE: u32 = PIPE_SIZE_CHECK as u32;
 
 // See https://learn.microsoft.com/en-us/windows/win32/secauthz/creating-a-security-descriptor-for-a-new-object-in-c--
-unsafe fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<WindowForegroundMsg>>) -> Res<()> {
+fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<WindowForegroundMsg>>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     // Init a SID for the well-known Everyone group
@@ -137,9 +137,9 @@ unsafe fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sende
     info!("{}: closed", module_path!());
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn spawn(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<WindowForegroundMsg>>) -> JoinHandle<()> {
+pub(crate) fn spawn(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<WindowForegroundMsg>>) -> JoinHandle<()> {
     thread::spawn(|| {
         begin(send_ready, window_foreground_sx).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

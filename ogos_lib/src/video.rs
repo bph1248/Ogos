@@ -232,8 +232,8 @@ impl MpvArg<'_> {
     }
 }
 
-pub(crate) unsafe fn create_maintain_sample_rate_guard() -> io::Result<()> {
-    let guard_path = CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
+pub(crate) fn create_maintain_sample_rate_guard() -> io::Result<()> {
+    let guard_path = unsafe { CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME) };
 
     fs::write(&guard_path, "")?;
     info!("{}: created maintain-sample-rate guard: {}", module_path!(), guard_path.display());
@@ -241,7 +241,7 @@ pub(crate) unsafe fn create_maintain_sample_rate_guard() -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, override_glsl_shaders: bool) -> Res<(), { loc_var!(Mpv) }> {
+pub(crate) fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, override_glsl_shaders: bool) -> Res<(), { loc_var!(Mpv) }> {
     let inner = |revert_to: &mut Vec<VideoSetting>| -> Res<(), { loc_var!(Mpv) }> {
         let config = config::get().read()?;
         let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Mpv::NAME })?;
@@ -261,7 +261,7 @@ pub(crate) unsafe fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainS
         let ffprobe = serde_json::from_str::<Ffprobe>(output.as_str())?;
 
         // Sample rate
-        let guard_path = CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME);
+        let guard_path = unsafe { CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME) };
         let maintain_sample_rate = match maintain_sample_rate {
             MaintainSampleRate::No => false,
             MaintainSampleRate::Yes => true,

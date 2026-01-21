@@ -31,20 +31,24 @@ struct Hooks {
 unsafe impl Send for Hooks {}
 unsafe impl Sync for Hooks {}
 
-pub unsafe fn install_hooks() {
+pub fn install_hooks() { unsafe {
     PostThreadMessageW(registry().hooks_tid, MKI_INSTALL_HOOKS, 0, 0);
-}
+} }
 
-pub unsafe fn uninstall_hooks() {
+pub fn uninstall_hooks() { unsafe {
     PostThreadMessageW(registry().hooks_tid, MKI_UNINSTALL_HOOKS, 0, 0);
-}
+} }
 
-pub(crate) unsafe fn init_hooks(sx: Sender<u32>) {
+pub(crate) fn init_hooks(sx: Sender<u32>) { unsafe {
+    let set_hook = |hook_id, hook_proc| -> HHOOK {
+        SetWindowsHookExW(hook_id, Some(hook_proc), HINSTANCE::default(), 0)
+    };
+
     std::thread::spawn(move || {
         let tid = GetCurrentThreadId();
         let mut hooks = Hooks {
-            keyboard: Some(install_hook(WH_KEYBOARD_LL, keyboard_proc)),
-            mouse: Some(install_hook(WH_MOUSE_LL, mouse_proc))
+            keyboard: Some(set_hook(WH_KEYBOARD_LL, keyboard_proc)),
+            mouse: Some(set_hook(WH_MOUSE_LL, mouse_proc))
         };
 
         sx.send(tid).unwrap();
@@ -54,12 +58,12 @@ pub(crate) unsafe fn init_hooks(sx: Sender<u32>) {
             match msg.message {
                 MKI_INSTALL_HOOKS => {
                     if hooks.keyboard.is_none() {
-                        hooks.keyboard = Some(install_hook(WH_KEYBOARD_LL, keyboard_proc));
+                        hooks.keyboard = Some(set_hook(WH_KEYBOARD_LL, keyboard_proc));
 
                         info!("{}: installed keyboard hook", module_path!());
                     }
                     if hooks.mouse.is_none() {
-                        hooks.mouse = Some(install_hook(WH_MOUSE_LL, mouse_proc));
+                        hooks.mouse = Some(set_hook(WH_MOUSE_LL, mouse_proc));
 
                         info!("{}: installed mouse hook", module_path!());
                     }
@@ -94,24 +98,13 @@ pub(crate) unsafe fn init_hooks(sx: Sender<u32>) {
             }
         }
     });
-}
+} }
 
-fn install_hook(
-    hook_id: c_int,
-    hook_proc: unsafe extern "system" fn(c_int, WPARAM, LPARAM) -> LRESULT,
-) -> HHOOK {
-    unsafe { SetWindowsHookExW(hook_id, Some(hook_proc), 0 as HINSTANCE, 0) }
-}
-
-unsafe extern "system" fn keyboard_proc(
-    code: c_int,
-    w_param: WPARAM,
-    l_param: LPARAM,
-) -> LRESULT {
-    let hook_struct = &*(l_param as *const KBDLLHOOKSTRUCT);
+unsafe extern "system" fn keyboard_proc(code: c_int, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
+    let hook_struct = &*(lparam as *const KBDLLHOOKSTRUCT);
 
     if hook_struct.flags & LLKHF_INJECTED == LLKHF_INJECTED {
-        return CallNextHookEx(null_mut(), code, w_param, l_param)
+        return CallNextHookEx(null_mut(), code, wparam, lparam)
     }
 
     let vk: i32 = hook_struct
@@ -133,7 +126,7 @@ unsafe extern "system" fn keyboard_proc(
     // Note this seemingly is only activated when ALT is not pressed, need to handle WM_SYSKEYDOWN then
     // Test that case.
     if let Ok(key) = Key::try_from(vk) {
-        let code = w_param as u32;
+        let code = wparam as u32;
 
         match code {
             _ if code == WM_KEYDOWN || code == WM_SYSKEYDOWN => {
@@ -150,14 +143,10 @@ unsafe extern "system" fn keyboard_proc(
         }
     }
 
-    CallNextHookEx(null_mut(), code, w_param, l_param)
-}
+    CallNextHookEx(null_mut(), code, wparam, lparam)
+} }
 
-unsafe extern "system" fn mouse_proc(
-    code: c_int,
-    w_param: WPARAM,
-    l_param: LPARAM,
-) -> LRESULT {
+unsafe extern "system" fn mouse_proc(code: c_int, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
     // because macros > idea
     // typedef struct tagMSLLHOOKSTRUCT {
     //   POINT     pt;
@@ -167,10 +156,10 @@ unsafe extern "system" fn mouse_proc(
     //   ULONG_PTR dwExtraInfo;
     // } MSLLHOOKSTRUCT, *LPMSLLHOOKSTRUCT, *PMSLLHOOKSTRUCT;
 
-    let hook_struct = &*(l_param as *const MSLLHOOKSTRUCT);
+    let hook_struct = &*(lparam as *const MSLLHOOKSTRUCT);
 
     if hook_struct.flags & LLMHF_INJECTED == LLMHF_INJECTED {
-        return CallNextHookEx(null_mut(), code, w_param, l_param)
+        return CallNextHookEx(null_mut(), code, wparam, lparam)
     }
 
     let x_button_param: u16 =
@@ -182,7 +171,7 @@ unsafe extern "system" fn mouse_proc(
     } else {
         None
     };
-    let w_param_u32: u32 = w_param.try_into().expect("w_param > u32");
+    let w_param_u32: u32 = wparam.try_into().expect("w_param > u32");
     registry().update_mouse_position(hook_struct.pt.x, hook_struct.pt.y);
     let inhibit = match w_param_u32 {
         code if code == WM_LBUTTONDOWN => registry().event_down(InputEvent::MouseButton(Button::Left)),
@@ -240,6 +229,6 @@ unsafe extern "system" fn mouse_proc(
     if inhibit.should_inhibit() {
         1
     } else {
-        CallNextHookEx(null_mut(), code, w_param, l_param)
+        CallNextHookEx(null_mut(), code, wparam, lparam)
     }
-}
+} }

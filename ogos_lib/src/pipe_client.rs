@@ -9,7 +9,7 @@ use windows::Win32::{
     Storage::FileSystem::*
 };
 
-pub(crate) unsafe fn pipe_msg(msg: PipeMsg) -> Res1<()> {
+pub(crate) fn pipe_msg(msg: PipeMsg) -> Res1<()> { unsafe {
     let pipe_name = PIPE_NAME.to_win_str();
     let pipe = CreateFileW(
         *pipe_name,
@@ -32,4 +32,4 @@ pub(crate) unsafe fn pipe_msg(msg: PipeMsg) -> Res1<()> {
     CloseHandle(pipe)?;
 
     Ok(())
-}
+} }

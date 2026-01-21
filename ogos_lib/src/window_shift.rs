@@ -165,7 +165,7 @@ impl WinInfo {
         self.delta_from_anchor = default!();
     }
 
-    unsafe fn shift_win_to_anchor(&mut self) -> windows::core::Result<()> {
+    fn shift_win_to_anchor(&mut self) -> windows::core::Result<()> { unsafe {
         SetWindowPos(
             self.hwnd,
             None,
@@ -178,9 +178,9 @@ impl WinInfo {
         .inspect(|_| {
             self.delta_from_anchor = default!();
         })
-    }
+    } }
 
-    unsafe fn shift_win_to_screen_center(&self, win_rect: RECT, screen_extent: Extent2d) -> windows::core::Result<()> {
+    fn shift_win_to_screen_center(&self, win_rect: RECT, screen_extent: Extent2d) -> windows::core::Result<()> { unsafe {
         SetWindowPos(
             self.hwnd,
             None,
@@ -190,10 +190,10 @@ impl WinInfo {
             win_rect.height(),
             SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOREDRAW | SWP_NOSENDCHANGING | SWP_NOZORDER
         )
-    }
+    } }
 
     // cx and cy are set here because some apps don't seem to honor SWP_NOSIZE, ie. Photoshop
-    unsafe fn shift_win(&mut self, leeway: u32, shift_by: Delta) -> windows::core::Result<()> {
+    fn shift_win(&mut self, leeway: u32, shift_by: Delta) -> windows::core::Result<()> { unsafe {
         let delta_from_anchor = self.delta_from_anchor.add_checked(shift_by, leeway);
 
         SetWindowPos(
@@ -208,7 +208,7 @@ impl WinInfo {
         .inspect(|_| {
             self.delta_from_anchor = delta_from_anchor;
         })
-    }
+    } }
 }
 
 #[derive(Default)]
@@ -235,7 +235,7 @@ macro_rules! dbg_window_shift_delta {
     };
 }
 
-unsafe extern "system" fn enum_desktop_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+unsafe extern "system" fn enum_desktop_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
     let ts = &mut *(lparam.0 as *mut ThreadState);
 
     match hwnd.is_eligible_for_shift(ts.screen_extent) {
@@ -246,9 +246,9 @@ unsafe extern "system" fn enum_desktop_windows_proc(hwnd: HWND, lparam: LPARAM) 
     }
 
     TRUE
-}
+} }
 
-unsafe extern "system" fn enum_thread_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+unsafe extern "system" fn enum_thread_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
     let TopLevelSiblingsInfo { tid_of, siblings } = &mut *(lparam.0 as *mut _);
 
     if hwnd != *tid_of && hwnd.is_visible() {
@@ -256,13 +256,13 @@ unsafe extern "system" fn enum_thread_windows_proc(hwnd: HWND, lparam: LPARAM) -
     }
 
     TRUE
-}
+} }
 
-unsafe fn get_current_thread_desktop() -> windows::core::Result<HDESK> {
+fn get_current_thread_desktop() -> windows::core::Result<HDESK> { unsafe {
     let current_thread_id = GetCurrentThreadId();
 
     GetThreadDesktop(current_thread_id)
-}
+} }
 
 fn criteria_text_matches(criteria: &Criteria, win_text: &WindowText) -> bool {
     let match_text = |win_text: &str| -> bool {
@@ -281,13 +281,13 @@ fn criteria_text_matches(criteria: &Criteria, win_text: &WindowText) -> bool {
     }
 }
 
-unsafe fn left_button_is_down() -> bool {
+fn left_button_is_down() -> bool { unsafe {
     const MSB: u16 = 0x8000;
 
     GetAsyncKeyState(i32::from(VK_LBUTTON.0)) as u16 & MSB == MSB
-}
+} }
 
-unsafe fn top_level_window_relation_found(tid_of: HWND, owned_by: Option<HWND>, criteria: &Criteria) -> Res2<bool> {
+fn top_level_window_relation_found(tid_of: HWND, owned_by: Option<HWND>, criteria: &Criteria) -> Res2<bool> { unsafe {
     let criteria_matches = |hwnds: &[HWND]| -> Res1<bool> {
         let components_match = |hwnd: &HWND, criteria_text: &str| -> Res1<bool> {
             let win_text = match criteria.against {
@@ -337,9 +337,9 @@ unsafe fn top_level_window_relation_found(tid_of: HWND, owned_by: Option<HWND>, 
     let relation_found = criteria_matches(&tl_siblings_info.siblings)?;
 
     Ok(relation_found)
-}
+} }
 
-unsafe fn evaluate_for_shift<'a>(win_info: &'a mut WinInfo, window_shift_config: &'a WindowShift, screen_extent: Extent2d, win_rect: RECT, shift_by: Delta) -> Res<()> {
+fn evaluate_for_shift<'a>(win_info: &'a mut WinInfo, window_shift_config: &'a WindowShift, screen_extent: Extent2d, win_rect: RECT, shift_by: Delta) -> Res<()> {
     if win_info.keep_centered && !win_rect.is_centered(screen_extent) {
         match win_info.anchor_is_constrained {
             true => win_info.shift_win_to_screen_center(win_info.anchor_abs.into(), screen_extent)?, // Window must adhere to anchor layout
@@ -396,7 +396,7 @@ unsafe fn evaluate_for_shift<'a>(win_info: &'a mut WinInfo, window_shift_config:
     Ok(())
 }
 
-unsafe fn set_win_attributes(win_info: &WinInfo, window_shift_config: &WindowShift) {
+fn set_win_attributes(win_info: &WinInfo, window_shift_config: &WindowShift) { unsafe {
     (|| -> Res<()> {
         if win_info.disable_border {
             DwmSetWindowAttribute(win_info.hwnd, DWMWA_BORDER_COLOR, &DWMWA_COLOR_NONE as *const _ as *const c_void, size_of_val(&DWMWA_COLOR_NONE) as u32)?;
@@ -415,13 +415,13 @@ unsafe fn set_win_attributes(win_info: &WinInfo, window_shift_config: &WindowShi
     .unwrap_or_else(|err| {
         error!("{}: failed to set dwm window attribute: hwnd: {:p}: {}", module_path!(), win_info.hwnd.0, err);
     });
-}
+} }
 
 fn class_is_denied(class: &str) -> bool {
     matches!(class, window_foreground::TASKBAR_CLASS_NAME | window_foreground::WINDOW_WATCH_CLASS_NAME)
 }
 
-unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window_shift_config: &'a WindowShift, screen_extent: Extent2d, win_rect: RECT, hwnd: HWND) -> Res<&'a mut WinInfo> {
+fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window_shift_config: &'a WindowShift, screen_extent: Extent2d, win_rect: RECT, hwnd: HWND) -> Res<&'a mut WinInfo> {
     let win_exe = hwnd.get_exe()?;
     let win_text = hwnd.get_text()?;
     let WindowShift {
@@ -528,7 +528,7 @@ unsafe fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window
     Ok(win_info)
 }
 
-unsafe fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_errored: &mut HashMap<usize, Errored>, window_shift_config: &WindowShift, rx: &Receiver<WindowShiftMsg>) -> Res<()> {
+fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_errored: &mut HashMap<usize, Errored>, window_shift_config: &WindowShift, rx: &Receiver<WindowShiftMsg>) -> Res<()> {
     let interval_begin = now!();
     let interval_end = interval_begin + Duration::from_secs(u64::from(window_shift_config.interval_dur));
     let time_remaining = || interval_end - now!();
@@ -585,7 +585,7 @@ unsafe fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, w
     }
 }
 
-unsafe fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> Res<bool> {
+fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> Res<bool> {
     let fg_rect = fg_hwnd.get_rect()?;
     let fg_is_fullscreen = fg_rect == screen_extent.into();
 
@@ -599,7 +599,7 @@ unsafe fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> 
     Ok(false)
 }
 
-unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
+fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let config = config::get().read()?;
@@ -695,9 +695,9 @@ unsafe fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> {
     info!("{}: closed", module_path!());
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn spawn(rx: Receiver<WindowShiftMsg>) -> JoinHandle<()> {
+pub(crate) fn spawn(rx: Receiver<WindowShiftMsg>) -> JoinHandle<()> {
     thread::spawn(|| {
         begin(rx).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

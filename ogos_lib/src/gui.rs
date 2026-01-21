@@ -228,7 +228,7 @@ fn load_and_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::Col
     Ok((color_image, dst_pixels))
 }
 
-unsafe fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordInfo>) {
+fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordInfo>) {
     thread::spawn(move || {
         (|| -> Res<()> {
             let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
@@ -1242,15 +1242,13 @@ impl<'a> MediaBrowser<'a> {
                     if resp.clicked() {
                         let discord_info = self.discord_enabled.then_some(self.make_discord_info(i));
 
-                        unsafe {
-                            open_media(
-                                self.details_info.dir_entries[i].path.clone(),
-                                self.details_info.dir_entries[i].file_kind,
-                                self.maintain_sample_rate,
-                                self.use_glsl_shaders,
-                                discord_info
-                            );
-                        }
+                        open_media(
+                            self.details_info.dir_entries[i].path.clone(),
+                            self.details_info.dir_entries[i].file_kind,
+                            self.maintain_sample_rate,
+                            self.use_glsl_shaders,
+                            discord_info
+                        );
                     }
                 }
             });

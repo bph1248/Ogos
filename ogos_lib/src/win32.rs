@@ -41,7 +41,7 @@ pub(crate) struct WinStr {
     pcwstr: PCWSTR
 }
 impl WinStr {
-    pub(crate) unsafe fn new(s: &str) -> Self {
+    pub(crate) unsafe fn new(s: &str) -> Self { unsafe {
         let _wide = U16CString::from_str_unchecked(s);
         let pcwstr = PCWSTR(_wide.as_ptr());
 
@@ -49,7 +49,7 @@ impl WinStr {
             _wide,
             pcwstr
         }
-    }
+    } }
 }
 impl Default for WinStr {
     fn default() -> Self {
@@ -115,35 +115,35 @@ impl AsHwnd for usize {
 
 pub(crate) trait HwndExt {
     fn as_usize(&self) -> usize;
-    unsafe fn get_caption(&self) -> Res1<String>;
-    unsafe fn get_caption_or_err(&self) -> String;
-    unsafe fn get_class(&self) -> Res1<String>;
-    unsafe fn _get_class_or_err(&self) -> String;
-    unsafe fn get_exe(&self) -> Res1<String>;
-    unsafe fn get_exe_or_err(&self) -> String;
-    unsafe fn _get_last_visible_active_popup(&self) -> HWND;
-    unsafe fn get_parent(&self) -> windows::core::Result<HWND>;
-    unsafe fn get_placement(&self, screen_extent: Extent2d) -> Res1<WindowPlacement>;
-    unsafe fn get_rect(&self) -> windows::core::Result<RECT>;
-    unsafe fn get_text(&self) -> Res2<WindowText>;
-    unsafe fn get_thread_proc_ids(&self) -> windows::core::Result<Tpids>;
-    unsafe fn has_parent(&self) -> bool;
-    unsafe fn hide(&self);
-    unsafe fn _is_alt_tab_window(&self) -> bool;
-    unsafe fn is_cloaked(&self) -> windows::core::Result<bool>;
-    unsafe fn is_eligible_for_shift(&self, screen_extent: Extent2d) -> Res2<bool>;
-    unsafe fn is_fullscreen(&self, screen_extent: Extent2d) -> windows::core::Result<bool>;
-    unsafe fn is_iconic(&self) -> bool;
-    unsafe fn is_visible(&self) -> bool;
-    unsafe fn may_hook_location_change(&self) -> Res1<bool>;
-    unsafe fn show_na(&self);
+    fn get_caption(&self) -> Res1<String>;
+    fn get_caption_or_err(&self) -> String;
+    fn get_class(&self) -> Res1<String>;
+    fn _get_class_or_err(&self) -> String;
+    fn get_exe(&self) -> Res1<String>;
+    fn get_exe_or_err(&self) -> String;
+    fn _get_last_visible_active_popup(&self) -> HWND;
+    fn get_parent(&self) -> windows::core::Result<HWND>;
+    fn get_placement(&self, screen_extent: Extent2d) -> Res1<WindowPlacement>;
+    fn get_rect(&self) -> windows::core::Result<RECT>;
+    fn get_text(&self) -> Res2<WindowText>;
+    fn get_thread_proc_ids(&self) -> windows::core::Result<Tpids>;
+    fn has_parent(&self) -> bool;
+    fn hide(&self);
+    fn _is_alt_tab_window(&self) -> bool;
+    fn is_cloaked(&self) -> windows::core::Result<bool>;
+    fn is_eligible_for_shift(&self, screen_extent: Extent2d) -> Res2<bool>;
+    fn is_fullscreen(&self, screen_extent: Extent2d) -> windows::core::Result<bool>;
+    fn is_iconic(&self) -> bool;
+    fn is_visible(&self) -> bool;
+    fn may_hook_location_change(&self) -> Res1<bool>;
+    fn show_na(&self);
 }
 impl HwndExt for HWND {
     fn as_usize(&self) -> usize {
         self.0 as usize
     }
 
-    unsafe fn get_caption(&self) -> Res1<String> {
+    fn get_caption(&self) -> Res1<String> { unsafe {
         SetLastError(NO_ERROR);
 
         let text_len = GetWindowTextLengthW(*self);
@@ -155,24 +155,24 @@ impl HwndExt for HWND {
         GetWindowTextW(*self, &mut text).win32_core_ok()?;
 
         Ok(String::from_utf16(&text[..text_len as usize])?)
-    }
+    } }
 
-    unsafe fn get_caption_or_err(&self) -> String {
+    fn get_caption_or_err(&self) -> String {
         self.get_caption().unwrap_or_else(|_| ERR_STR.into())
     }
 
-    unsafe fn get_class(&self) -> Res1<String> {
+    fn get_class(&self) -> Res1<String> { unsafe {
         let mut class_name = [0_u16; MAX_CLASS_NAME_LEN + 1];
         let class_name_len = GetClassNameW(*self, &mut class_name).win32_core_ok()?;
 
         Ok(String::from_utf16(&class_name[..class_name_len as usize])?)
-    }
+    } }
 
-    unsafe fn _get_class_or_err(&self) -> String {
+    fn _get_class_or_err(&self) -> String {
         self.get_class().unwrap_or_else(|_| ERR_STR.into())
     }
 
-    unsafe fn get_exe(&self) -> Res1<String> {
+    fn get_exe(&self) -> Res1<String> { unsafe {
         let tpids = self.get_thread_proc_ids()?;
         let proc_hnd = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, tpids.proc)?;
 
@@ -185,13 +185,13 @@ impl HwndExt for HWND {
         let proc_image_exe = PathFindFileNameW(proc_image_exe);
 
         Ok(String::from_utf16(proc_image_exe.as_wide())?)
-    }
+    } }
 
-    unsafe fn get_exe_or_err(&self) -> String {
+    fn get_exe_or_err(&self) -> String {
         self.get_exe().unwrap_or_else(|_| ERR_STR.into())
     }
 
-    unsafe fn _get_last_visible_active_popup(&self) -> Self { // "Popup" is a bit of a misnomer and doesn't strictly refer to windows with the WS_POPUP style
+    fn _get_last_visible_active_popup(&self) -> Self { unsafe { // "Popup" is a bit of a misnomer and doesn't strictly refer to windows with the WS_POPUP style
         let last_active_popup = GetLastActivePopup(*self);
 
         if IsWindowVisible(last_active_popup).as_bool() {
@@ -203,13 +203,13 @@ impl HwndExt for HWND {
         }
 
         last_active_popup._get_last_visible_active_popup()
-    }
+    } }
 
-    unsafe fn get_parent(&self) -> windows::core::Result<HWND> {
+    fn get_parent(&self) -> windows::core::Result<HWND> { unsafe {
         GetParent(*self)
-    }
+    } }
 
-    unsafe fn get_placement(&self, screen_extent: Extent2d) -> Res1<WindowPlacement> {
+    fn get_placement(&self, screen_extent: Extent2d) -> Res1<WindowPlacement> { unsafe {
         use WindowPlacement::*;
 
         match self.is_fullscreen(screen_extent)? {
@@ -228,53 +228,51 @@ impl HwndExt for HWND {
                 )
             }
         }
-    }
+    } }
 
-    unsafe fn get_rect(&self) -> windows::core::Result<RECT> {
+    fn get_rect(&self) -> windows::core::Result<RECT> { unsafe {
         let mut rect = RECT::default();
         GetWindowRect(*self, &mut rect)?;
 
         Ok(rect)
+    } }
+
+    fn get_text(&self) -> Res2<WindowText> {
+        Ok(WindowText {
+            caption: self.get_caption()?,
+            class: self.get_class()?
+        })
     }
 
-    unsafe fn get_text(&self) -> Res2<WindowText> {
-        Ok(
-            WindowText {
-                caption: self.get_caption()?,
-                class: self.get_class()?
-            }
-        )
-    }
-
-    unsafe fn get_thread_proc_ids(&self) -> windows::core::Result<Tpids> {
+    fn get_thread_proc_ids(&self) -> windows::core::Result<Tpids> { unsafe {
         let mut proc_id = 0;
         let thread_id = GetWindowThreadProcessId(*self, Some(&mut proc_id)).win32_core_ok()?;
 
         Ok(Tpids { thread: thread_id, proc: proc_id })
-    }
+    } }
 
-    unsafe fn has_parent(&self) -> bool {
+    fn has_parent(&self) -> bool {
         self.get_parent().is_ok()
     }
 
-    unsafe fn hide(&self) {
+    fn hide(&self) { unsafe {
         _ = ShowWindow(*self, SW_HIDE);
-    }
+    } }
 
-    unsafe fn _is_alt_tab_window(&self) -> bool {
+    fn _is_alt_tab_window(&self) -> bool { unsafe {
         let root_owner = GetAncestor(*self, GA_ROOTOWNER);
 
         root_owner._get_last_visible_active_popup() == *self
-    }
+    } }
 
-    unsafe fn is_cloaked(&self) -> windows::core::Result<bool> {
+    fn is_cloaked(&self) -> windows::core::Result<bool> { unsafe {
         let mut cloak_kind = 0_u32;
         DwmGetWindowAttribute(*self, DWMWA_CLOAKED, &mut cloak_kind as *mut _ as *mut _, size_of_val(&cloak_kind) as u32)?;
 
         Ok(cloak_kind > 0)
-    }
+    } }
 
-    unsafe fn is_eligible_for_shift(&self, screen_extent: Extent2d) -> Res2<bool> {
+    fn is_eligible_for_shift(&self, screen_extent: Extent2d) -> Res2<bool> {
         Ok(
             self.is_visible() &&
             !self.has_parent() &&
@@ -284,29 +282,29 @@ impl HwndExt for HWND {
         )
     }
 
-    unsafe fn is_fullscreen(&self, screen_extent: Extent2d) -> windows::core::Result<bool> {
+    fn is_fullscreen(&self, screen_extent: Extent2d) -> windows::core::Result<bool> {
         let win_rect = self.get_rect()?;
 
         Ok(win_rect == screen_extent.into_rect())
     }
 
-    unsafe fn is_iconic(&self) -> bool {
+    fn is_iconic(&self) -> bool { unsafe {
         IsIconic(*self).as_bool()
-    }
+    } }
 
-    unsafe fn is_visible(&self) -> bool {
+    fn is_visible(&self) -> bool { unsafe {
         IsWindowVisible(*self).as_bool()
-    }
+    } }
 
-    unsafe fn may_hook_location_change(&self) -> Res1<bool> {
+    fn may_hook_location_change(&self) -> Res1<bool> {
         let class = self.get_class()?;
 
         Ok(!matches!(class.as_str(), "Blank Screen Saver" | "ForegroundStaging" | "Shell_TrayWnd" | "WorkerW" | "XamlExplorerHostIslandWindow"))
     }
 
-    unsafe fn show_na(&self) {
+    fn show_na(&self) { unsafe {
         _ = ShowWindow(*self, SW_SHOWNA);
-    }
+    } }
 }
 
 macro_rules! impl_ConstString {
@@ -404,20 +402,20 @@ impl ConstString for u32 {
     );
 }
 
-pub(crate) unsafe fn display_message_box(msg: &str) -> ResVar<()> {
+pub(crate) fn display_message_box(msg: &str) -> ResVar<()> { unsafe {
     let caption = w!("Ogos");
     let msg = msg.to_win_str();
 
     MessageBoxW(None, *msg, caption, MB_OK).0.win32_core_ok()?;
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn set_cursor_size(size: usize) -> windows::core::Result<()> {
+pub(crate) fn set_cursor_size(size: usize) -> windows::core::Result<()> { unsafe {
     const SPIF_NONE: SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS = SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0); // Don't update user profile or broadcast WM_SETTINGCHANGE
     SystemParametersInfoW(SYSTEM_PARAMETERS_INFO_ACTION(0x2029), 0, Some(size as *mut _), SPIF_NONE)?;
 
     info!("{}: cursor size: {}", module_path!(), size);
 
     Ok(())
-}
+} }

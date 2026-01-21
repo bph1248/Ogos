@@ -104,10 +104,10 @@ impl WinEventHookContext {
 }
 impl Display for WinEventHookContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        unsafe { match self.get_hwnd() {
+        match self.get_hwnd() {
             Some(hwnd) => write!(f, "{}: hwnd: {:p}, exe: {}, caption: {}", self.name(), hwnd.0, hwnd.get_exe_or_err(), hwnd.get_caption_or_err()),
             None => write!(f, "{}", self.name())
-        } }
+        }
     }
 }
 impl Name for WinEventHookContext {
@@ -116,7 +116,7 @@ impl Name for WinEventHookContext {
     }
 }
 
-unsafe fn cleanup_hooks(hooks: &[HWINEVENTHOOK]) {
+fn cleanup_hooks(hooks: &[HWINEVENTHOOK]) { unsafe {
     for hook in hooks {
         if let Err(err) = UnhookWinEvent(*hook).ok() &&
             err.as_win32_error() != ERROR_INVALID_HANDLE
@@ -126,15 +126,15 @@ unsafe fn cleanup_hooks(hooks: &[HWINEVENTHOOK]) {
             PostQuitMessage(1);
         }
     }
-}
+} }
 
-unsafe fn error_and_close(msg_name: &str, err: ErrLoc) {
+fn error_and_close(msg_name: &str, err: ErrLoc) { unsafe {
     error!("{}: failed to dispatch message - closing: {}: {}", module_path!(), msg_name, err);
 
     PostQuitMessage(1);
-}
+} }
 
-unsafe fn dispatch_msg<T>(msg: T) where
+fn dispatch_msg<T>(msg: T) where
     T: Dispatch + Name
 {
     let msg_name = msg.name();
@@ -203,7 +203,7 @@ unsafe extern "system" fn window_shift_proc(_: HWINEVENTHOOK, event: u32, hwnd: 
     dispatch_msg(msg);
 }
 
-unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
     match msg {
         WM_CLOSE => {
             info!("{}: closing hitbox", module_path!());
@@ -233,17 +233,17 @@ unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_NCCREATE => LRESULT(1),
         _ => DefWindowProcW(hwnd, msg, wparam, lparam)
     }
-}
+} }
 
-unsafe extern "system" fn message_only_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn message_only_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
     if msg == WM_DISPLAYCHANGE {
         dispatch_msg(BroadcastMsg::WmDisplayChange(lparam));
     }
 
     DefWindowProcW(hwnd, msg, wparam, lparam)
-}
+} }
 
-unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
+fn init_hitbox(sxs: &Senders) -> Res1<HWND> { unsafe {
     SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
 
     let config = config::get().read()?;
@@ -345,9 +345,9 @@ unsafe fn init_hitbox(sxs: &Senders) -> Res1<HWND> {
     sxs.window_foreground.as_ref().unwrap().send(WindowForegroundMsg::Taskbar(Box::new(tb)))?;
 
     Ok(hitbox_hwnd)
-}
+} }
 
-unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> Res<()> {
+fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let mut msg = MSG::default();
@@ -470,9 +470,9 @@ unsafe fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Send
     info!("{}: closed", module_path!());
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn spawn(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> JoinHandle<()> {
+pub(crate) fn spawn(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> JoinHandle<()> {
     thread::spawn(move || {
         begin(enable, sxs, ready_sx).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

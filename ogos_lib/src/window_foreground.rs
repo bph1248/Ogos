@@ -187,7 +187,7 @@ pub(crate) enum Side {
     Bottom
 }
 
-unsafe fn leak_win_event_hooks(ts: &mut ThreadState, request: WinEventHookRequest) -> ResVar<()> {
+fn leak_win_event_hooks(ts: &mut ThreadState, request: WinEventHookRequest) -> ResVar<()> { unsafe {
     let request: (Option<WinEventHooksSx>, _) = (None, request);
     let cargo = Box::into_raw(Box::new(request));
 
@@ -196,9 +196,9 @@ unsafe fn leak_win_event_hooks(ts: &mut ThreadState, request: WinEventHookReques
     }
 
     Ok(())
-}
+} }
 
-unsafe fn request_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> windows::core::Result<WinEventHooksRx> {
+fn request_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> windows::core::Result<WinEventHooksRx> { unsafe {
     let (sx, rx) = oneshot::channel::<Res<Vec<HWINEVENTHOOK>>>();
     let request = (Some(sx), request);
     let cargo = Box::into_raw(Box::new(request));
@@ -206,17 +206,17 @@ unsafe fn request_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookReques
     PostThreadMessageW(hook_mgr_tid, WM_OGOS_REQUEST_WIN_EVENT_HOOKS, WPARAM(0), LPARAM(cargo as isize))?;
 
     Ok(rx)
-}
+} }
 
-unsafe fn request_win_event_unhooks(hook_mgr_tid: u32, request: WinEventUnhookRequest) -> windows::core::Result<()> {
+fn request_win_event_unhooks(hook_mgr_tid: u32, request: WinEventUnhookRequest) -> windows::core::Result<()> { unsafe {
     let cargo = Box::into_raw(Box::new(request));
 
     PostThreadMessageW(hook_mgr_tid, WM_OGOS_REQUEST_WIN_EVENT_UNHOOKS, WPARAM(0), LPARAM(cargo as isize))?;
 
     Ok(())
-}
+} }
 
-unsafe fn handle_wm_display_change(tb: &mut Taskbar, lparam: LPARAM) {
+fn handle_wm_display_change(tb: &mut Taskbar, lparam: LPARAM) {
     tb.screen_extent.width = (lparam.0 & 0xFFFF) as i32;
     tb.screen_extent.height = ((lparam.0 >> 16) & 0xFFFF) as i32;
 
@@ -228,7 +228,7 @@ unsafe fn handle_wm_display_change(tb: &mut Taskbar, lparam: LPARAM) {
     tb.screen_extent_changed = true;
 }
 
-unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant) -> Res1<()> {
+fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant) -> Res1<()> { unsafe {
     if let Some(anchor) = tb.hitbox_mouse_move_anchor &&
         stamp.duration_since(anchor).is_zero() // WM_MOUSEMOVE msg is too old
     {
@@ -329,9 +329,9 @@ unsafe fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant
     }
 
     Ok(())
-}
+} }
 
-unsafe fn handle_win_event_hook_all_other_foreground_destroy(ts: &mut ThreadState, hook: HWINEVENTHOOK, hwnd: HWND) -> windows::core::Result<()> {
+fn handle_win_event_hook_all_other_foreground_destroy(ts: &mut ThreadState, hook: HWINEVENTHOOK, hwnd: HWND) -> windows::core::Result<()> {
     if let Some(win_info) = ts.win_infos.remove(&hwnd.as_usize()) {
         if let Some(hwnd_count) = ts.thread_hwnd_counts.get_mut(&win_info.tpids.thread.into()) {
             *hwnd_count -= 1;
@@ -352,7 +352,7 @@ unsafe fn handle_win_event_hook_all_other_foreground_destroy(ts: &mut ThreadStat
     Ok(())
 }
 
-unsafe fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWND) -> Res1<()> {
+fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWND) -> Res1<()> { unsafe {
     let tb = ts.tb.as_mut().unwrap();
 
     match hwnd {
@@ -429,9 +429,9 @@ unsafe fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWN
     ts.win_errored.remove(&hwnd.as_usize());
 
     Ok(())
-}
+} }
 
-unsafe fn handle_win_event_hook_shell_experience_host_destroy(ts: &mut ThreadState, hook: HWINEVENTHOOK, hwnd: HWND) -> Res1<()> {
+fn handle_win_event_hook_shell_experience_host_destroy(ts: &mut ThreadState, hook: HWINEVENTHOOK, hwnd: HWND) -> Res1<()> {
     let tb = ts.tb.as_mut().unwrap();
 
     if matches!(tb.shell_experience_state, Some((shell_experience_hwnd, _)) if shell_experience_hwnd == hwnd) {
@@ -444,7 +444,7 @@ unsafe fn handle_win_event_hook_shell_experience_host_destroy(ts: &mut ThreadSta
     Ok(())
 }
 
-unsafe fn handle_win_event_hook_foreground_location_change(tb: &Taskbar, hwnd: HWND) -> Res1<()> {
+fn handle_win_event_hook_foreground_location_change(tb: &Taskbar, hwnd: HWND) -> Res1<()> {
     if hwnd == tb.cur_foreground_hwnd {
         match hwnd.is_fullscreen(tb.screen_extent)? {
             true => tb.hitbox_hwnd.hide(),
@@ -455,7 +455,7 @@ unsafe fn handle_win_event_hook_foreground_location_change(tb: &Taskbar, hwnd: H
     Ok(())
 }
 
-unsafe fn handle_win_event_hook_shell_experience_host_location_change(ts: &mut ThreadState, hook: HWINEVENTHOOK, hwnd: HWND) -> Res2<()> {
+fn handle_win_event_hook_shell_experience_host_location_change(ts: &mut ThreadState, hook: HWINEVENTHOOK, hwnd: HWND) -> Res2<()> {
     let caption = hwnd.get_caption()?;
 
     match caption {
@@ -481,7 +481,7 @@ unsafe fn handle_win_event_hook_shell_experience_host_location_change(ts: &mut T
     Ok(())
 }
 
-unsafe fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: HWND) -> Res1<()> {
+fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: HWND) -> Res1<()> { unsafe {
     match hwnd {
         _ if hwnd == tb.taskbar_hwnd => {
             let taskbar_rect = tb.taskbar_hwnd.get_rect()?;
@@ -535,9 +535,9 @@ unsafe fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: 
     }
 
     Ok(())
-}
+} }
 
-unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res2<()> {
+fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res2<()> { unsafe {
     // Garner info
     let win_info = match ts.win_infos.get(&hwnd.as_usize()) {
         Some(win_info) => win_info,
@@ -594,9 +594,7 @@ unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND)
             // Everything else
             let exe = hwnd.get_exe()?;
             let has_maps = ts.binds.as_ref()
-                .map(|binds| {
-                   has_maps(binds, exe.as_str())
-                })
+                .map(|binds| has_maps(binds, exe.as_str()))
                 .unwrap_or_default();
 
             let win_info = WinInfo {
@@ -694,7 +692,7 @@ unsafe fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND)
     }
 
     Ok(())
-}
+} }
 
 fn has_maps(binds: &Binds, exe: &str) -> bool {
     binds.maps.as_ref()
@@ -765,7 +763,7 @@ fn bind_maps(binds: &mut Binds, exe: &str) {
     }
 }
 
-unsafe fn move_hitbox_about_jump_list(tb: &Taskbar, jump_list_hwnd: HWND) -> Res1<()> {
+fn move_hitbox_about_jump_list(tb: &Taskbar, jump_list_hwnd: HWND) -> Res1<()> { unsafe {
     if tb.taskbar_side == Side::Bottom && tb.hitbox_state == HitboxState::Exit && tb.hitbox_exit_snap_ordinate.is_some() {
         let jump_list_rect = jump_list_hwnd.get_rect()?;
         let hitbox_pos_exit_y = jump_list_rect.top - tb.screen_extent.height - tb.hitbox_exit_jump_list_offset_px;
@@ -774,9 +772,9 @@ unsafe fn move_hitbox_about_jump_list(tb: &Taskbar, jump_list_hwnd: HWND) -> Res
     }
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn get_hitbox_pos(taskbar_rect: RECT, taskbar_side: Side, hitbox_side: Side, hitbox_entry_inset: i32, hitbox_exit_taskbar_offset: i32, screen_extent: Extent2d) -> HitboxPos {
+pub(crate) fn get_hitbox_pos(taskbar_rect: RECT, taskbar_side: Side, hitbox_side: Side, hitbox_entry_inset: i32, hitbox_exit_taskbar_offset: i32, screen_extent: Extent2d) -> HitboxPos {
     let screen_rect = screen_extent.into_rect();
 
     let entry = match hitbox_side {
@@ -798,7 +796,7 @@ pub(crate) unsafe fn get_hitbox_pos(taskbar_rect: RECT, taskbar_side: Side, hitb
     }
 }
 
-pub(crate) unsafe fn get_hitbox_exit_snap_ordinate(taskbar_side: Side, extent_extent: Extent2d, pc: u32) -> i32 {
+pub(crate) fn get_hitbox_exit_snap_ordinate(taskbar_side: Side, extent_extent: Extent2d, pc: u32) -> i32 {
     let pc = f64::from(pc) / f64::from(100);
 
     match taskbar_side {
@@ -807,7 +805,7 @@ pub(crate) unsafe fn get_hitbox_exit_snap_ordinate(taskbar_side: Side, extent_ex
     }
 }
 
-pub(crate) unsafe fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2d) -> Side {
+pub(crate) fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2d) -> Side {
     let screen_rect = screen_extent.into_rect();
 
     match taskbar_rect.width() > taskbar_rect.height() {
@@ -851,11 +849,11 @@ fn init_binds<'a>() -> Res1<Binds<'a>> {
     .map_err(|err| err.msg("failed to init binds"))
 }
 
-unsafe fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
+fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
     match rx.recv()? {
         WindowForegroundMsg::Taskbar(tb) => {
             tb.taskbar_hwnd.hide();
-            _ = ShowWindow(tb.hitbox_hwnd, SW_SHOWNA);
+            tb.hitbox_hwnd.show_na();
 
             Ok(*tb)
         },
@@ -863,7 +861,7 @@ unsafe fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
     }
 }
 
-unsafe fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> Res<()> {
+fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let mut ts = ThreadState {
@@ -962,9 +960,9 @@ unsafe fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroun
     info!("{}: closed", module_path!());
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn spawn(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
+pub(crate) fn spawn(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
     thread::spawn(move || {
         begin(enable, rx, hook_mgr_tid).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

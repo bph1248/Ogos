@@ -437,9 +437,9 @@ impl StrExt for &str {
         buf
     }
 
-    unsafe fn to_win_str(&self) -> WinStr {
+    unsafe fn to_win_str(&self) -> WinStr { unsafe {
         WinStr::new(self)
-    }
+    } }
 }
 
 pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, sleep_dur: Duration) -> Res<T> {
@@ -531,7 +531,7 @@ pub(crate) fn spawn_command(cmd: &mut Command) -> ResVar<Child> {
     Ok(output)
 }
 
-pub(crate) unsafe fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) -> windows::core::Result<()> {
+pub(crate) fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) -> windows::core::Result<()> { unsafe {
     const NORM: i64 = 65535;
 
     let x = i64::from(x);
@@ -559,4 +559,4 @@ pub(crate) unsafe fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) ->
     };
 
     SendInput(&[input], size_of::<INPUT>() as i32).win32_core_ok().map(|_| ())
-}
+} }

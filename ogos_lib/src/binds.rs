@@ -70,7 +70,7 @@ pub(crate) mod qmk_deser {
 mod trigger_watch {
     use super::*;
 
-    pub(crate) unsafe fn begin(hotkey_tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: Receiver<InputEvent>) {
+    pub(crate) fn begin(hotkey_tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: Receiver<InputEvent>) {
         for trigger in rx.iter() {
             if let InputEvent::Keyboard(key) = trigger && let Some(task) = hotkey_tasks.get(&key) {
                 match task {
@@ -80,9 +80,11 @@ mod trigger_watch {
                     Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
                         error!("{}: failed to let walk away: {}", module_path!(), err);
                     }),
-                    Task::SetSleepMode => _ = SetSuspendState(false, false, true).win32_core_ok().x().inspect_err(|err| {
-                        error!("{}: failed to set sleep mode: {}", module_path!(), err);
-                    }),
+                    Task::SetSleepMode => unsafe {
+                        _ = SetSuspendState(false, false, true).win32_core_ok().x().inspect_err(|err| {
+                            error!("{}: failed to set sleep mode: {}", module_path!(), err);
+                        });
+                    },
                     Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
                         error!("{}: failed to toggle display mode: {}", module_path!(), err);
                     }),
@@ -746,7 +748,7 @@ impl TryAsKey for Keycode {
 }
 
 cfg_if! { if #[cfg(feature = "dbg_window_info")] {
-    unsafe extern "system" fn enum_windows_eligible_for_shift_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    unsafe extern "system" fn enum_windows_eligible_for_shift_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
         let EligibleForShiftInfo { eligibles, screen_extent } = &mut *(lparam.0 as *mut _);
 
         if hwnd.is_eligible_for_shift(*screen_extent).unwrap_or_default() {
@@ -754,16 +756,16 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
         }
 
         TRUE
-    }
+    } }
 
-    unsafe extern "system" fn enum_child_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    unsafe extern "system" fn enum_child_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
         let children = &mut *(lparam.0 as *mut Vec<HWND>);
         children.push(hwnd);
 
         TRUE
-    }
+    } }
 
-    unsafe extern "system" fn enum_windows_tl_siblings_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    unsafe extern "system" fn enum_windows_tl_siblings_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
         let TopLevelSiblingsInfo { fg_pid, siblings } = &mut *(lparam.0 as *mut _);
 
         let mut win_pid = 0;
@@ -774,9 +776,9 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
         }
 
         TRUE
-    }
+    } }
 
-    unsafe fn _is_top_level_window(hwnd: HWND) -> bool {
+    fn _is_top_level_window(hwnd: HWND) -> bool { unsafe {
         let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
         let parent = hwnd.get_parent().unwrap_or_default();
 
@@ -785,9 +787,9 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
         let is_owned_popup = !owner.is_invalid() && (style & WS_POPUP == WS_POPUP);
 
         !is_child_window && (parent.is_invalid() || is_owned_popup)
-    }
+    } }
 
-    unsafe fn print_eligible_for_shift_info() -> Res<()> {
+    fn print_eligible_for_shift_info() -> Res<()> { unsafe {
         let screen_extent = get_screen_extent()?;
         let mut eligible_for_shift_info = EligibleForShiftInfo {
             eligibles: Vec::new(),
@@ -809,9 +811,9 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
         }
 
         Ok(())
-    }
+    } }
 
-    unsafe fn print_foreground_info() -> Res<()> {
+    fn print_foreground_info() -> Res<()> { unsafe {
         let fg_hwnd = GetForegroundWindow();
         let fg_exe = fg_hwnd.get_exe_or_err();
         let fg_tpids = fg_hwnd.get_thread_proc_ids().unwrap_or_default();
@@ -859,7 +861,7 @@ cfg_if! { if #[cfg(feature = "dbg_window_info")] {
         }
 
         Ok(())
-    }
+    } }
 } }
 
 pub(crate) fn click_with_sleep(event: InputEvent) {
@@ -898,7 +900,7 @@ pub(crate) fn unmap_qmk(qmk: &QmkRuntime, from: Key) {
     }
 }
 
-pub(crate) unsafe fn configure_static_binds() -> Res<()> {
+pub(crate) fn configure_static_binds() -> Res<()> {
     let config = config::get().read()?;
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: Binds::NAME })?;
 
@@ -1009,7 +1011,7 @@ pub(crate) unsafe fn configure_static_binds() -> Res<()> {
     Ok(())
 }
 
-pub(crate) unsafe fn reconfigure_static_binds() {
+pub(crate) fn reconfigure_static_binds() {
     mki::clear();
 
     configure_static_binds().unwrap_or_else(|err| {

@@ -396,7 +396,7 @@ fn make_novideo_srgb_apply_info(info: &NovideoSrgbInfo) -> Res1<(NovideoSrgbAppl
     ))
 }
 
-pub(crate) unsafe fn control_novideo_srgb(info: &NovideoSrgbInfo) -> Res2<()> {
+pub(crate) fn control_novideo_srgb(info: &NovideoSrgbInfo) -> Res2<()> { unsafe {
     match NOVIDEO_SRGB_FFI.get_unchecked() {
         Some(ffi) => {
             let apply_info = make_novideo_srgb_apply_info(info)?;
@@ -408,7 +408,7 @@ pub(crate) unsafe fn control_novideo_srgb(info: &NovideoSrgbInfo) -> Res2<()> {
         },
         None => Err(ErrVar::MissingNovideoSrgbFfi)?
     }
-}
+} }
 
 pub(crate) fn control_wallpaper_engine(arg: WallpaperEngineArg, system: &mut System) -> Res1<()> {
     if get_first_process(App::WALLPAPER_ENGINE, system).is_some() {
@@ -427,7 +427,7 @@ pub(crate) fn control_wallpaper_engine(arg: WallpaperEngineArg, system: &mut Sys
     Ok(())
 }
 
-pub(crate) unsafe fn control_windows(arg: ControlWindowsArg) -> Res1<()> {
+pub(crate) fn control_windows(arg: ControlWindowsArg) -> Res1<()> { unsafe {
     let taskbar_class_name = window_foreground::TASKBAR_CLASS_NAME.to_win_str();
     let taskbar_hwnd = FindWindowW(Some(&*taskbar_class_name), None)?;
 
@@ -442,9 +442,9 @@ pub(crate) unsafe fn control_windows(arg: ControlWindowsArg) -> Res1<()> {
     info!("{}: control windows: {}", module_path!(), arg);
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>) -> Res2<()> {
+pub(crate) fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>) -> Res2<()> { unsafe {
     let system = (|| -> Res<Option<System>> {
         if let Some(prelude) = prelude {
             if prelude.let_walk_away { let_walk_away()?; }
@@ -509,24 +509,24 @@ pub(crate) unsafe fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>
     }
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn enable_screensaver() -> ResVar<()> {
+pub(crate) fn enable_screensaver() -> ResVar<()> { unsafe {
     SendMessageW(GetDesktopWindow(), WM_SYSCOMMAND, Some(WPARAM(SC_SCREENSAVE as usize)), None).win32_var_ok()?;
 
     info!("{}: screensaver: enabled", module_path!());
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn let_walk_away() -> Res2<()> {
+pub(crate) fn let_walk_away() -> Res2<()> {
     control_windows(ControlWindowsArg::MinimizeAll)?;
     enable_screensaver()?;
 
     Ok(())
 }
 
-unsafe fn get_color_bit_depth(display_id: NvU32) -> nvapi::Result<ColorBitDepth> {
+fn get_color_bit_depth(display_id: NvU32) -> nvapi::Result<ColorBitDepth> { unsafe {
     use nvapi_530::*;
 
     let mut color_data = NV_COLOR_DATA {
@@ -548,9 +548,9 @@ unsafe fn get_color_bit_depth(display_id: NvU32) -> nvapi::Result<ColorBitDepth>
     };
 
     Ok(color_bit_depth)
-}
+} }
 
-pub(crate) unsafe fn get_display_friendly_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> {
+pub(crate) fn get_display_friendly_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> { unsafe {
     let mut target_device_name = DISPLAYCONFIG_TARGET_DEVICE_NAME {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
             r#type: DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
@@ -564,9 +564,9 @@ pub(crate) unsafe fn get_display_friendly_name(path: DISPLAYCONFIG_PATH_INFO) ->
     let friendly_name = U16CString::from_ptr_truncate(target_device_name.monitorFriendlyDeviceName.as_ptr(), target_device_name.monitorFriendlyDeviceName.len());
 
     Ok(friendly_name)
-}
+} }
 
-pub(crate) unsafe fn get_display_gdi_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> {
+pub(crate) fn get_display_gdi_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> { unsafe {
     let mut source_device_name = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
             r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
@@ -580,9 +580,9 @@ pub(crate) unsafe fn get_display_gdi_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1
     let gdi_name = U16CString::from_ptr_truncate(source_device_name.viewGdiDeviceName.as_ptr(), source_device_name.viewGdiDeviceName.len());
 
     Ok(gdi_name)
-}
+} }
 
-pub(crate) unsafe fn get_display_mode(path: DISPLAYCONFIG_PATH_INFO) -> Res1<DisplayMode> {
+pub(crate) fn get_display_mode(path: DISPLAYCONFIG_PATH_INFO) -> Res1<DisplayMode> { unsafe {
     let mut advanced_color_info = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2 {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
             r#type: DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2,
@@ -603,9 +603,9 @@ pub(crate) unsafe fn get_display_mode(path: DISPLAYCONFIG_PATH_INFO) -> Res1<Dis
     };
 
     Ok(display_mode)
-}
+} }
 
-unsafe fn get_dither_control(display_id: NvU32) -> nvapi::Result<NV_GPU_DITHER_CONTROL> {
+fn get_dither_control(display_id: NvU32) -> nvapi::Result<NV_GPU_DITHER_CONTROL> { unsafe {
     let mut dither_control = NV_GPU_DITHER_CONTROL {
         version: NV_DITHER_CONTROL_VER,
         ..default!()
@@ -613,9 +613,9 @@ unsafe fn get_dither_control(display_id: NvU32) -> nvapi::Result<NV_GPU_DITHER_C
     (*NVAPI_GPU_GET_DITHER_CONTROL_FN)(display_id, &mut dither_control).nvapi_ok()?;
 
     Ok(dither_control)
-}
+} }
 
-pub(crate) unsafe fn get_first_display_path() -> Res1<DISPLAYCONFIG_PATH_INFO> {
+pub(crate) fn get_first_display_path() -> Res1<DISPLAYCONFIG_PATH_INFO> { unsafe {
     let mut path_count = 0;
     let mut mode_count = 0;
     GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count).ok()?;
@@ -625,9 +625,9 @@ pub(crate) unsafe fn get_first_display_path() -> Res1<DISPLAYCONFIG_PATH_INFO> {
     QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &mut path_count, paths.as_mut_ptr(), &mut mode_count, modes.as_mut_ptr(), None).ok()?;
 
     Ok(paths[0])
-}
+} }
 
-pub(crate) unsafe fn get_first_gpu_display_ids() -> Res1<(NvPhysicalGpuHandle, NV_GPU_DISPLAYIDS)> {
+pub(crate) fn get_first_gpu_display_ids() -> Res1<(NvPhysicalGpuHandle, NV_GPU_DISPLAYIDS)> { unsafe {
     let mut gpu_hnds = [NvPhysicalGpuHandle::default(); NVAPI_MAX_PHYSICAL_GPUS];
     let mut gpu_count = 0;
     NvAPI_EnumPhysicalGPUs(&mut gpu_hnds, &mut gpu_count).nvapi_ok()?;
@@ -638,9 +638,9 @@ pub(crate) unsafe fn get_first_gpu_display_ids() -> Res1<(NvPhysicalGpuHandle, N
     NvAPI_GPU_GetConnectedDisplayIds(gpu_hnds[0], display_ids.as_mut_ptr(), &mut display_ids_count, 0).nvapi_ok()?; // Just use GPU 0
 
     Ok((gpu_hnds[0], display_ids[0]))
-}
+} }
 
-pub(crate) unsafe fn get_screen_extent() -> Res1<Extent2d> {
+pub(crate) fn get_screen_extent() -> Res1<Extent2d> { unsafe {
     let mut path_count = 0;
     let mut mode_count = 0;
     GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count).ok()?;
@@ -655,9 +655,9 @@ pub(crate) unsafe fn get_screen_extent() -> Res1<Extent2d> {
         width: source_mode.Anonymous.sourceMode.width as i32,
         height: source_mode.Anonymous.sourceMode.height as i32
     })
-}
+} }
 
-pub(crate) unsafe fn set_color_bit_depth(display_id: NvU32, bit_depth: ColorBitDepth) -> Res1<Option<ColorBitDepth>> {
+pub(crate) fn set_color_bit_depth(display_id: NvU32, bit_depth: ColorBitDepth) -> Res1<Option<ColorBitDepth>> { unsafe {
     use nvapi_530::*;
 
     let prev_bit_depth = get_color_bit_depth(display_id)?;
@@ -684,9 +684,9 @@ pub(crate) unsafe fn set_color_bit_depth(display_id: NvU32, bit_depth: ColorBitD
     info!("{}: color bit depth: {}", module_path!(), bit_depth);
 
     Ok(Some(prev_bit_depth))
-}
+} }
 
-unsafe fn set_display_mode_unchecked(display_mode: DisplayMode, display_path: DISPLAYCONFIG_PATH_INFO) -> windows::core::Result<()> {
+fn set_display_mode_unchecked(display_mode: DisplayMode, display_path: DISPLAYCONFIG_PATH_INFO) -> windows::core::Result<()> { unsafe {
     let set_hdr_state = DISPLAYCONFIG_SET_HDR_STATE {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
             r#type: DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE,
@@ -706,9 +706,9 @@ unsafe fn set_display_mode_unchecked(display_mode: DisplayMode, display_path: DI
     info!("{}: display mode: {}", module_path!(), display_mode);
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<DisplayMode>, { loc_var!(DisplayMode) }> {
+pub(crate) fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<DisplayMode>, { loc_var!(DisplayMode) }> {
     let display_path = get_first_display_path()?;
     let prev_display_mode = get_display_mode(display_path)?;
 
@@ -765,7 +765,7 @@ pub(crate) unsafe fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<Displa
     }
 }
 
-pub(crate) unsafe fn set_dither_control(gpu_hnd: NvPhysicalGpuHandle, display_id: NvU32, state: DitherState, bit_depth: DitherBitDepth, mode: DitherMode) -> Res1<Option<NV_GPU_DITHER_CONTROL>> {
+pub(crate) fn set_dither_control(gpu_hnd: NvPhysicalGpuHandle, display_id: NvU32, state: DitherState, bit_depth: DitherBitDepth, mode: DitherMode) -> Res1<Option<NV_GPU_DITHER_CONTROL>> { unsafe {
     let prev_dither_control = get_dither_control(display_id)?;
     let dither_control = NV_GPU_DITHER_CONTROL {
         state: *state,
@@ -783,9 +783,9 @@ pub(crate) unsafe fn set_dither_control(gpu_hnd: NvPhysicalGpuHandle, display_id
     info!("{}: dither: state: {}, bit depth: {}, mode: {}", module_path!(), state, bit_depth, mode);
 
     Ok(Some(prev_dither_control))
-}
+} }
 
-pub(crate) unsafe fn set_screen_extent(extent: Extent2dU) -> Res1<Option<Extent2dU>> {
+pub(crate) fn set_screen_extent(extent: Extent2dU) -> Res1<Option<Extent2dU>> { unsafe {
     let mut path_count = 0;
     let mut mode_count = 0;
     GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count).ok()?;
@@ -808,4 +808,4 @@ pub(crate) unsafe fn set_screen_extent(extent: Extent2dU) -> Res1<Option<Extent2
     SetDisplayConfig(Some(paths.as_slice()), Some(modes.as_slice()), SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG).win32_err_ok()?;
 
     Ok(Some(prev_extent))
-}
+} }

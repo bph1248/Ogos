@@ -46,7 +46,7 @@ impl Launcher {
     }
 }
 
-pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc_var!(Games) }> {
+pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc_var!(Games) }> { unsafe {
     let mut revert_to: Vec<GamesSetting> = Vec::new();
 
     let res = (|| -> Res<(), { loc_var!(Games) }> {
@@ -306,4 +306,4 @@ pub(crate) unsafe fn launch(name: &str, cli: &Cli, mut system: System) -> Res<()
     }
 
     res
-}
+} }

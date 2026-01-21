@@ -18,7 +18,7 @@ pub(crate) struct CursorWatch {
     pub(crate) request_stop: AtomicBool
 }
 
-pub(crate) unsafe fn begin(snap_ordinate: i32, screen_extent: Extent2d) -> Arc<CursorWatch> {
+pub(crate) fn begin(snap_ordinate: i32, screen_extent: Extent2d) -> Arc<CursorWatch> { unsafe {
     let (sx, rx) = mpsc::channel();
     let cursor_watch = Arc::new(CursorWatch {
         sx,
@@ -69,4 +69,4 @@ pub(crate) unsafe fn begin(snap_ordinate: i32, screen_extent: Extent2d) -> Arc<C
     });
 
     cursor_watch
-}
+} }

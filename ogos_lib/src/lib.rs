@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 #![allow(clippy::blocks_in_conditions)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::from_over_into)]
@@ -95,7 +93,7 @@ pub(crate) enum LongLivedTask {
     WindowWatch(Tid)
 }
 
-unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
     match msg {
         WM_CLOSE => {
             info!("{}: closing tray notify icon", module_path!());
@@ -146,9 +144,9 @@ unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WP
         },
         _ => DefWindowProcW(hwnd, msg, wparam, lparam)
     }
-}
+} }
 
-pub(crate) unsafe fn add_tray_notify_icon(register_class: bool) -> Res1<()> {
+pub(crate) fn add_tray_notify_icon(register_class: bool) -> Res1<()> { unsafe {
     let tray_class_name = "OgosTray".to_win_str();
     let exe_module = GetModuleHandleW(None)?;
     if register_class {
@@ -192,9 +190,9 @@ pub(crate) unsafe fn add_tray_notify_icon(register_class: bool) -> Res1<()> {
     Shell_NotifyIconW(NIM_ADD, &notify_icon_data).ok()?;
 
     Ok(())
-}
+} }
 
-unsafe fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf> {
+fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf> {
     let confirm_deps = |path: &Path| -> ResVar<()>{
         path.with_file_name("EDIDParser.dll").confirm()?;
         path.with_file_name("NvAPIWrapper.dll").confirm()?;
@@ -243,7 +241,7 @@ fn receive_ready(to_close: &mut Vec<LongLivedTask>, rx: mpsc::Receiver<ReadyMsg>
     window_watch_tid
 }
 
-unsafe fn shutdown(mut to_close: Vec<LongLivedTask>) {
+fn shutdown(mut to_close: Vec<LongLivedTask>) { unsafe {
     while let Some(long_lived_task) = to_close.pop() {
         (|| -> Res<()> {
             match long_lived_task {
@@ -259,9 +257,9 @@ unsafe fn shutdown(mut to_close: Vec<LongLivedTask>) {
             error!("{}: failed to close long-lived task: {}", module_path!(), err);
         });
     }
-}
+} }
 
-unsafe fn begin(system: System) -> Res<()> {
+fn begin(system: System) -> Res<()> {
     // Parse Cli
     let (cli, cli_path_kind) = parse_cli()?;
 
@@ -364,7 +362,7 @@ unsafe fn begin(system: System) -> Res<()> {
     }
 
     // Long-lived tasks
-    if cli.binds || cli.taskbar || cli.window_shift {
+    if cli.binds || cli.taskbar || cli.window_shift { unsafe {
         let mut thread_hnds = Vec::new();
         let mut to_close = Vec::new();
 
@@ -443,14 +441,14 @@ unsafe fn begin(system: System) -> Res<()> {
         for hnd in thread_hnds {
             _ = hnd.join();
         }
-    }
+    } }
 
     info!("{}: o/", module_path!());
 
     Ok(())
 }
 
-unsafe fn init() -> Res<System> {
+fn init() -> Res<System> {
     let current_exe_path = env::current_exe()?;
 
     let current_exe_file_name = current_exe_path.get_file_name()?;
@@ -536,7 +534,7 @@ unsafe fn init() -> Res<System> {
     Ok(system)
 }
 
-pub unsafe fn entry() -> Res<()> {
+pub fn entry() -> Res<()> { unsafe {
     let system = match init() {
         Ok(system) => system,
         Err(err) => {
@@ -568,4 +566,4 @@ pub unsafe fn entry() -> Res<()> {
     }
 
     Ok(())
-}
+} }

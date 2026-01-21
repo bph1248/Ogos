@@ -94,12 +94,12 @@ trait PlayNice {
     unsafe fn set_device_format(&self, device_name: impl Param<PCWSTR>, endpoint_format: *mut WAVEFORMATEX, mix_format: *mut WAVEFORMATEX) -> HRESULT;
 }
 impl PlayNice for IPolicyConfig {
-    unsafe fn set_device_format(&self, device_name: impl Param<PCWSTR>, endpoint_format: *mut WAVEFORMATEX, mix_format: *mut WAVEFORMATEX) -> HRESULT {
+    unsafe fn set_device_format(&self, device_name: impl Param<PCWSTR>, endpoint_format: *mut WAVEFORMATEX, mix_format: *mut WAVEFORMATEX) -> HRESULT { unsafe {
         (Interface::vtable(self).SetDeviceFormat)(Interface::as_raw(self), device_name.param().abi(), endpoint_format, mix_format)
-    }
+    } }
 }
 
-pub(crate) unsafe fn set_endpoint(name: &str) -> Res<()> {
+pub(crate) fn set_endpoint(name: &str) -> Res<()> { unsafe {
     CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
     let set_endpoint_res = (|| -> Res<()> {
@@ -147,9 +147,9 @@ pub(crate) unsafe fn set_endpoint(name: &str) -> Res<()> {
     }
 
     Ok(())
-}
+} }
 
-pub(crate) unsafe fn set_sample_rate(hz: Hz) -> Res<Option<Hz>> {
+pub(crate) fn set_sample_rate(hz: Hz) -> Res<Option<Hz>> { unsafe {
     CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
     let prev_hz = (|| -> Res<Option<Hz>> {
@@ -176,16 +176,16 @@ pub(crate) unsafe fn set_sample_rate(hz: Hz) -> Res<Option<Hz>> {
 
             info!("{}: set sample rate: {}", module_path!(), hz);
 
-            Ok(Some(prev_hz))
-        } else {
-            Ok(None)
+            return Ok(Some(prev_hz))
         }
+
+        Ok(None)
     })();
 
     CoUninitialize();
 
     prev_hz
-}
+} }
 
 pub(crate) fn set_eq(name: &str) -> Res<()> {
     let config = config::get().read()?;
