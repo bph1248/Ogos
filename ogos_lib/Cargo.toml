@@ -59,10 +59,13 @@ widestring = { workspace = true }
 windows = { workspace = true }
 windows_061 = { workspace = true }
 
+mki = { version = "0.2.3", optional = true }
+
 [package.metadata.cargo-shear]
 ignored = ["hidapi"]
 
 [features]
+about = ["mki"]
 dbg_console = []
 dbg_cpu_sets = []
 dbg_cursor_watch = []
