@@ -1,11 +1,9 @@
-use crate::Button;
-use std::mem;
-use std::mem::size_of;
-use winapi::um::winuser::{
-    INPUT_u, SendInput, INPUT, INPUT_MOUSE, LPINPUT, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
-    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
-    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT,
-    XBUTTON1, XBUTTON2,
+use crate::*;
+
+use std::mem::{self, *};
+use winapi::{
+    ctypes::*,
+    um::winuser::*
 };
 
 pub(crate) mod mimpl {
@@ -100,7 +98,7 @@ fn mouse_interact_with(mut interaction: u32, mouse_data: u16, pos: Option<Pos>) 
             u: input,
         };
 
-        SendInput(1, &mut x as LPINPUT, size_of::<INPUT>() as libc::c_int);
+        SendInput(1, &mut x as LPINPUT, size_of::<INPUT>() as c_int);
     }
 }
 

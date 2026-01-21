@@ -10,6 +10,7 @@ use std::{
     sync::mpsc::*
 };
 use winapi::{
+    ctypes::*,
     shared::{
         minwindef::*,
         windef::*
@@ -96,14 +97,14 @@ pub(crate) unsafe fn init_hooks(sx: Sender<u32>) {
 }
 
 fn install_hook(
-    hook_id: libc::c_int,
-    hook_proc: unsafe extern "system" fn(libc::c_int, WPARAM, LPARAM) -> LRESULT,
+    hook_id: c_int,
+    hook_proc: unsafe extern "system" fn(c_int, WPARAM, LPARAM) -> LRESULT,
 ) -> HHOOK {
     unsafe { SetWindowsHookExW(hook_id, Some(hook_proc), 0 as HINSTANCE, 0) }
 }
 
 unsafe extern "system" fn keyboard_proc(
-    code: libc::c_int,
+    code: c_int,
     w_param: WPARAM,
     l_param: LPARAM,
 ) -> LRESULT {
@@ -153,7 +154,7 @@ unsafe extern "system" fn keyboard_proc(
 }
 
 unsafe extern "system" fn mouse_proc(
-    code: libc::c_int,
+    code: c_int,
     w_param: WPARAM,
     l_param: LPARAM,
 ) -> LRESULT {

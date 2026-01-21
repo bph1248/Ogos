@@ -1,11 +1,10 @@
-use serde::*;
 use std::{
     fmt,
     str::*
 };
 
 #[cfg(target_os = "windows")] // Not sure how to detect double on linux
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Button {
     Left,
     DoubleLeft,
@@ -19,7 +18,7 @@ pub enum Button {
     DoubleExtra
 }
 #[cfg(target_os = "linux")]
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Mouse {
     Left,
     Right,
@@ -52,7 +51,7 @@ impl fmt::Display for Button {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Wheel {
     Up,
     Down
