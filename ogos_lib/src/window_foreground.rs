@@ -187,11 +187,11 @@ pub(crate) enum Side {
     Bottom
 }
 
-fn leak_win_event_hooks(ts: &mut ThreadState, request: WinEventHookRequest) -> ResVar<()> { unsafe {
-    let request: (Option<WinEventHooksSx>, _) = (None, request);
-    let cargo = Box::into_raw(Box::new(request));
+fn leak_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> ResVar<()> { unsafe {
+    let cargo: (Option<WinEventHooksSx>, _) = (None, request);
+    let cargo = Box::into_raw(Box::new(cargo));
 
-    if let Err(err) = PostThreadMessageW(ts.hook_mgr_tid, WM_OGOS_REQUEST_WIN_EVENT_HOOKS, WPARAM(0), LPARAM(cargo as isize)) {
+    if let Err(err) = PostThreadMessageW(hook_mgr_tid, WM_OGOS_REQUEST_WIN_EVENT_HOOKS, WPARAM(0), LPARAM(cargo as isize)) {
         Err(ErrVar::FailedContactHookMgr { inner: err })?;
     }
 
@@ -200,8 +200,8 @@ fn leak_win_event_hooks(ts: &mut ThreadState, request: WinEventHookRequest) -> R
 
 fn request_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> windows::core::Result<WinEventHooksRx> { unsafe {
     let (sx, rx) = oneshot::channel::<Res<Vec<HWINEVENTHOOK>>>();
-    let request = (Some(sx), request);
-    let cargo = Box::into_raw(Box::new(request));
+    let cargo = (Some(sx), request);
+    let cargo = Box::into_raw(Box::new(cargo));
 
     PostThreadMessageW(hook_mgr_tid, WM_OGOS_REQUEST_WIN_EVENT_HOOKS, WPARAM(0), LPARAM(cargo as isize))?;
 
@@ -572,7 +572,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
                         let request = WinEventHookRequest {
                             infos: vec![WinEventHookInfo { eventmin: EVENT_OBJECT_LOCATIONCHANGE, eventmax: EVENT_OBJECT_LOCATIONCHANGE, idprocess: tpids.proc, idthread: tpids.thread, ctx: WinEventHookContext::ShellExperienceHostLocationChange }]
                         };
-                        leak_win_event_hooks(ts, request)?;
+                        leak_win_event_hooks(ts.hook_mgr_tid, request)?;
 
                         return Ok(())
                     },
@@ -613,7 +613,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
                     let request = WinEventHookRequest {
                         infos: vec![WinEventHookInfo { eventmin: EVENT_OBJECT_DESTROY, eventmax: EVENT_OBJECT_DESTROY, idprocess: win_info.tpids.proc, idthread: win_info.tpids.thread, ctx: WinEventHookContext::AllOtherForegroundDestroy { hwnd: hwnd.as_usize() } }]
                     };
-                    leak_win_event_hooks(ts, request)?;
+                    leak_win_event_hooks(ts.hook_mgr_tid, request)?;
                 }
             }
 
