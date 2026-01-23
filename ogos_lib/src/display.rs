@@ -128,7 +128,7 @@ impl Default for NovideoSrgbApplyInfo {
     }
 }
 
-pub(crate) type NovideoSrgbApplyFn = extern "system" fn(*const NovideoSrgbApplyInfo) -> i32;
+pub(crate) type NovideoSrgbApplyFn = unsafe extern "system" fn(*const NovideoSrgbApplyInfo) -> i32;
 pub(crate) struct NovideoSrgbFfi {
     pub(crate) _hostfxr: Hostfxr,
     pub(crate) novideo_srgb_apply_fn: ManagedFunction<NovideoSrgbApplyFn>
