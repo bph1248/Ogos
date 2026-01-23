@@ -128,7 +128,7 @@ pub(crate) trait HwndExt {
     fn get_text(&self) -> Res2<WindowText>;
     fn get_thread_proc_ids(&self) -> windows::core::Result<Tpids>;
     fn has_parent(&self) -> bool;
-    fn hide(&self);
+    fn hide(&self) -> windows::core::Result<()>;
     fn _is_alt_tab_window(&self) -> bool;
     fn is_cloaked(&self) -> windows::core::Result<bool>;
     fn is_eligible_for_shift(&self, screen_extent: Extent2d) -> Res2<bool>;
@@ -136,7 +136,7 @@ pub(crate) trait HwndExt {
     fn is_iconic(&self) -> bool;
     fn is_visible(&self) -> bool;
     fn may_hook_location_change(&self) -> Res1<bool>;
-    fn show_na(&self);
+    fn show_na(&self, topmost: bool) -> windows::core::Result<()>;
 }
 impl HwndExt for HWND {
     fn as_usize(&self) -> usize {
@@ -255,8 +255,8 @@ impl HwndExt for HWND {
         self.get_parent().is_ok()
     }
 
-    fn hide(&self) { unsafe {
-        _ = ShowWindow(*self, SW_HIDE);
+    fn hide(&self) -> windows::core::Result<()> { unsafe {
+        SetWindowPos(*self, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW)
     } }
 
     fn _is_alt_tab_window(&self) -> bool { unsafe {
@@ -302,8 +302,8 @@ impl HwndExt for HWND {
         Ok(!matches!(class.as_str(), "Blank Screen Saver" | "ForegroundStaging" | "Shell_TrayWnd" | "WorkerW" | "XamlExplorerHostIslandWindow"))
     }
 
-    fn show_na(&self) { unsafe {
-        _ = ShowWindow(*self, SW_SHOWNA);
+    fn show_na(&self, topmost: bool) -> windows::core::Result<()> { unsafe {
+        SetWindowPos(*self, topmost.then_some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
     } }
 }
 

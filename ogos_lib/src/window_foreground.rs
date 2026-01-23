@@ -281,7 +281,7 @@ fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant) -> Re
 
             SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), tb.hitbox_pos.exit.x, tb.hitbox_pos.exit.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
             tb.hitbox_mouse_move_anchor = Some(now!());
-            tb.taskbar_hwnd.show_na();
+            tb.taskbar_hwnd.show_na(false)?;
 
             tb.hitbox_state = HitboxState::Exit;
         },
@@ -292,10 +292,10 @@ fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant) -> Re
                         true => {
                             SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
                             tb.hitbox_mouse_move_anchor = Some(now!());
-                            tb.hitbox_state = HitboxState::Entry;
-                            tb.hitbox_exit_cursor_should_have_snapped = false;
+                            tb.taskbar_hwnd.hide()?;
 
-                            tb.taskbar_hwnd.hide();
+                            tb.hitbox_exit_cursor_should_have_snapped = false;
+                            tb.hitbox_state = HitboxState::Entry;
 
                             if let Some(cursor_watch) = tb.cursor_watch.as_ref() {
                                 cursor_watch.working.store(true, Ordering::Relaxed);
@@ -320,9 +320,9 @@ fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant) -> Re
                 None => {
                     SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), tb.hitbox_pos.entry.x, tb.hitbox_pos.entry.y, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE)?;
                     tb.hitbox_mouse_move_anchor = Some(now!());
-                    tb.hitbox_state = HitboxState::Entry;
+                    tb.taskbar_hwnd.hide()?;
 
-                    tb.taskbar_hwnd.hide();
+                    tb.hitbox_state = HitboxState::Entry;
                 }
             }
         }
@@ -411,7 +411,7 @@ fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWND) -> R
                 tb.taskbar_hooks = Some(rx);
                 tb.start_menu_hwnd = start_menu_hwnd;
 
-                taskbar_hwnd.hide();
+                taskbar_hwnd.hide()?;
 
                 info!("{}: rehooked taskbar", module_path!());
 
@@ -447,8 +447,8 @@ fn handle_win_event_hook_shell_experience_host_destroy(ts: &mut ThreadState, hoo
 fn handle_win_event_hook_foreground_location_change(tb: &Taskbar, hwnd: HWND) -> Res1<()> {
     if hwnd == tb.cur_foreground_hwnd {
         match hwnd.is_fullscreen(tb.screen_extent)? {
-            true => tb.hitbox_hwnd.hide(),
-            false => tb.hitbox_hwnd.show_na()
+            true => tb.hitbox_hwnd.hide()?,
+            false => tb.hitbox_hwnd.show_na(true)?
         }
     }
 
@@ -514,8 +514,8 @@ fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: HWND) -
                 let hitbox_pos = get_hitbox_pos(taskbar_rect, taskbar_side, tb.hitbox_entry_side, tb.hitbox_entry_inset_px, tb.hitbox_exit_taskbar_offset_px, tb.screen_extent);
 
                 SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), hitbox_pos.entry.x, hitbox_pos.entry.y, tb.screen_extent.width, tb.screen_extent.height, SWP_NOACTIVATE | SWP_NOCOPYBITS)?;
-                tb.hitbox_hwnd.show_na();
-                tb.taskbar_hwnd.hide();
+                tb.hitbox_hwnd.show_na(true)?;
+                tb.taskbar_hwnd.hide()?;
 
                 tb.taskbar_side = taskbar_side;
                 tb.taskbar_rect = taskbar_rect;
@@ -537,7 +537,7 @@ fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: HWND) -
     Ok(())
 } }
 
-fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res2<()> { unsafe {
+fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res2<()> {
     // Garner info
     let win_info = match ts.win_infos.get(&hwnd.as_usize()) {
         Some(win_info) => win_info,
@@ -546,7 +546,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
             if let Some(tb) = ts.tb.as_mut() {
                 // Progman
                 if hwnd == tb.progman_hwnd {
-                    tb.hitbox_hwnd.show_na();
+                    tb.hitbox_hwnd.show_na(true)?;
 
                     return Ok(())
                 }
@@ -681,18 +681,12 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
 
         // Handle foreground extent now
         if let Some(tb) = ts.tb.as_ref() {
-            match hwnd.is_fullscreen(tb.screen_extent)? {
-                true => tb.hitbox_hwnd.hide(),
-                false => {
-                    tb.hitbox_hwnd.show_na();
-                    SetWindowPos(tb.hitbox_hwnd, Some(HWND_TOPMOST), 0,0, 0, 0, SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOSIZE)?;
-                }
-            }
+            handle_win_event_hook_foreground_location_change(tb, tb.hitbox_hwnd)?;
         }
     }
 
     Ok(())
-} }
+}
 
 fn has_maps(binds: &Binds, exe: &str) -> bool {
     binds.maps.as_ref()
@@ -852,8 +846,8 @@ fn init_binds<'a>() -> Res1<Binds<'a>> {
 fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
     match rx.recv()? {
         WindowForegroundMsg::Taskbar(tb) => {
-            tb.taskbar_hwnd.hide();
-            tb.hitbox_hwnd.show_na();
+            tb.taskbar_hwnd.hide()?;
+            tb.hitbox_hwnd.show_na(true)?;
 
             Ok(*tb)
         },
