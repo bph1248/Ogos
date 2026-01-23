@@ -626,7 +626,12 @@ fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> { unsafe {
             Ok(_) => {
                 let fg_hwnd = GetForegroundWindow();
 
-                if fg_hwnd.is_invalid() || foreground_disallows_shift(fg_hwnd, ts.screen_extent)? || left_button_is_down() {
+                if left_button_is_down() ||
+                    fg_hwnd.is_invalid() ||
+                    foreground_disallows_shift(fg_hwnd, ts.screen_extent)
+                        .inspect_err(|err| warn!("{}: failed to determine if foreground disallows shift - allowing: {}", module_path!(), err))
+                        .unwrap_or(false)
+                {
                     continue
                 }
 
