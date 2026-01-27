@@ -139,7 +139,7 @@ pub(crate) struct Taskbar {
     pub(crate) hitbox_exit_cursor_should_have_snapped: bool,
     pub(crate) hitbox_mouse_move_anchor: Option<Instant>,
     pub(crate) cursor_watch: Option<Arc<CursorWatch>>,
-    pub(crate) cur_foreground_hwnd: HWND,
+    pub(crate) foreground_hwnd: HWND,
     pub(crate) loc_change_hook: Option<WinEventHooksRx>,
     pub(crate) screen_extent: Extent2d,
     pub(crate) screen_extent_changed: bool
@@ -445,7 +445,7 @@ fn handle_win_event_hook_shell_experience_host_destroy(ts: &mut ThreadState, hoo
 }
 
 fn handle_win_event_hook_foreground_location_change(tb: &Taskbar, hwnd: HWND) -> Res1<()> {
-    if hwnd == tb.cur_foreground_hwnd {
+    if hwnd == tb.foreground_hwnd {
         match hwnd.is_fullscreen(tb.screen_extent)? {
             true => tb.hitbox_hwnd.hide()?,
             false => tb.hitbox_hwnd.show_na(true)?
@@ -629,7 +629,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
 
                 // Location changes
                 if let Some(tb) = ts.tb.as_mut() {
-                    tb.cur_foreground_hwnd = hwnd;
+                    tb.foreground_hwnd = hwnd;
 
                     if let Some(rx) = tb.loc_change_hook.take() {
                         let request = WinEventUnhookRequest { hooks: rx.blocking_recv()?? };
@@ -674,14 +674,17 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
             false => {
                 // Just update current foreground
                 if let Some(tb) = ts.tb.as_mut() {
-                    tb.cur_foreground_hwnd = hwnd;
+                    tb.foreground_hwnd = hwnd;
                 }
             }
         }
 
         // Handle foreground extent now
         if let Some(tb) = ts.tb.as_ref() {
-            handle_win_event_hook_foreground_location_change(tb, tb.hitbox_hwnd)?;
+            match hwnd.is_fullscreen(tb.screen_extent)? {
+                true => tb.hitbox_hwnd.hide()?,
+                false => tb.hitbox_hwnd.show_na(true)?
+            }
         }
     }
 
