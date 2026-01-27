@@ -999,8 +999,8 @@ pub(crate) fn configure_static_binds() -> Res<()> {
                     false => InhibitEvent::No
                 }
             }),
-            defer: true,
-            sequencer: false
+            defer: false,
+            sequencer: true
         };
 
         underscore.act_on.act_on(action);
