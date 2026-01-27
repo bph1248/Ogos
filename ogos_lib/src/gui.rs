@@ -22,6 +22,7 @@ use std::{
     f64::consts::PI,
     fs::{self, *},
     io::Read,
+    ops::*,
     path::*,
     rc::*,
     sync::*,
@@ -926,44 +927,36 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn grid_view(&mut self, ui: &mut egui::Ui) {
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
+
+            let max_cell_count = match self.active_tag.as_ref() {
+                Some(_) => self.active_view.len(),
+                None => self.grid_entries.len()
+            };
+            let cell_space_x = self.grid_cell_size.x + GRID_IMAGE_SPACING.x;
+            let row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(cell_space_x).ceil() as usize; // ui.available_width() - (cell_space_x * n - GRID_IMAGE_SPACING.x) <= cell_space_x
+            let row_cell_count = row_cell_count.clamp(1, max_cell_count);
+            let max_row_count = max_cell_count.div_ceil(row_cell_count);
+
             egui::ScrollArea::new([false, true])
                 .auto_shrink(false)
                 .scroll_source(egui::scroll_area::ScrollSource::SCROLL_BAR | egui::scroll_area::ScrollSource::MOUSE_WHEEL)
                 .wheel_scroll_multiplier([1.0, self.vscroll_multiplier].into())
-                .show(ui, |ui| {
-                    ui.add_space(FRAME_MARGIN);
-
-                    ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
-
-                    let cell_space_x = self.grid_cell_size.x + GRID_IMAGE_SPACING.x;
-                    let cell_space_y = self.grid_cell_size.y + GRID_IMAGE_SPACING.y;
-
-                    let table_cell_count = match self.active_tag.as_ref() {
-                        Some(_) => self.active_view.len(),
-                        None => self.grid_entries.len()
-                    };
-                    let row_cell_count = (ui.available_width().div_euclid(cell_space_x) as usize)
-                        .clamp(1, table_cell_count);
-                    let table_row_count = table_cell_count.div_ceil(row_cell_count);
+                .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
+                    let available_rect = ui.available_rect_before_wrap();
 
                     #[allow(clippy::cast_precision_loss)]
-                    let (table_width,table_height) = (
-                        row_cell_count as f32 * cell_space_x - GRID_IMAGE_SPACING.x, // First cell isn't initially offset by item spacing
-                        table_row_count as f32 * cell_space_y - GRID_IMAGE_SPACING.y
-                    );
-                    let remaining_space = (ui.available_height() - table_height).max(0.0);
-                    let top_padding = remaining_space / 2.0;
-
-                    let available_rect = ui.available_rect_before_wrap();
+                    let table_width = row_cell_count as f32 * cell_space_x - GRID_IMAGE_SPACING.x;
                     let table_rect_min_x = (available_rect.center().x - table_width / 2.0).floor();
                     let table_rect = egui::Rect::from_min_size(
-                        [table_rect_min_x, available_rect.top() + top_padding].into(),
-                        [table_width, table_height].into(),
+                        [table_rect_min_x, available_rect.top()].into(),
+                        [table_width, available_rect.height()].into(),
                     );
 
                     ui.scope_builder(egui::UiBuilder::new().max_rect(table_rect), |ui| {
-                        self.table(ui, table_cell_count, table_row_count, row_cell_count);
+                        let table_row_count = row_range.end - row_range.start;
+                        self.grid_table(ui, row_range.start, max_cell_count, table_row_count, row_cell_count);
                     });
 
                     ui.ctx().input(|state| {
@@ -975,27 +968,27 @@ impl<'a> MediaBrowser<'a> {
         });
     }
 
-    fn table(&mut self, ui: &mut egui::Ui, mut table_cell_count: usize, table_row_count: usize, row_cell_count: usize) {
+    fn grid_table(&mut self, ui: &mut egui::Ui, row_start: usize, mut max_cell_count: usize, row_count: usize, row_cell_count: usize) {
         egui_extras::TableBuilder::new(ui)
             .striped(false)
             .vscroll(false)
             .cell_layout(egui::Layout::top_down(egui::Align::Center))
             .columns(egui_extras::Column::initial(self.grid_cell_size.x).at_most(self.grid_cell_size.x), row_cell_count)
             .body(|body| {
-                body.rows(self.grid_cell_size.y, table_row_count, |mut row| {
-                    let mut cell_i = row.index() * row_cell_count + row.col_index();
+                body.rows(self.grid_cell_size.y, row_count, |mut row| {
+                    let mut cell_i = (row_start + row.index()) * row_cell_count + row.col_index();
 
-                    while row.col_index() < row_cell_count && cell_i < table_cell_count {
+                    while row.col_index() < row_cell_count && cell_i < max_cell_count {
                         row.col(|ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                self.cell(ui, cell_i);
+                                self.grid_cell(ui, cell_i);
                             });
                         });
 
                         // Cell entry might have its tag removed while view is active and table is still being updated
                         match self.removed_entry_from_active_view {
                             true => {
-                                table_cell_count -= 1;
+                                max_cell_count -= 1;
                                 self.removed_entry_from_active_view = false;
                             },
                             false => cell_i += 1
@@ -1005,7 +998,7 @@ impl<'a> MediaBrowser<'a> {
             });
     }
 
-    fn cell(&mut self, ui: &mut egui::Ui, cell_i: usize) {
+    fn grid_cell(&mut self, ui: &mut egui::Ui, cell_i: usize) {
         let grid_entry_i = self.active_tag.as_ref().map(|_| self.active_view[cell_i]).unwrap_or(cell_i);
         let grid_entry_info = &self.grid_entries[grid_entry_i];
         let mut image_info = grid_entry_info.image_file_name_i.and_then(|image_file_name_i| self.images.get_index_mut(image_file_name_i));
@@ -1044,7 +1037,7 @@ impl<'a> MediaBrowser<'a> {
             self.view_kind = ViewKind::Details;
         }
 
-        let cell_context_menu_resp = self.cell_context_menu(ui, grid_entry_i, cell_i, &cell_resp);
+        let cell_context_menu_resp = self.grid_cell_context_menu(ui, grid_entry_i, cell_i, &cell_resp);
 
         match self.selected_cell {
             Some(cell_i_) => if cell_i_ == cell_i { // Cell was secondary clicked
@@ -1068,7 +1061,7 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn cell_context_menu(&mut self, cell_ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize, cell_resp: &egui::Response) -> Option<egui::InnerResponse<MenuPointerState>> {
+    fn grid_cell_context_menu(&mut self, cell_ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize, cell_resp: &egui::Response) -> Option<egui::InnerResponse<MenuPointerState>> {
         egui::Popup::context_menu(cell_resp)
             .close_behavior(egui::PopupCloseBehavior::IgnoreClicks) // Close manually to avoid close/show flash on right click cell while menu is open
             .show(|ui| {
