@@ -134,9 +134,9 @@ pub(crate) fn set_endpoint(name: &str) -> Res<()> { unsafe {
     info!("{}: set endpoint: {}", module_path!(), name);
 
     let config = config::get().read()?;
-    let endpoints = config.audio.as_ref().and_then(|audio_config| audio_config.endpoints.as_ref());
-    if let Some(endpoints) = endpoints &&
-        let Some(app) = endpoints.0.get(name)
+    let apps = config.audio.as_ref().and_then(|audio_config| audio_config.endpoint_apps.as_ref());
+    if let Some(apps) = apps &&
+        let Some(app) = apps.0.get(name)
     {
         let mut cmd = Command::new(app.path);
         cmd.args(&app.args);

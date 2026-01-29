@@ -738,13 +738,13 @@ impl<'a> App<'a> {
 
 #[derive(Deserialize)]
 #[serde(transparent)]
-pub(crate) struct Endpoints<'a>(#[serde(borrow)] pub(crate) HashMap<&'a str, App<'a>>);
+pub(crate) struct EndpointApps<'a>(#[serde(borrow)] pub(crate) HashMap<&'a str, App<'a>>);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Audio<'a> {
     #[serde(borrow)]
-    pub(crate) endpoints: Option<Endpoints<'a>>,
+    pub(crate) endpoint_apps: Option<EndpointApps<'a>>,
     pub(crate) eq_apo: Option<EqApo<'a>>
 }
 
