@@ -15,11 +15,13 @@ use eframe::{
 };
 use indexmap::*;
 use log::*;
+use raw_window_handle::*;
 use rayon::*;
 use serde::*;
 use std::{
     collections::*,
     f64::consts::PI,
+    ffi::*,
     fs::{self, *},
     io::Read,
     ops::*,
@@ -31,7 +33,8 @@ use std::{
 };
 use tokio::sync::oneshot::{self, error::*};
 use windows::Win32::{
-    Foundation::POINT,
+    Foundation::*,
+    Graphics::Gdi::*,
     UI::WindowsAndMessaging::*
 };
 
@@ -424,6 +427,7 @@ struct MediaBrowser<'a> {
     cache: Cache,
     cached_images_to_remove: Vec<Rc<str>>,
     frame: egui::Frame,
+    fixed_background: bool,
     view_kind: ViewKind,
     grid_entries: Vec<GridEntryInfo>,
     grid_cell_size: egui::Vec2,
@@ -451,7 +455,21 @@ struct MediaBrowser<'a> {
     discord_display_kind: DiscordDisplayKind
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if !self.fixed_background && let win_hnd = frame.window_handle().unwrap() && let raw_window_handle::RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
+            fn make_colorref(r: u8, g: u8, b: u8) -> COLORREF {
+                COLORREF(u32::from(r) | u32::from(g) << 8 | u32::from(b) << 16)
+            }
+
+            let hwnd = HWND(hnd.hwnd.get() as *mut c_void);
+            unsafe {
+                let new_brush = CreateSolidBrush(make_colorref(27, 27, 27));
+                SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, new_brush.0 as isize); //$ err
+            }
+
+            self.fixed_background = true;
+        }
+
         egui::CentralPanel::default()
             .frame(self.frame)
             .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
@@ -794,6 +812,7 @@ impl<'a> MediaBrowser<'a> {
             cache,
             cached_images_to_remove,
             frame,
+            fixed_background: false,
             view_kind: ViewKind::Grid,
             grid_entries,
             grid_cell_size,
