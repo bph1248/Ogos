@@ -80,9 +80,9 @@ mod trigger_watch {
                     Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
                         error!("{}: failed to let walk away: {}", module_path!(), err);
                     }),
-                    Task::SetSleepMode => unsafe {
+                    Task::GoToSleep => unsafe {
                         _ = SetSuspendState(false, false, true).win32_core_ok().x().inspect_err(|err| {
-                            error!("{}: failed to set sleep mode: {}", module_path!(), err);
+                            error!("{}: failed to go to sleep: {}", module_path!(), err);
                         });
                     },
                     Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
@@ -906,16 +906,16 @@ pub(crate) fn configure_static_binds() -> Res<()> {
 
     if let Some(hotkeys) = binds_config.hotkeys.as_ref() {
         #[allow(unused_mut)]
-        let mut hotkey_tasks = hotkeys.maps.clone();
+        let mut tasks = hotkeys.tasks.clone();
         #[cfg(feature = "dbg_window_info")]
-        hotkey_tasks.insert(Key::F, Task::GetForegroundInfo);
+        tasks.insert(Key::F, Task::GetForegroundInfo);
 
         // Invoke tasks
         let pixel_cleaning_prelude = config.pixel_cleaning;
         let (invoke_task_sx, rx) = mpsc::channel::<InputEvent>();
-        thread::spawn(move || trigger_watch::begin(hotkey_tasks, pixel_cleaning_prelude, rx));
+        thread::spawn(move || trigger_watch::begin(tasks, pixel_cleaning_prelude, rx));
 
-        for prefix in hotkeys.prefix.iter() {
+        for prefix in hotkeys.prefixes.iter() {
             let invoke_task_sx = invoke_task_sx.clone();
 
             let callback = Box::new(move |event, state| {
@@ -948,12 +948,12 @@ pub(crate) fn configure_static_binds() -> Res<()> {
             prefix.act_on(action);
         }
 
-        let hotkeys_prefix_len = hotkeys.prefix.len();
-        let hotkeys_triggers_iter = hotkeys.maps.keys();
+        let prefixes_len = hotkeys.prefixes.len();
+        let tasks_iter = hotkeys.tasks.keys();
         #[cfg(feature = "dbg_window_info")]
-        let hotkeys_triggers_iter = hotkeys_triggers_iter.chain([&Key::F]);
+        let tasks_iter = tasks_iter.chain([&Key::F]);
 
-        for trigger in hotkeys_triggers_iter {
+        for trigger in tasks_iter {
             let invoke_task_sx = invoke_task_sx.clone();
 
             let callback = Box::new(move |event, state| {
@@ -961,7 +961,7 @@ pub(crate) fn configure_static_binds() -> Res<()> {
                     State::Pressed => THREAD_STATE.with_borrow_mut(|ts| {
                         ts.trigger_is_pressed = true;
 
-                        if ts.prefixes_pressed.len() == hotkeys_prefix_len && ts.trigger_to_send.is_none() {
+                        if ts.prefixes_pressed.len() == prefixes_len && ts.trigger_to_send.is_none() {
                             ts.trigger_to_send = Some(event);
                         }
                     }),

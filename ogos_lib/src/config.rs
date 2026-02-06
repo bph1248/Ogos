@@ -47,9 +47,9 @@ fn deserialize_key<'de, D>(deserializer: D) -> Result<Key, D::Error> where
 fn deserialize_keys<'de, D>(deserializer: D) -> Result<Vec<Key>, D::Error> where
     D: Deserializer<'de>
 {
-    struct KeySequenceVisitor;
+    struct KeysVisitor;
 
-    impl<'de> Visitor<'de> for KeySequenceVisitor {
+    impl<'de> Visitor<'de> for KeysVisitor {
         type Value = Vec<Key>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -69,41 +69,41 @@ fn deserialize_keys<'de, D>(deserializer: D) -> Result<Vec<Key>, D::Error> where
         }
     }
 
-    let keys = deserializer.deserialize_seq(KeySequenceVisitor)?;
+    let keys = deserializer.deserialize_seq(KeysVisitor)?;
 
     Ok(keys)
 }
 
-fn deserialize_hotkey_tasks<'de, D>(deserializer: D) -> Result<HashMap<Key, Task>, D::Error> where
+fn deserialize_tasks<'de, D>(deserializer: D) -> Result<HashMap<Key, Task>, D::Error> where
     D: Deserializer<'de>
 {
-    struct HotkeyTasksVisitor;
+    struct TasksVisitor;
 
-    impl<'de> Visitor<'de> for HotkeyTasksVisitor {
+    impl<'de> Visitor<'de> for TasksVisitor {
         type Value = HashMap<Key, Task>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a map of hotkey tasks")
+            formatter.write_str("a map of tasks")
         }
 
         fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where
             A: serde::de::MapAccess<'de>
         {
-            let mut hotkey_tasks: HashMap<Key, Task> = HashMap::with_capacity(map.size_hint().unwrap_or_default());
+            let mut tasks: HashMap<Key, Task> = HashMap::with_capacity(map.size_hint().unwrap_or_default());
 
             while let Some((key, task)) = map.next_entry::<BindVar, Task>()? {
                 let key = key.try_as_key().map_err(A::Error::custom)?;
 
-                hotkey_tasks.insert(key, task);
+                tasks.insert(key, task);
             }
 
-            Ok(hotkey_tasks)
+            Ok(tasks)
         }
     }
 
-    let hotkey_tasks = deserializer.deserialize_map(HotkeyTasksVisitor)?;
+    let tasks = deserializer.deserialize_map(TasksVisitor)?;
 
-    Ok(hotkey_tasks)
+    Ok(tasks)
 }
 
 fn make_input_event_map(from: BindVar, to: BindVar, click_dur_ms: Option<u64>) -> ResVar<InputEventMap> {
@@ -174,7 +174,7 @@ fn deserialize_input_event_maps<'de, D>(deserializer: D) -> Result<Vec<InputEven
         type Value = Vec<InputEventMap>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a map of input events")
+            formatter.write_str("a map of key/button maps")
         }
 
         fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where
@@ -183,7 +183,6 @@ fn deserialize_input_event_maps<'de, D>(deserializer: D) -> Result<Vec<InputEven
             let mut input_event_maps: Vec<InputEventMap> = Vec::with_capacity(map.size_hint().unwrap_or_default());
 
             while let Some(from) = map.next_key::<BindVar>()? {
-
                 match from {
                     BindVar::Click => {
                         let click_map = map.next_value::<ClickMap>()?.0;
@@ -683,7 +682,7 @@ pub(crate) struct InputEventMaps(
 pub(crate) enum Task {
     BeginPixelCleaning,
     LetWalkAway,
-    SetSleepMode,
+    GoToSleep,
     ToggleDisplayMode,
     #[cfg(feature = "dbg_window_info")]
     GetForegroundInfo
@@ -693,9 +692,9 @@ pub(crate) enum Task {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Hotkeys {
     #[serde(deserialize_with = "deserialize_keys")]
-    pub(crate) prefix: Vec<Key>,
-    #[serde(deserialize_with = "deserialize_hotkey_tasks")]
-    pub(crate) maps: HashMap<Key, Task>
+    pub(crate) prefixes: Vec<Key>,
+    #[serde(deserialize_with = "deserialize_tasks")]
+    pub(crate) tasks: HashMap<Key, Task>
 }
 
 #[derive(Deserialize)]
