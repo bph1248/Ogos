@@ -1,10 +1,10 @@
 use crate::{
-    binds::*,
     common::*,
     config::{self, *},
     nvapi_shadow::*,
     window_foreground
 };
+use ogos_binds::*;
 use ogos_err::*;
 
 use ddc::Ddc;

@@ -1,10 +1,10 @@
 use crate::{
-    binds::*,
     common::*,
     display::*,
     window_foreground::*,
     window_shift::*
 };
+use ogos_binds::*;
 use ogos_err::*;
 use ogos_mki::*;
 
