@@ -39,13 +39,13 @@ impl Display for Extent2d {
         write!(f, "{}x{}", self.width, self.height)
     }
 }
-impl Into<RECT> for Extent2d {
-    fn into(self) -> RECT {
+impl From<Extent2d> for RECT {
+    fn from(value: Extent2d) -> Self {
         RECT {
             left: 0,
             top: 0,
-            right: self.width,
-            bottom: self.height
+            right: value.width,
+            bottom: value.height
         }
     }
 }

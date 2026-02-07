@@ -406,13 +406,13 @@ pub enum DiscordActivity {
     Playing,
     Watching
 }
-impl Into<drpa::ActivityType> for DiscordActivity {
-    fn into(self) -> drpa::ActivityType {
-        match self {
-            Self::Competing => drpa::ActivityType::Competing,
-            Self::Listening => drpa::ActivityType::Listening,
-            Self::Playing => drpa::ActivityType::Playing,
-            Self::Watching => drpa::ActivityType::Watching
+impl From<DiscordActivity> for drpa::ActivityType {
+    fn from(value: DiscordActivity) -> Self {
+        match value {
+            DiscordActivity::Competing => Self::Competing,
+            DiscordActivity::Listening => Self::Listening,
+            DiscordActivity::Playing => Self::Playing,
+            DiscordActivity::Watching => Self::Watching
         }
     }
 }
@@ -615,12 +615,12 @@ pub enum DiscordDisplayKind {
     State,
     Details
 }
-impl Into<drpa::StatusDisplayType> for DiscordDisplayKind {
-    fn into(self) -> drpa::StatusDisplayType {
-        match self {
-            Self::Name => drpa::StatusDisplayType::Name,
-            Self::State => drpa::StatusDisplayType::State,
-            Self::Details => drpa::StatusDisplayType::Details
+impl From<DiscordDisplayKind> for drpa::StatusDisplayType {
+    fn from(value: DiscordDisplayKind) -> Self {
+        match value {
+            DiscordDisplayKind::Name => Self::Name,
+            DiscordDisplayKind::State => Self::State,
+            DiscordDisplayKind::Details => Self::Details
         }
     }
 }

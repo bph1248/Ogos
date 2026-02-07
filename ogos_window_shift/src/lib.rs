@@ -35,13 +35,13 @@ impl From<RECT> for AnchorAbsolute {
         }
     }
 }
-impl Into<RECT> for AnchorAbsolute {
-    fn into(self) -> RECT {
+impl From<AnchorAbsolute> for RECT {
+    fn from(value: AnchorAbsolute) -> Self {
         RECT {
-            left: self.left,
-            top: self.top,
-            right: self.right,
-            bottom: self.bottom
+            left: value.left,
+            top: value.top,
+            right: value.right,
+            bottom: value.bottom
         }
     }
 }
