@@ -1,17 +1,17 @@
 use crate::{
     audio::*,
-    config::*,
     display::*,
     win32::*,
     window_foreground,
     window_shift::*
 };
+use ogos_config::*;
 use ogos_core::*;
 use ogos_err::*;
+use ogos_window_shift::*;
 
 use discord_rich_presence::*;
 use log::*;
-use once_cell::sync::*;
 use paste::*;
 use serde::*;
 use strum::*;
@@ -22,7 +22,6 @@ use std::{
     ops::*,
     path::*,
     process::*,
-    sync::*,
     thread,
     time::*
 };
@@ -39,52 +38,6 @@ use windows::{
 };
 
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Extent2d {
-    pub(crate) width: i32,
-    pub(crate) height: i32
-}
-impl Extent2d {
-    pub(crate) fn into_rect(self) -> RECT {
-        RECT {
-            left: 0,
-            top: 0,
-            right: self.width,
-            bottom: self.height
-        }
-    }
-}
-impl Display for Extent2d {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}x{}", self.width, self.height)
-    }
-}
-impl Into<RECT> for Extent2d {
-    fn into(self) -> RECT {
-        RECT {
-            left: 0,
-            top: 0,
-            right: self.width,
-            bottom: self.height
-        }
-    }
-}
-
-#[derive(Clone, Copy, Deserialize, PartialEq)]
-#[serde(from = "[u32; 2]")]
-pub(crate) struct Extent2dU {
-    pub(crate) width: u32,
-    pub(crate) height: u32
-}
-impl From<[u32; 2]> for Extent2dU {
-    fn from(value: [u32; 2]) -> Self {
-        Self {
-            width: value[0],
-            height: value[1]
-        }
-    }
-}
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub(crate) struct Tid(pub(crate) u32);
@@ -228,14 +181,6 @@ impl_WmOgos! {
     RequestWinEventUnhooks
 }
 
-pub(crate) static CONFIG: OnceCell<RwLock<Config>> = OnceCell::new();
-pub(crate) static CURRENT_EXE_DIR: OnceCell<PathBuf> = OnceCell::new();
-
-macro_rules! default {
-    () => {
-        std::default::Default::default()
-    };
-}
 macro_rules! _elapsed {
     ($($s:stmt;)+) => {
         let begin = std::time::Instant::now();
@@ -255,7 +200,6 @@ macro_rules! now {
         std::time::Instant::now()
     };
 }
-pub(crate) use default;
 #[allow(unused_imports)]
 pub(crate) use _elapsed;
 pub(crate) use into;

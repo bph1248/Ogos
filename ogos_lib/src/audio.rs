@@ -1,7 +1,5 @@
-use crate::{
-    common::*,
-    config
-};
+use crate::common::*;
+use ogos_config as config;
 use ogos_err::*;
 
 use com_policy_config::*;

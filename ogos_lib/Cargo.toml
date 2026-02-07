@@ -30,14 +30,17 @@ indexmap = { version = "2.12.1", features = ["serde"] }
 log = { workspace = true }
 log-panics = { workspace = true }
 netcorehost = { workspace = true }
-nvapi_sys_new = "=0.1.5"
 nvapi-sys = { workspace = true }
-ogos_binds = { path = "../ogos_binds" }
+nvapi_sys_new = "=0.1.5"
+ogos_binds = { workspace = true }
+ogos_config = { path = "../ogos_config" }
 ogos_core = { workspace = true }
+ogos_display = { workspace = true }
 ogos_err = { workspace = true }
 ogos_mki = { workspace = true }
-ogos_proc_macros = { workspace = true }
-once_cell = "1.19.0"
+ogos_window_foreground = { workspace = true }
+ogos_window_shift = { workspace = true }
+once_cell = { workspace = true }
 opener = { workspace = true }
 paste = "1.0.15"
 qmk-via-api = { workspace = true }

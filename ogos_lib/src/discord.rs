@@ -1,7 +1,6 @@
-use crate::{
-    common::*,
-    config::*
-};
+use crate::common::*;
+use ogos_config as config;
+use config::*;
 use ogos_core::*;
 use ogos_err::*;
 

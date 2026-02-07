@@ -16,7 +16,6 @@ publish = false
 version = "0.1.0"
 
 [workspace.dependencies]
-anyhow = { version = "1.0.92", default-features = false }
 bincode = "1.3.3"
 clap = { version = "4.3.0", default-features = false, features = ["derive", "help", "std"] }
 const_format = { version = "0.2.34", default-features = false }
@@ -27,10 +26,14 @@ log = "0.4.17"
 log-panics = "2.1.0"
 netcorehost = "0.19.0"
 nvapi-sys = "0.1.3"
+ogos_binds = { path = "./ogos_binds" }
 ogos_core = { path = "./ogos_core" }
+ogos_display = { path = "./ogos_display" }
 ogos_err = { path = "./ogos_err" }
 ogos_mki = { path = "./ogos_mki" }
-ogos_proc_macros = { path = "./ogos_proc_macros" }
+ogos_window_foreground = { path = "./ogos_window_foreground" }
+ogos_window_shift = { path = "./ogos_window_shift" }
+once_cell = "1.19.0"
 opener = "0.8.3"
 qmk-via-api = { version = "0.5", default-features = false }
 rayon = "1.11.0"
@@ -41,7 +44,6 @@ serde = { version = "1.0.204", default-features = false, features = ["rc"] }
 serde_json = "1.0.121"
 simplelog = "0.12.1"
 strum = { version = "0.27.1", features = ["derive"] }
-thiserror = "2.0.17"
 tokio = { version = "1.46.1", features = ["sync"] }
 which = "8.0.0"
 widestring = { version = "1.2.0", default-features = false, features = ["std"] }

@@ -1,20 +1,20 @@
 use crate::{
     binds::{self, *},
     common::*,
-    config::{self, *},
     cursor_watch::*,
     win32::*,
     window_watch::*,
     *
 };
+use ogos_config as config;
 use ogos_core::*;
 use ogos_err::*;
 use ogos_mki as mki;
 use mki::*;
+use ogos_window_foreground::*;
 
 use bitflags::bitflags;
 use log::*;
-use serde::*;
 use std::{
     collections::*,
     mem,
@@ -177,15 +177,15 @@ pub(crate) enum PendingHooks {
     Check(WinEventHooksRx)
 }
 
-#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Side {
-    Left,
-    Top,
-    Right,
-    #[default]
-    Bottom
-}
+// #[derive(Clone, Copy, Default, Deserialize, PartialEq)]
+// #[serde(rename_all = "snake_case")]
+// pub(crate) enum Side {
+//     Left,
+//     Top,
+//     Right,
+//     #[default]
+//     Bottom
+// }
 
 fn leak_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> ResVar<()> { unsafe {
     let cargo: (Option<WinEventHooksSx>, _) = (None, request);

@@ -1,11 +1,69 @@
+use once_cell::sync::*;
+use serde::*;
 use std::{
     borrow::*,
-    fmt::{self, *},
+    fmt::{self, Display, *},
     ops::*,
     path::*,
     process::*
+
 };
 use windows::Win32::Foundation::*;
+
+pub static CURRENT_EXE_DIR: OnceCell<PathBuf> = OnceCell::new();
+
+#[macro_export]
+macro_rules! default {
+    () => {
+        std::default::Default::default()
+    };
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct Extent2d {
+    pub width: i32,
+    pub height: i32
+}
+impl Extent2d {
+    pub fn into_rect(self) -> RECT {
+        RECT {
+            left: 0,
+            top: 0,
+            right: self.width,
+            bottom: self.height
+        }
+    }
+}
+impl Display for Extent2d {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}x{}", self.width, self.height)
+    }
+}
+impl Into<RECT> for Extent2d {
+    fn into(self) -> RECT {
+        RECT {
+            left: 0,
+            top: 0,
+            right: self.width,
+            bottom: self.height
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(from = "[u32; 2]")]
+pub struct Extent2dU {
+    pub width: u32,
+    pub height: u32
+}
+impl From<[u32; 2]> for Extent2dU {
+    fn from(value: [u32; 2]) -> Self {
+        Self {
+            width: value[0],
+            height: value[1]
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum Displayer<'a, T> {

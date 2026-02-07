@@ -1,5 +1,5 @@
 [package]
-name = "ogos_core"
+name = "ogos_display"
 edition = { workspace = true }
 license = { workspace = true }
 publish = { workspace = true }
@@ -9,6 +9,8 @@ version = { workspace = true }
 crate-type = ["lib"]
 
 [dependencies]
-once_cell = { workspace = true }
+ogos_binds = { workspace = true }
+ogos_err = { workspace = true }
+nvapi-sys = { workspace = true }
+nvapi_sys_new = "=0.1.5"
 serde = { workspace = true }
-windows = { workspace = true }

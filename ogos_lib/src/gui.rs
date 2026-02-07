@@ -1,9 +1,10 @@
 use crate::{
     common::*,
-    config::{self, *},
     discord,
-    video
+    video,
+    *
 };
+use ogos_config::*;
 use ogos_err::*;
 
 use concat_string::*;

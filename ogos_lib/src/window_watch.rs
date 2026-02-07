@@ -1,11 +1,12 @@
 use crate::{
     common::*,
-    config,
     cursor_watch,
     display::*,
     win32::*,
     window_foreground::*
 };
+use ogos_config as config;
+use ogos_core::*;
 use ogos_err::*;
 
 use log::*;

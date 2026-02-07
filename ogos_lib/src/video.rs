@@ -1,9 +1,10 @@
 use crate::{
     audio::*,
-    common::*,
-    config::{self, *},
-    display::*
+    common::{CREATE_NO_WINDOW, *},
+    display::*,
+    *
 };
+use ogos_config as config;
 use ogos_core::*;
 use ogos_err::*;
 

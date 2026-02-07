@@ -1,8 +1,6 @@
-use crate::{
-    common::*,
-    config::{self, *},
-    display::*
-};
+use crate::display::*;
+use ogos_config as config;
+use config::*;
 use ogos_core::*;
 use ogos_err::*;
 use ogos_mki as mki;

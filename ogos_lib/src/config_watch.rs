@@ -3,9 +3,11 @@ use crate::{
 
     binds,
     common::*,
-    config::{self, *},
-    win32::*
+    win32::*,
+    *
 };
+use ogos_config as config;
+use ogos_core::*;
 use ogos_err::*;
 
 use log::*;

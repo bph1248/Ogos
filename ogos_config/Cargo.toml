@@ -1,0 +1,23 @@
+[package]
+name = "ogos_config"
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+version = { workspace = true }
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+const_format = { workspace = true }
+discord-rich-presence = { workspace = true }
+ogos_binds = { workspace = true }
+ogos_core = { workspace = true }
+ogos_display = { workspace = true }
+ogos_err = { workspace = true }
+ogos_mki = { workspace = true }
+ogos_window_foreground = { workspace = true }
+ogos_window_shift = { workspace = true }
+once_cell = { workspace = true }
+ron = { workspace = true }
+serde = { workspace = true }

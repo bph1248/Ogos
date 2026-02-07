@@ -1,13 +1,14 @@
 use crate::{
     cli::*,
     common::*,
-    config::{self, *},
     discord,
     display::*,
     gui,
     pipe_client::*,
     win32::*
 };
+use ogos_config as config;
+use config::*;
 use ogos_core::*;
 use ogos_err::*;
 

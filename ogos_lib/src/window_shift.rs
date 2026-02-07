@@ -1,15 +1,16 @@
 use crate::{
     common::*,
-    config::{self, *},
     display::*,
     win32::*,
     window_foreground
 };
+use ogos_config as config;
+use config::*;
 use ogos_core::*;
 use ogos_err::*;
+use ogos_window_shift::*;
 
 use log::*;
-use serde::*;
 use std::{
     collections::*,
     ffi::*,
@@ -36,66 +37,6 @@ use windows::{
         }
     }
 };
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct AnchorAbsolute {
-    pub(crate) left: i32,
-    pub(crate) top: i32,
-    pub(crate) right: i32,
-    pub(crate) bottom: i32
-}
-impl AnchorAbsolute {
-    pub(crate) fn width(&self) -> i32 {
-        self.right - self.left
-    }
-
-    pub(crate) fn height(&self) -> i32 {
-        self.bottom - self.top
-    }
-}
-impl Display for AnchorAbsolute {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{{}, {}, {}, {}}}{{{}, {}}}", self.left, self.top, self.right, self.bottom, self.width(), self.height())
-    }
-}
-impl From<RECT> for AnchorAbsolute {
-    fn from(value: RECT) -> Self {
-        Self {
-            left: value.left,
-            top: value.top,
-            right: value.right,
-            bottom: value.bottom
-        }
-    }
-}
-impl Into<RECT> for AnchorAbsolute {
-    fn into(self) -> RECT {
-        RECT {
-            left: self.left,
-            top: self.top,
-            right: self.right,
-            bottom: self.bottom
-        }
-    }
-}
-
-#[derive(Clone, Copy, Deserialize)]
-pub(crate) struct AnchorRelative {
-    pub(crate) left: i32,
-    pub(crate) top: i32,
-    pub(crate) right: i32,
-    pub(crate) bottom: i32
-}
-impl AnchorRelative {
-    pub(crate) fn into_abs(self, screen_extent: Extent2d) -> AnchorAbsolute {
-        AnchorAbsolute {
-            left: self.left,
-            top: self.top,
-            right: screen_extent.width + self.right,
-            bottom: screen_extent.height + self.bottom
-        }
-    }
-}
 
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct Delta {
