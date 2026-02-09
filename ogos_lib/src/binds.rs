@@ -1,8 +1,8 @@
-use crate::display::*;
 use ogos_config as config;
 use config::*;
 use ogos_core::*;
 use ogos_err::*;
+use ogos_display::*;
 use ogos_mki as mki;
 use mki::{
     InputEvent::*,

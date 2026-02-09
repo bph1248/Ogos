@@ -1,13 +1,20 @@
 [workspace]
 members = [
     "ogos",
+    "ogos_audio",
+    "ogos_common",
+    "ogos_config",
     "ogos_core",
+    "ogos_discord",
+    "ogos_display",
     "ogos_err",
+    "ogos_gui",
     "ogos_lib",
     "ogos_mki",
-    "ogos_proc_macros"
+    "ogos_proc_macros",
+    "ogos_video",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 edition = "2024"
@@ -18,21 +25,25 @@ version = "0.1.0"
 [workspace.dependencies]
 bincode = "1.3.3"
 clap = { version = "4.3.0", default-features = false, features = ["derive", "help", "std"] }
+com-policy-config = "0.6.0"
+concat-string = "1.0.1"
 const_format = { version = "0.2.34", default-features = false }
 discord-rich-presence = "1.0.0"
 eframe = { version = "0.33.0", default-features = false, features = ["default_fonts", "wgpu"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 log = "0.4.17"
-log-panics = "2.1.0"
 netcorehost = "0.19.0"
 nvapi-sys = "0.1.3"
-ogos_binds = { path = "./ogos_binds" }
+nvapi_sys_new = "=0.1.5"
+ogos_audio = { path = "./ogos_audio" }
+ogos_common = { path = "./ogos_common" }
+ogos_config = { path = "./ogos_config" }
 ogos_core = { path = "./ogos_core" }
+ogos_discord = { path = "./ogos_discord" }
 ogos_display = { path = "./ogos_display" }
 ogos_err = { path = "./ogos_err" }
 ogos_mki = { path = "./ogos_mki" }
-ogos_window_foreground = { path = "./ogos_window_foreground" }
-ogos_window_shift = { path = "./ogos_window_shift" }
+ogos_video = { path = "./ogos_video" }
 once_cell = "1.19.0"
 opener = "0.8.3"
 qmk-via-api = { version = "0.5", default-features = false }
@@ -44,6 +55,8 @@ serde = { version = "1.0.204", default-features = false, features = ["rc"] }
 serde_json = "1.0.121"
 simplelog = "0.12.1"
 strum = { version = "0.27.1", features = ["derive"] }
+subenum = { version = "1.1.2", default-features = false }
+sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "system"] }
 tokio = { version = "1.46.1", features = ["sync"] }
 which = "8.0.0"
 widestring = { version = "1.2.0", default-features = false, features = ["std"] }

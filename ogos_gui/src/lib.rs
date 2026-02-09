@@ -1,11 +1,10 @@
-use crate::{
-    common::*,
-    discord,
-    video,
-    *
-};
-use ogos_config::*;
+use ogos_common::*;
+use ogos_config as config;
+use config::*;
+use ogos_core::*;
+use ogos_discord as discord;
 use ogos_err::*;
+use ogos_video as video;
 
 use concat_string::*;
 use discord_rich_presence::*;
@@ -52,7 +51,7 @@ struct DirEntryInfo {
     file_kind: FileKind
 }
 
-pub(crate) enum Kind {
+pub enum Kind {
     Discord { name: String, discord_info: DiscordInfoView<'static> },
     MediaBrowser
 }
@@ -78,12 +77,12 @@ fn to_discord_asset_name(s: impl AsRef<str>) -> String {
         .collect()
 }
 
-pub(crate) struct Discord {
+struct Discord {
     name: String,
     discord_info: DiscordInfoView<'static>
 }
 impl Discord {
-    pub(crate) fn new(_cctx: &eframe::CreationContext<'_>, name: String, discord_info: DiscordInfoView<'static>) -> Self {
+    fn new(_cctx: &eframe::CreationContext<'_>, name: String, discord_info: DiscordInfoView<'static>) -> Self {
         Self {
             name,
             discord_info
@@ -703,7 +702,7 @@ impl<'a> MediaBrowser<'a> {
                         let mut image_file = File::open(image_path.as_path())?;
                         let mut hasher = blake3::Hasher::new();
                         let mut chunk = [0_u8; CHUNK_BYTE_COUNT as usize];
-                        image_file.read(&mut chunk)?;
+                        _ = image_file.read(&mut chunk)?;
                         let computed_hash = Arc::from(hasher.update(&chunk).finalize().to_hex().as_str());
                         let hash_mismatches = expected_hash.is_none_or(|expected_hash| expected_hash != computed_hash);
 
@@ -1374,7 +1373,7 @@ impl<'a> MediaBrowser<'a> {
     }
 }
 
-pub(crate) fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
+pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_maximize_button(false);
     if let Kind::MediaBrowser = kind {

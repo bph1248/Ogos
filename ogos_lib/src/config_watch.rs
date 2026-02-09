@@ -2,10 +2,9 @@ use crate::{
     CanReloadConfig,
 
     binds,
-    common::*,
-    win32::*,
     *
 };
+use ogos_common::*;
 use ogos_config as config;
 use ogos_core::*;
 use ogos_err::*;

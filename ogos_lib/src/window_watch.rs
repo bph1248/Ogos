@@ -1,12 +1,13 @@
 use crate::{
-    common::*,
     cursor_watch,
-    display::*,
     win32::*,
-    window_foreground::*
+    window_foreground::{self, *},
+    window_shift
 };
+use ogos_common::*;
 use ogos_config as config;
 use ogos_core::*;
+use ogos_display::*;
 use ogos_err::*;
 
 use log::*;
@@ -43,20 +44,20 @@ trait Dispatch {
 }
 impl Dispatch for BroadcastMsg {
     fn dispatch(self, sxs: &Senders) -> Res1<()> {
-        sxs.window_foreground.as_ref().map(|sx| { sx.send(WindowForegroundMsg::BroadcastMsg(self)) }).transpose()?;
-        sxs.window_shift.as_ref().map(|sx| { sx.send(WindowShiftMsg::BroadcastMsg(self)) }).transpose()?;
+        sxs.window_foreground.as_ref().map(|sx| { sx.send(window_foreground::Msg::Broadcast(self)) }).transpose()?;
+        sxs.window_shift.as_ref().map(|sx| { sx.send(window_shift::Msg::Broadcast(self)) }).transpose()?;
 
         Ok(())
     }
 }
-impl Dispatch for WindowForegroundMsg {
+impl Dispatch for window_foreground::Msg {
     fn dispatch(self, sxs: &Senders) -> Res1<()> {
         sxs.window_foreground.as_ref().map(|sx| { sx.send(self) }).transpose()?;
 
         Ok(())
     }
 }
-impl Dispatch for WindowShiftMsg {
+impl Dispatch for window_shift::Msg {
     fn dispatch(self, sxs: &Senders) -> Res1<()> {
         sxs.window_shift.as_ref().map(|sx| { sx.send(self) }).transpose()?;
 
@@ -151,43 +152,43 @@ fn dispatch_msg<T>(msg: T) where
 
 unsafe extern "system" fn all_other_foreground_destroy_proc(hook: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch_msg(WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
+        dispatch_msg(window_foreground::Msg::WinEventHookAllOtherForegroundDestroy { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn explorer_destroy_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch_msg(WindowForegroundMsg::WinEventHookExplorerDestroy { hwnd: hwnd.as_usize() });
+        dispatch_msg(window_foreground::Msg::WinEventHookExplorerDestroy { hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn shell_experience_host_destroy_proc(hook: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch_msg(WindowForegroundMsg::WinEventHookShellExperienceHostDestroy { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
+        dispatch_msg(window_foreground::Msg::WinEventHookShellExperienceHostDestroy { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn foreground_location_change_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch_msg(WindowForegroundMsg::WinEventHookForegroundLocationChange { hwnd: hwnd.as_usize() });
+        dispatch_msg(window_foreground::Msg::WinEventHookForegroundLocationChange { hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn shell_experience_host_location_change_proc(hook: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch_msg(WindowForegroundMsg::WinEventHookShellExperienceHostLocationChange { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
+        dispatch_msg(window_foreground::Msg::WinEventHookShellExperienceHostLocationChange { hook: hook.0 as usize, hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn taskbar_location_change_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, id_obj: i32, _: i32, _: u32, _: u32) {
     if id_obj == OBJID_WINDOW.0 {
-        dispatch_msg(WindowForegroundMsg::WinEventHookTaskbarLocationChange { hwnd: hwnd.as_usize() });
+        dispatch_msg(window_foreground::Msg::WinEventHookTaskbarLocationChange { hwnd: hwnd.as_usize() });
     }
 }
 
 unsafe extern "system" fn all_foreground_proc(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
     if !hwnd.is_invalid() {
-        dispatch_msg(WindowForegroundMsg::WinEventHookAllForeground { hwnd: hwnd.as_usize() });
+        dispatch_msg(window_foreground::Msg::WinEventHookAllForeground { hwnd: hwnd.as_usize() });
     }
 }
 
@@ -196,9 +197,9 @@ unsafe extern "system" fn window_shift_proc(_: HWINEVENTHOOK, event: u32, hwnd: 
     info!("{}: {} ({:#06x}): hwnd: {:p}, id_obj: {:#x}, id_child: {:#x}", module_path!(), event._to_event_string(), event, hwnd.0, id_obj, _id_child);
 
     let msg = match event {
-        EVENT_OBJECT_DESTROY if id_obj == OBJID_WINDOW.0 => WindowShiftMsg::Destroy(hwnd.as_usize()),
-        EVENT_SYSTEM_MENUSTART => WindowShiftMsg::MenuStart,
-        EVENT_SYSTEM_MENUEND => WindowShiftMsg::MenuEnd,
+        EVENT_OBJECT_DESTROY if id_obj == OBJID_WINDOW.0 => window_shift::Msg::Destroy(hwnd.as_usize()),
+        EVENT_SYSTEM_MENUSTART => window_shift::Msg::MenuStart,
+        EVENT_SYSTEM_MENUEND => window_shift::Msg::MenuEnd,
         _ => return
     };
     dispatch_msg(msg);
@@ -227,7 +228,7 @@ unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_MOUSEMOVE => {
             let now = now!();
 
-            dispatch_msg(WindowForegroundMsg::WmMouseMove(lparam, now));
+            dispatch_msg(window_foreground::Msg::WmMouseMove(lparam, now));
 
             LRESULT(0)
         },
@@ -343,7 +344,7 @@ fn init_hitbox(sxs: &Senders) -> Res1<HWND> { unsafe {
         ..default!()
     };
 
-    sxs.window_foreground.as_ref().unwrap().send(WindowForegroundMsg::Taskbar(Box::new(tb)))?;
+    sxs.window_foreground.as_ref().unwrap().send(window_foreground::Msg::Taskbar(Box::new(tb)))?;
 
     Ok(hitbox_hwnd)
 } }
@@ -432,7 +433,7 @@ fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<Read
 
                                 // Notify that hook couldn't be set - undo any state that was set on request
                                 if let WinEventHookContext::AllOtherForegroundDestroy { hwnd } = info.ctx {
-                                    dispatch_msg(WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook: 0, hwnd });
+                                    dispatch_msg(window_foreground::Msg::WinEventHookAllOtherForegroundDestroy { hook: 0, hwnd });
                                 }
 
                                 ErrVar::FailedSetWinEventHooks { ctx: info.ctx.to_string() }

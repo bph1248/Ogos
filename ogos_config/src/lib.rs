@@ -1,10 +1,7 @@
-use ogos_binds::*;
+use ogos_common::*;
 use ogos_core::*;
-use ogos_display::*;
 use ogos_err::*;
 use ogos_mki::*;
-use ogos_window_foreground::*;
-use ogos_window_shift::*;
 
 use const_format::*;
 use discord_rich_presence::activity as drpa;
@@ -469,118 +466,6 @@ pub struct GameInfo<'a> {
 pub struct Games<'a>(#[serde(borrow)] pub HashMap<&'a str, GameInfo<'a>>);
 impl_name!(Games, 'a);
 
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Intent {
-    Absolute,
-    Relative
-}
-
-#[derive(Default)]
-pub struct GammaFfi {
-    pub calibrate_gamma: bool,
-    pub gamma_target: i32,
-    pub gamma_value: f64,
-    pub black_output_offset: f64
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Gamma {
-    #[serde(rename = "srgb")]
-    Srgb,
-    #[default]
-    #[serde(rename = "bt_1886")]
-    Bt1886,
-    #[serde(rename = "custom")]
-    Custom { value: f64, black_output_offset: f64, intent: Intent },
-    #[serde(rename = "lstar")]
-    Lstar
-}
-impl Gamma {
-    fn target(&self) -> i32 {
-        match self {
-            Self::Srgb => 0,
-            Self::Bt1886 => 1,
-            Self::Custom { intent, .. } => {
-                match intent {
-                    Intent::Absolute => 2,
-                    Intent::Relative => 3
-                }
-            },
-            Self::Lstar => 4
-        }
-    }
-
-    pub fn as_ffi(&self) -> GammaFfi {
-        let calibrate_gamma = true;
-        let gamma_target = self.target();
-
-        match self {
-            Self::Custom { value, black_output_offset, .. } => GammaFfi {
-                calibrate_gamma,
-                gamma_target,
-                gamma_value: *value,
-                black_output_offset: *black_output_offset
-            },
-            _ => GammaFfi {
-                calibrate_gamma,
-                gamma_target,
-                gamma_value: 0.0,
-                black_output_offset: 0.0
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Default, Deserialize)]
-#[repr(i32)]
-pub enum ColorSpaceTarget {
-    #[serde(rename = "bt_709")]
-    #[default]
-    Bt709 = 0,
-    #[serde(rename = "display_p3")]
-    DisplayP3,
-    #[serde(rename = "adobe_rgb")]
-    AdobeRgb,
-    #[serde(rename = "bt_2020")]
-    Bt2020
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
-pub enum PrimariesSource<'a> {
-    #[default]
-    Edid,
-    Profile { path: &'a str }
-}
-impl<'a> PrimariesSource<'a> {
-    pub fn as_i32(&self) -> i32 {
-        match self {
-            Self::Edid => 0,
-            Self::Profile { .. } => 1
-        }
-    }
-}
-
-const fn novideo_srgb_enable_clamp() -> bool { true }
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NovideoSrgbInfo<'a> {
-    #[serde(default = "novideo_srgb_enable_clamp")]
-    pub enable_clamp: bool,
-    #[serde(borrow, rename = "primaries")]
-    pub primaries_source: PrimariesSource<'a>,
-    pub color_space_target: ColorSpaceTarget,
-    #[serde(default)]
-    pub gamma: Gamma,
-    pub enable_optimization: bool
-}
-impl<'a> NovideoSrgbInfo<'a> {
-    pub const NAME: &'static str = "novideo_srgb";
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DitherInfo {
@@ -685,7 +570,6 @@ pub enum Task {
     LetWalkAway,
     GoToSleep,
     ToggleDisplayMode,
-    // #[cfg(feature = "dbg_window_info")]
     GetForegroundInfo
 }
 

@@ -1,23 +1,24 @@
-use crate::{
-    audio::*,
-    display::*,
-    win32::*,
-    window_foreground,
-    window_shift::*
-};
-use ogos_config::*;
+#![allow(clippy::missing_safety_doc)]
+
+pub mod binds;
+pub mod display;
+pub mod window_foreground;
+pub mod window_shift;
+
+pub use binds::*;
+pub use display::*;
+pub use window_foreground::*;
+pub use window_shift::*;
+
 use ogos_core::*;
 use ogos_err::*;
-use ogos_window_shift::*;
 
-use discord_rich_presence::*;
 use log::*;
+use nvapi_sys_new as nvapi_530;
+use nvapi_530::*;
 use paste::*;
 use serde::*;
-use strum::*;
-use subenum::*;
 use std::{
-    borrow::*,
     fmt::{self, Display},
     ops::*,
     path::*,
@@ -25,7 +26,9 @@ use std::{
     thread,
     time::*
 };
+use strum::*;
 use sysinfo::*;
+use widestring::*;
 use windows::{
     core::*,
     Win32::{
@@ -37,10 +40,10 @@ use windows::{
     }
 };
 
-pub(crate) const CREATE_NO_WINDOW: u32 = 0x08000000;
+use std::result::Result;
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub(crate) struct Tid(pub(crate) u32);
+pub struct Tid(pub u32);
 impl From<u32> for Tid {
     fn from(value: u32) -> Self {
         Self(value)
@@ -48,9 +51,9 @@ impl From<u32> for Tid {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct Tpids {
-    pub(crate) thread: u32,
-    pub(crate) proc: u32
+pub struct Tpids {
+    pub thread: u32,
+    pub proc: u32
 }
 impl Display for Tpids {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -58,69 +61,56 @@ impl Display for Tpids {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum FileKind {
-    Dir,
-    Image,
-    Vid,
-    Other
+pub struct WinStr {
+    _wide: U16CString,
+    pcwstr: PCWSTR
+}
+impl WinStr {
+    unsafe fn new(s: &str) -> Self { unsafe {
+        let _wide = U16CString::from_str_unchecked(s);
+        let pcwstr = PCWSTR(_wide.as_ptr());
+
+        Self {
+            _wide,
+            pcwstr
+        }
+    } }
+}
+impl Default for WinStr {
+    fn default() -> Self {
+        let _wide: U16CString = default!();
+        let pcwstr = PCWSTR(_wide.as_ptr());
+
+        Self {
+            _wide,
+            pcwstr
+        }
+    }
+}
+impl Deref for WinStr {
+    type Target = PCWSTR;
+
+    fn deref(&self) -> &Self::Target {
+        &self.pcwstr
+    }
+}
+impl From<&PathBuf> for WinStr {
+    fn from(value: &PathBuf) -> Self {
+        unsafe {
+            let _wide = U16CString::from_os_str_unchecked(value.as_os_str());
+            let pcwstr = PCWSTR(_wide.as_ptr());
+
+            Self {
+                _wide,
+                pcwstr
+            }
+        }
+    }
 }
 
-#[derive(Display)]
-#[subenum(
-    BroadcastMsg(derive(Clone, Copy, IntoStaticStr)),
-    CursorWatchMsg,
-    PipeMsg(derive(Deserialize, Display, Serialize)),
-    ReadyMsg(derive(Display)),
-    WindowForegroundMsg(derive(Display, IntoStaticStr)),
-    WindowShiftMsg(derive(Display, IntoStaticStr))
-)]
-pub(crate) enum Msg {
-    #[subenum(PipeMsg)]
-    Ack,
-    #[subenum(PipeMsg)]
-    ActiveGame(Option<String>),
-    #[subenum(CursorWatchMsg)]
-    Begin,
-    #[subenum(WindowForegroundMsg, WindowShiftMsg)]
-    BroadcastMsg(BroadcastMsg),
-    #[subenum(PipeMsg)]
-    Close,
-    #[subenum(WindowShiftMsg)]
-    Destroy(usize),
-    #[subenum(CursorWatchMsg)]
-    DisplayChange(Extent2d),
-    #[subenum(WindowShiftMsg)]
-    MenuStart,
-    #[subenum(WindowShiftMsg)]
-    MenuEnd,
-    #[subenum(WindowForegroundMsg)]
-    PipeMsg(PipeMsg),
-    #[subenum(ReadyMsg)]
-    PipeServer,
-    #[subenum(WindowForegroundMsg)]
-    Taskbar(Box<window_foreground::Taskbar>),
-    #[subenum(ReadyMsg)]
-    WindowWatch(Tid),
-    #[subenum(WindowForegroundMsg)]
-    WinEventHookAllForeground { hwnd: usize },
-    #[subenum(WindowForegroundMsg)]
-    WinEventHookAllOtherForegroundDestroy { hook: usize, hwnd: usize },
-    #[subenum(WindowForegroundMsg)]
-    WinEventHookExplorerDestroy { hwnd: usize },
-    #[subenum(WindowForegroundMsg)]
-    WinEventHookForegroundLocationChange { hwnd: usize },
-    #[subenum(WindowForegroundMsg)]
-    WinEventHookShellExperienceHostDestroy { hook: usize, hwnd: usize },
-    #[subenum(WindowForegroundMsg)]
-    WinEventHookShellExperienceHostLocationChange { hook: usize, hwnd: usize },
-    #[subenum(WindowForegroundMsg)]
-    WinEventHookTaskbarLocationChange { hwnd: usize },
-    #[subenum(BroadcastMsg)]
+#[derive(Clone, Copy, IntoStaticStr)]
+pub enum BroadcastMsg {
     WmDisplayChange(LPARAM),
-    #[subenum(WindowForegroundMsg)]
-    WmMouseMove(LPARAM, Instant),
-    #[subenum(BroadcastMsg)]
     WmReloadConfig
 }
 impl Name for BroadcastMsg {
@@ -128,47 +118,25 @@ impl Name for BroadcastMsg {
         self.into()
     }
 }
-impl Name for WindowForegroundMsg {
-    fn name(&self) -> &'static str {
-        self.into()
-    }
-}
-impl Name for WindowShiftMsg {
-    fn name(&self) -> &'static str {
-        self.into()
-    }
-}
 
-#[subenum(GamesSetting, VideoSetting)]
-pub(crate) enum Setting<'a> {
-    #[subenum(GamesSetting)]
-    ActiveGame,
-    #[subenum(GamesSetting)]
-    CursorSize(usize),
-    #[subenum(GamesSetting)]
-    Discord(DiscordIpcClient),
-    #[subenum(GamesSetting, VideoSetting)]
-    DisplayMode(DisplayMode),
-    #[subenum(VideoSetting)]
-    NovideoSrgb(NovideoSrgbInfo<'a>),
-    #[subenum(VideoSetting)]
-    SampleRate(Hz),
-    #[subenum(GamesSetting)]
-    ScreenExtent(Extent2dU)
+#[derive(Display)]
+pub enum ReadyMsg {
+    PipeServer,
+    WindowWatch(Tid)
 }
 
 macro_rules! impl_WmOgos {
     ($first:ident, $($rest:ident),*) => {
         #[repr(u32)]
-        pub(crate) enum WmOgos {
+        enum WmOgos {
             $first = WM_USER + 1,
             $($rest,)*
         }
 
         paste! {
-            pub(crate) const [<WM_OGOS_ $first:snake:upper>]: u32 = WmOgos::$first as u32;
+            pub const [<WM_OGOS_ $first:snake:upper>]: u32 = WmOgos::$first as u32;
             $(
-                pub(crate) const [<WM_OGOS_ $rest:snake:upper>]: u32 = WmOgos::$rest as u32;
+                pub const [<WM_OGOS_ $rest:snake:upper>]: u32 = WmOgos::$rest as u32;
             )*
         }
     };
@@ -181,31 +149,7 @@ impl_WmOgos! {
     RequestWinEventUnhooks
 }
 
-macro_rules! _elapsed {
-    ($($s:stmt;)+) => {
-        let begin = std::time::Instant::now();
-
-        $($s)+
-
-        info!("elapsed: {}", begin.elapsed().as_micros());
-    };
-}
-macro_rules! into {
-    () => {
-        |x| x.into()
-    };
-}
-macro_rules! now {
-    () => {
-        std::time::Instant::now()
-    };
-}
-#[allow(unused_imports)]
-pub(crate) use _elapsed;
-pub(crate) use into;
-pub(crate) use now;
-
-pub(crate) trait BoolExt {
+pub trait BoolExt {
     fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T>;
     fn _as_str(&self) -> &'static str;
     fn as_win32_bool(&self) -> BOOL;
@@ -233,13 +177,13 @@ impl BoolExt for bool {
     }
 }
 
-pub(crate) trait Name {
+pub trait Name {
     fn name(&self) -> &'static str;
 }
 
-pub(crate) trait PathExt {
+pub trait PathExt {
     fn confirm(&self) -> ResVar<&Self>;
-    fn static_confirm(&'static self) -> ResVar<&'static Self>;
+    fn confirm_static(&'static self) -> ResVar<&'static Self>;
     fn get_dir(&self) -> ResVar<&Path>;
     fn get_file_ext(&self) -> ResVar<&str>;
     fn get_file_kind(&self) -> ResVar<FileKind>;
@@ -255,7 +199,7 @@ impl PathExt for Path {
         Ok(self)
     }
 
-    fn static_confirm(&'static self) -> ResVar<&'static Self> {
+    fn confirm_static(&'static self) -> ResVar<&'static Self> {
         if !self.try_exists()? {
             Err(ErrVar::MissingFile { path: self.into() })?;
         }
@@ -305,7 +249,7 @@ impl PathExt for Path {
     }
 }
 
-pub(crate) trait PathBufExt {
+pub trait PathBufExt {
     fn confirm(self) -> ResVar<PathBuf>;
 }
 impl PathBufExt for PathBuf {
@@ -318,55 +262,7 @@ impl PathBufExt for PathBuf {
     }
 }
 
-pub(crate) trait RectExt {
-    fn get_congruent_delta_from_anchor(&self, anchor_abs: AnchorAbsolute, leeway: u32) -> Option<Delta>;
-    fn height(&self) -> i32;
-    fn is_centered(&self, screen_extent: Extent2d) -> bool;
-    fn sub(&self, rhs: Self) -> Self;
-    fn width(&self) -> i32;
-}
-impl RectExt for RECT {
-    fn get_congruent_delta_from_anchor(&self, anchor_abs: AnchorAbsolute, leeway: u32) -> Option<Delta> {
-        let diffs = self.sub(anchor_abs.into());
-
-        let is_congruent =
-            diffs.left == diffs.right &&
-            diffs.top == diffs.bottom &&
-            diffs.left.unsigned_abs() <= leeway &&
-            diffs.top.unsigned_abs() <= leeway;
-
-        is_congruent.then_some(
-            Delta {
-                x: diffs.left,
-                y: diffs.top
-            }
-        )
-    }
-
-    fn height(&self) -> i32 {
-        self.bottom - self.top
-    }
-
-    fn is_centered(&self, screen_extent: Extent2d) -> bool {
-        self.left == (screen_extent.width - self.right) &&
-        self.top == (screen_extent.height - self.bottom)
-    }
-
-    fn sub(&self, rhs: Self) -> Self {
-        Self {
-            left: self.left - rhs.left,
-            top: self.top - rhs.top,
-            right: self.right - rhs.right,
-            bottom: self.bottom - rhs.bottom
-        }
-    }
-
-    fn width(&self) -> i32 {
-        self.right - self.left
-    }
-}
-
-pub(crate) trait StrExt {
+pub trait StrExt {
     fn to_wide_128(&self) -> [u16; 128];
     unsafe fn to_win_str(&self) -> WinStr;
 }
@@ -386,7 +282,7 @@ impl StrExt for &str {
     } }
 }
 
-pub(crate) fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, sleep_dur: Duration) -> Res<T> {
+pub fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, sleep_dur: Duration) -> Res<T> {
     for _ in 0..attempt_count.saturating_sub(1) {
         if let Ok(t) = f() {
             return Ok(t)
@@ -402,7 +298,7 @@ fn find_app(name: &'static str) -> ResVar<PathBuf> {
     which::which(name).map_err(|_| ErrVar::MissingFile { path: name.as_static_cow_path() })
 }
 
-pub(crate) fn confirm_or_find_app<P>(name: &'static str, path: Option<P>) -> ResVar<PathBuf> where
+pub fn confirm_or_find_app<P>(name: &'static str, path: Option<P>) -> ResVar<PathBuf> where
     P: AsRef<Path>
 {
     fn inner(name: &'static str, confirm: Option<&Path>) -> ResVar<PathBuf> {
@@ -423,7 +319,7 @@ pub(crate) fn confirm_or_find_app<P>(name: &'static str, path: Option<P>) -> Res
     inner(name, path.as_ref().map(|path| path.as_ref()))
 }
 
-pub(crate) fn get_file_kind(ext: &str) -> FileKind {
+pub fn get_file_kind(ext: &str) -> FileKind {
     match ext {
         "jpg" |
         "jpeg" |
@@ -439,7 +335,7 @@ pub(crate) fn get_file_kind(ext: &str) -> FileKind {
     }
 }
 
-pub(crate) fn get_first_process<'a>(proc_name: &str, system: &'a mut System) -> Option<&'a Process> {
+pub fn get_first_process<'a>(proc_name: &str, system: &'a mut System) -> Option<&'a Process> {
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, default!());
 
     system.processes_by_exact_name(proc_name.as_ref())
@@ -448,13 +344,13 @@ pub(crate) fn get_first_process<'a>(proc_name: &str, system: &'a mut System) -> 
         })
 }
 
-pub(crate) fn get_process_count(proc_name: &str, system: &mut System) -> usize {
+pub fn get_process_count(proc_name: &str, system: &mut System) -> usize {
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, default!());
 
     system.processes_by_exact_name(proc_name.as_ref()).count()
 }
 
-pub(crate) fn output_command(cmd: &mut Command) -> ResVar<Output> {
+pub fn output_command(cmd: &mut Command) -> ResVar<Output> {
     let output = cmd.output()
         .map_err(|err| {
             ErrVar::FailedOutputCommand { inner: err, cmd: cmd.as_display().to_string() }
@@ -466,16 +362,7 @@ pub(crate) fn output_command(cmd: &mut Command) -> ResVar<Output> {
     }
 }
 
-pub(crate) fn spawn_command(cmd: &mut Command) -> ResVar<Child> {
-    let output = cmd.spawn()
-        .map_err(|err| {
-            ErrVar::FailedSpawnCommand { inner: err, cmd: cmd.as_display().to_string() }
-        })?;
-
-    Ok(output)
-}
-
-pub(crate) fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) -> windows::core::Result<()> { unsafe {
+pub fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) -> windows::core::Result<()> { unsafe {
     const NORM: i64 = 65535;
 
     let x = i64::from(x);
@@ -504,3 +391,12 @@ pub(crate) fn send_cursor_pos(x: i32, y: i32, screen_extent: Extent2d) -> window
 
     SendInput(&[input], size_of::<INPUT>() as i32).win32_core_ok().map(|_| ())
 } }
+
+pub fn spawn_command(cmd: &mut Command) -> ResVar<Child> {
+    let output = cmd.spawn()
+        .map_err(|err| {
+            ErrVar::FailedSpawnCommand { inner: err, cmd: cmd.as_display().to_string() }
+        })?;
+
+    Ok(output)
+}

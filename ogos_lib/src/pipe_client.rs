@@ -1,7 +1,5 @@
-use crate::{
-    common::*,
-    pipe_server::*
-};
+use crate::pipe_server::{self, *};
+use ogos_common::*;
 use ogos_err::*;
 
 use windows::Win32::{
@@ -9,7 +7,7 @@ use windows::Win32::{
     Storage::FileSystem::*
 };
 
-pub(crate) fn pipe_msg(msg: PipeMsg) -> Res1<()> { unsafe {
+pub(crate) fn pipe_msg(msg: pipe_server::Msg) -> Res1<()> { unsafe {
     let pipe_name = PIPE_NAME.to_win_str();
     let pipe = CreateFileW(
         *pipe_name,
@@ -27,7 +25,7 @@ pub(crate) fn pipe_msg(msg: PipeMsg) -> Res1<()> { unsafe {
     let mut buf = [0_u8; PIPE_SIZE as usize];
     ReadFile(pipe, Some(&mut buf), None, None)?;
 
-    bincode::deserialize::<PipeMsg>(&buf)?; // Only receiving ack
+    bincode::deserialize::<pipe_server::Msg>(&buf)?; // Only receiving ack
 
     CloseHandle(pipe)?;
 

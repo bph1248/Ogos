@@ -1,4 +1,4 @@
-use crate::common::*;
+use ogos_common::*;
 use ogos_config as config;
 use config::*;
 use ogos_core::*;
@@ -18,6 +18,8 @@ use std::{
     thread::*,
     time::{self, *}
 };
+use strum::*;
+use windows::Win32::System::Threading::*;
 
 #[allow(dead_code)]
 #[derive(Deserialize)]
@@ -73,7 +75,12 @@ struct Stats {
     tactics: Tactics
 }
 
-pub(crate) fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfoView) -> Res<()> {
+#[derive(Display)]
+pub enum Msg {
+    Close
+}
+
+pub fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfoView) -> Res<()> {
     info!("{}: begin", module_path!());
 
     ipc_client.connect()?;
@@ -107,7 +114,7 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<&'static s
     let url = concat_string!("https://api.chess.com/pub/player/", username.to_lowercase(), "/stats");
 
     let mut cmd = Command::new("curl");
-    cmd.arg(url).creation_flags(CREATE_NO_WINDOW);
+    cmd.arg(url).creation_flags(CREATE_NO_WINDOW.0);
     let init = || -> Res<(Stats, i64)> {
         let output = output_command(&mut cmd)?.stdout;
         let initial_stats = serde_json::from_slice::<Stats>(output.as_slice())?;
@@ -149,6 +156,7 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<&'static s
     loop {
         match rx.recv_timeout(Duration::from_secs(30)) { // Wait for signal to close, triggered when user closes gui
             Ok(msg) => {
+                #[allow(irrefutable_let_patterns)]
                 if let Msg::Close = msg {
                     break
                 }
@@ -202,7 +210,7 @@ fn begin_chess(ipc_client: &mut DiscordIpcClient, large_image: Option<&'static s
     Ok(())
 }
 
-pub(crate) fn spawn_scoped_chess<'a>(s: &'a Scope<'a, '_>, ipc_client: &'a mut DiscordIpcClient, large_image: Option<&'static str>, username: &'static str, rx: Receiver<Msg>) -> ScopedJoinHandle<'a, ()> {
+pub fn spawn_scoped_chess<'a>(s: &'a Scope<'a, '_>, ipc_client: &'a mut DiscordIpcClient, large_image: Option<&'static str>, username: &'static str, rx: Receiver<Msg>) -> ScopedJoinHandle<'a, ()> {
     s.spawn(move || {
         begin_chess(ipc_client, large_image, username, rx).unwrap_or_else(|err| {
             error!("{}: failed to monitor chess stats: {}", module_path!(), err);

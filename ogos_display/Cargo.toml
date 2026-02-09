@@ -9,8 +9,18 @@ version = { workspace = true }
 crate-type = ["lib"]
 
 [dependencies]
-ogos_binds = { workspace = true }
-ogos_err = { workspace = true }
+ddc = "0.2.2"
+ddc-winapi = "0.2.2"
+log = { workspace = true }
+netcorehost = { workspace = true }
 nvapi-sys = { workspace = true }
-nvapi_sys_new = "=0.1.5"
+nvapi_sys_new = { workspace = true }
+ogos_common = { workspace = true }
+ogos_config = { workspace = true }
+ogos_core = { workspace = true }
+ogos_err = { workspace = true }
+once_cell = { workspace = true }
 serde = { workspace = true }
+sysinfo = { workspace = true }
+widestring = { workspace = true }
+windows = { workspace = true }

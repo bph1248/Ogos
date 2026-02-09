@@ -24,33 +24,28 @@
 // #![warn(clippy::cast_sign_loss)]
 // #![warn(clippy::pedantic)]
 
-pub(crate) mod audio;
 pub(crate) mod binds;
 pub(crate) mod cli;
-pub(crate) mod common;
-
 pub(crate) mod config_watch;
 pub(crate) mod cursor_watch;
-pub(crate) mod discord;
-pub(crate) mod display;
 pub(crate) mod games;
-pub(crate) mod gui;
 pub(crate) mod pipe_client;
 pub(crate) mod pipe_server;
-pub(crate) mod video;
 pub(crate) mod win32;
 pub(crate) mod window_foreground;
 pub(crate) mod window_shift;
 pub(crate) mod window_watch;
 
-use audio::*;
 use cli::*;
-use common::*;
-use display::*;
+use ogos_audio::*;
+use ogos_common::*;
 use ogos_config as config;
 use config::*;
 use ogos_core::*;
+use ogos_display::*;
 use ogos_err::*;
+use ogos_gui as gui;
+use ogos_video as video;
 use win32::*;
 use window_foreground::*;
 
@@ -212,13 +207,13 @@ fn get_long_lived_channels(enable_window_foreground: bool, enable_window_shift: 
     let mut llc = LongLivedChannels::default();
 
     if enable_window_foreground {
-        let channels = mpsc::channel::<WindowForegroundMsg>();
+        let channels = mpsc::channel::<window_foreground::Msg>();
 
         llc.with_window_foreground(channels);
     }
 
     if enable_window_shift {
-        let channels = mpsc::channel::<WindowShiftMsg>();
+        let channels = mpsc::channel::<window_shift::Msg>();
 
         llc.with_window_shift(channels);
     }
@@ -247,7 +242,7 @@ fn shutdown(mut to_close: Vec<LongLivedTask>) { unsafe {
         (|| -> Res<()> {
             match long_lived_task {
                 LongLivedTask::ConfigWatch(event_close) => SetEvent(event_close)?,
-                LongLivedTask::PipeServer => pipe_msg(PipeMsg::Close)?,
+                LongLivedTask::PipeServer => pipe_msg(pipe_server::Msg::Close)?,
                 LongLivedTask::WindowWatch(tid) => PostThreadMessageW(tid.0, WM_OGOS_CLOSE, WPARAM(0), LPARAM(0))?,
                 _ => ()
             }
@@ -271,7 +266,7 @@ fn begin(system: System) -> Res<()> {
 
     // Audio
     if let Some(name) = cli.set_endpoint.as_ref() {
-        audio::set_endpoint(name.as_str()).unwrap_or_else(|err| {
+        set_endpoint(name.as_str()).unwrap_or_else(|err| {
             error!("{}: failed to set endpoint: {}: {}", module_path!(), name, err);
         });
     }
@@ -303,7 +298,7 @@ fn begin(system: System) -> Res<()> {
                 ..
             } = config.display_modes.as_ref()
                 .and_then(|display_modes| display_modes.sdr.novideo_srgb.clone())
-                .ok_or(ErrVar::MissingConfigKey { name: config::NovideoSrgbInfo::NAME })?;
+                .ok_or(ErrVar::MissingConfigKey { name: NovideoSrgbInfo::NAME })?;
 
             let enable_clamp = match op {
                 NovideoSrgbOp::On => true,
@@ -476,8 +471,6 @@ fn init() -> Res<System> {
             .open(log_path)?;
 
         let logger_config = ConfigBuilder::new()
-            // .add_filter_allow_str("ogos_lib")
-            // .add_filter_allow_str("log_panics")
             .add_filter_ignore_str("eframe")
             .add_filter_ignore_str("egui")
             .add_filter_ignore_str("wgpu")

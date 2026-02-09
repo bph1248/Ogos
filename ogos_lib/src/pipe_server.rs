@@ -1,13 +1,16 @@
-use crate::common::*;
+use crate::{window_foreground};
+use ogos_common::*;
 use ogos_core::*;
 use ogos_err::*;
 
 use log::*;
+use serde::*;
 use std::{
     ffi::*,
     sync::mpsc::*,
     thread::{self, *}
 };
+use strum::*;
 use windows::{
     core::*,
     Win32::{
@@ -37,8 +40,15 @@ const _: () = assert!(PIPE_SIZE_CHECK <= u32::MAX as usize);
 pub(crate) const PIPE_NAME: &str = r"\\.\pipe\ogos";
 pub(crate) const PIPE_SIZE: u32 = PIPE_SIZE_CHECK as u32;
 
+#[derive(Deserialize, Display, Serialize)]
+pub(crate) enum Msg {
+    Ack,
+    ActiveGame(Option<String>),
+    Close
+}
+
 // See https://learn.microsoft.com/en-us/windows/win32/secauthz/creating-a-security-descriptor-for-a-new-object-in-c--
-fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<WindowForegroundMsg>>) -> Res<()> { unsafe {
+fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<window_foreground::Msg>>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     // Init a SID for the well-known Everyone group
@@ -113,22 +123,22 @@ fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<Windo
         let mut buf = [0_u8; PIPE_SIZE as usize];
         ReadFile(pipe_hnd, Some(&mut buf), None, None)?;
 
-        let msg = bincode::deserialize::<PipeMsg>(&buf)?;
+        let msg = bincode::deserialize::<Msg>(&buf)?;
         info!("{}: recvd: {}", module_path!(), msg);
 
-        let ack = bincode::serialize(&PipeMsg::Ack)?;
+        let ack = bincode::serialize(&Msg::Ack)?;
         WriteFile(pipe_hnd, Some(&ack), None, None)?;
 
         match msg {
-            PipeMsg::ActiveGame(_) => if let Some(sx) = window_foreground_sx.as_ref() {
-                sx.send(WindowForegroundMsg::PipeMsg(msg)).unwrap(); //$ err
+            Msg::ActiveGame(_) => if let Some(sx) = window_foreground_sx.as_ref() {
+                sx.send(window_foreground::Msg::Pipe(msg)).unwrap(); //$ err
             },
-            PipeMsg::Close => {
+            Msg::Close => {
                 DisconnectNamedPipe(pipe_hnd)?;
 
                 break
             },
-            PipeMsg::Ack => ()
+            Msg::Ack => ()
         }
 
         DisconnectNamedPipe(pipe_hnd)?;
@@ -140,7 +150,7 @@ fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<Windo
     Ok(())
 } }
 
-pub(crate) fn spawn(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<WindowForegroundMsg>>) -> JoinHandle<()> {
+pub(crate) fn spawn(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<window_foreground::Msg>>) -> JoinHandle<()> {
     thread::spawn(|| {
         begin(send_ready, window_foreground_sx).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

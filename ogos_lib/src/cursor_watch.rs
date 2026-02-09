@@ -1,4 +1,4 @@
-use crate::common::*;
+use ogos_common::*;
 use ogos_core::*;
 use ogos_err::*;
 
@@ -14,9 +14,14 @@ use windows::Win32::{
 };
 
 pub(crate) struct CursorWatch {
-    pub(crate) sx: mpsc::Sender<CursorWatchMsg>,
+    pub(crate) sx: mpsc::Sender<Msg>,
     pub(crate) working: AtomicBool,
     pub(crate) request_stop: AtomicBool
+}
+
+pub(crate) enum Msg {
+    Begin,
+    DisplayChange(Extent2d)
 }
 
 pub(crate) fn begin(snap_ordinate: i32, screen_extent: Extent2d) -> Arc<CursorWatch> { unsafe {
@@ -55,10 +60,10 @@ pub(crate) fn begin(snap_ordinate: i32, screen_extent: Extent2d) -> Arc<CursorWa
     thread::spawn(move || {
         for msg in rx.iter() {
             match msg {
-                CursorWatchMsg::Begin => inner(&cursor_watch_, screen_extent_).unwrap_or_else(|err| {
+                Msg::Begin => inner(&cursor_watch_, screen_extent_).unwrap_or_else(|err| {
                     error!("{}: failed to monitor cursor pos: {}", module_path!(), err);
                 }),
-                CursorWatchMsg::DisplayChange(new_extent) => {
+                Msg::DisplayChange(new_extent) => {
                     screen_extent_ = new_extent;
                 }
             }

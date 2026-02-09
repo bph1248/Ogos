@@ -1,11 +1,9 @@
-use crate::{
-    audio::*,
-    common::{CREATE_NO_WINDOW, *},
-    display::*,
-    *
-};
+use ogos_audio::*;
+use ogos_common::*;
 use ogos_config as config;
+use config::*;
 use ogos_core::*;
+use ogos_display::*;
 use ogos_err::*;
 
 use concat_string::*;
@@ -24,7 +22,10 @@ use std::{
     process::*,
     string::*
 };
-use windows::Win32::Foundation::*;
+use windows::Win32::{
+    Foundation::*,
+    System::Threading::*
+};
 
 const MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME: &str = "maintain_sample_rate.guard";
 const NA_STR: &str = "<n/a>";
@@ -201,7 +202,7 @@ enum Stream {
 }
 
 #[derive(PartialEq)]
-pub(crate) enum MaintainSampleRate {
+pub enum MaintainSampleRate {
     #[allow(dead_code)]
     No,
     Yes,
@@ -233,7 +234,13 @@ impl MpvArg<'_> {
     }
 }
 
-pub(crate) fn create_maintain_sample_rate_guard() -> io::Result<()> {
+enum Setting<'a> {
+    DisplayMode(DisplayMode),
+    NovideoSrgb(NovideoSrgbInfo<'a>),
+    SampleRate(Hz)
+}
+
+pub fn create_maintain_sample_rate_guard() -> io::Result<()> {
     let guard_path = unsafe { CURRENT_EXE_DIR.get_unchecked().join(MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME) };
 
     fs::write(&guard_path, "")?;
@@ -242,8 +249,8 @@ pub(crate) fn create_maintain_sample_rate_guard() -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, override_glsl_shaders: bool) -> Res<(), { loc_var!(Mpv) }> {
-    let inner = |revert_to: &mut Vec<VideoSetting>| -> Res<(), { loc_var!(Mpv) }> {
+pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, override_glsl_shaders: bool) -> Res<(), { loc_var!(Mpv) }> {
+    let inner = |revert_to: &mut Vec<Setting>| -> Res<(), { loc_var!(Mpv) }> {
         let config = config::get().read()?;
         let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Mpv::NAME })?;
 
@@ -256,7 +263,7 @@ pub(crate) fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRa
         let mut ffprobe_cmd = Command::new(&ffprobe_path);
         ffprobe_cmd.args(["-v", "quiet", "-read_intervals", "%+#1", "-show_entries", "stream=codec_type,bits_per_raw_sample,sample_rate,color_transfer:side_data=side_data_type,max_content", "-of", "json"])
             .arg(vid_path)
-            .creation_flags(CREATE_NO_WINDOW);
+            .creation_flags(CREATE_NO_WINDOW.0);
         let output = output_command(&mut ffprobe_cmd)?;
         let output = String::from_utf8(output.stdout)?;
         let ffprobe = serde_json::from_str::<Ffprobe>(output.as_str())?;
@@ -274,7 +281,7 @@ pub(crate) fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRa
                 if !maintain_sample_rate  {
                     set_sample_rate(vid_sample_rate.try_as_hz()?)
                         .inspect(|prev| {
-                            if let Some(prev) = prev { revert_to.push(VideoSetting::SampleRate(*prev)); }
+                            if let Some(prev) = prev { revert_to.push(Setting::SampleRate(*prev)); }
                         })?;
                 }
 
@@ -327,7 +334,7 @@ pub(crate) fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRa
                             }
 
                             // Check ReShade.ini exists before symlinking
-                            Path::new(reshade_config.settings_path).static_confirm()?;
+                            Path::new(reshade_config.settings_path).confirm_static()?;
 
                             if let Err(err) = os::windows::fs::symlink_file(reshade_config.settings_path, &reshade_settings_sym_link_path) {
                                 let question = match err.raw_os_error().map(|code| WIN32_ERROR(code as u32)) {
@@ -385,7 +392,7 @@ pub(crate) fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRa
                                 control_novideo_srgb(&info).map(|_| {
                                     let prev = info.clone();
 
-                                    revert_to.push(VideoSetting::NovideoSrgb(prev));
+                                    revert_to.push(Setting::NovideoSrgb(prev));
                                 })?;
                             }
                         }
@@ -398,7 +405,7 @@ pub(crate) fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRa
 
         set_display_mode(set_display_mode_op)
             .map(|prev| {
-                if let Some(prev) = prev { revert_to.push(VideoSetting::DisplayMode(prev)) }
+                if let Some(prev) = prev { revert_to.push(Setting::DisplayMode(prev)) }
             })?;
 
         // Build cmd and launch
@@ -415,19 +422,19 @@ pub(crate) fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRa
         Ok(())
     };
 
-    let mut revert_to: Vec<VideoSetting> = Vec::new();
+    let mut revert_to: Vec<Setting> = Vec::new();
     let res = inner(&mut revert_to);
 
     while let Some(setting) = revert_to.pop() {
         (|| -> Res<()> {
             match setting {
-                VideoSetting::DisplayMode(display_mode) => {
+                Setting::DisplayMode(display_mode) => {
                     set_display_mode(SetDisplayModeOp::Set(display_mode))?;
                 },
-                VideoSetting::NovideoSrgb(info) => {
+                Setting::NovideoSrgb(info) => {
                     control_novideo_srgb(&info)?;
                 },
-                VideoSetting::SampleRate(hz) => {
+                Setting::SampleRate(hz) => {
                     set_sample_rate(hz)?;
                 }
             }

@@ -1,15 +1,16 @@
 use crate::{
     cli::*,
-    common::*,
-    discord,
-    display::*,
     gui,
     pipe_client::*,
+    pipe_server,
     win32::*
 };
+use ogos_common::*;
 use ogos_config as config;
 use config::*;
 use ogos_core::*;
+use ogos_discord as discord;
+use ogos_display::*;
 use ogos_err::*;
 
 use concat_string::*;
@@ -31,6 +32,14 @@ use windows::Win32::{
     }
 };
 
+enum Setting {
+    ActiveGame,
+    CursorSize(usize),
+    Discord(DiscordIpcClient),
+    DisplayMode(DisplayMode),
+    ScreenExtent(Extent2dU)
+}
+
 #[derive(Clone, Copy, EnumIter)]
 enum Launcher {
     Epic,
@@ -48,7 +57,7 @@ impl Launcher {
 }
 
 pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc_var!(Games) }> { unsafe {
-    let mut revert_to: Vec<GamesSetting> = Vec::new();
+    let mut revert_to: Vec<Setting> = Vec::new();
 
     let res = (|| -> Res<(), { loc_var!(Games) }> {
         let config = config::get().read()?;
@@ -56,15 +65,15 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
         let game_info = games_config.0.get(name).ok_or_else(|| ErrVar::UnknownGame { name: name.into() })?;
         let discord_info = game_info.discord.clone();
 
-        pipe_msg(PipeMsg::ActiveGame(Some(game_info.proc.into())))?;
-        revert_to.push(GamesSetting::ActiveGame);
+        pipe_msg(pipe_server::Msg::ActiveGame(Some(game_info.proc.into())))?;
+        revert_to.push(Setting::ActiveGame);
 
         if cli.gaming.set_cursor_size &&
             let Some(cursor_size) = game_info.cursor_size
         {
             set_cursor_size(cursor_size)?;
 
-            revert_to.push(GamesSetting::CursorSize(32));
+            revert_to.push(Setting::CursorSize(32));
         }
 
         if cli.gaming.set_res &&
@@ -73,7 +82,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
             let prev = set_screen_extent(res)?;
 
             if let Some(prev) = prev {
-                revert_to.push(GamesSetting::ScreenExtent(prev));
+                revert_to.push(Setting::ScreenExtent(prev));
             }
         }
 
@@ -81,7 +90,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
             let prev = set_display_mode(SetDisplayModeOp::Set(DisplayMode::Hdr))?;
 
             if let Some(prev) = prev {
-                revert_to.push(GamesSetting::DisplayMode(prev));
+                revert_to.push(Setting::DisplayMode(prev));
             }
         }
 
@@ -243,14 +252,14 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                 match name {
                     "Chess" => {
                         thread::scope(|s| -> Res<()> {
-                            let (discord_sx, rx) = mpsc::channel::<Msg>();
+                            let (discord_sx, rx) = mpsc::channel::<discord::Msg>();
 
                             let large_image = discord_info.large_image;
                             let chess_username = discord_info.chess_username.ok_or(ErrVar::MissingUsername)?;
                             discord::spawn_scoped_chess(s, &mut ipc_client, large_image, chess_username, rx);
 
                             gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;
-                            discord_sx.send(Msg::Close)?;
+                            discord_sx.send(discord::Msg::Close)?;
 
                             Ok(())
                         })?;
@@ -265,7 +274,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                     }
                 }
 
-                revert_to.push(GamesSetting::Discord(ipc_client));
+                revert_to.push(Setting::Discord(ipc_client));
             },
             _ => {
                 info!("{}: waiting for process to terminate...", module_path!());
@@ -284,17 +293,17 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
     while let Some(setting) = revert_to.pop() {
         (|| -> Res<()> {
             match setting {
-                GamesSetting::ActiveGame => pipe_msg(PipeMsg::ActiveGame(None))?,
-                GamesSetting::CursorSize(size) => {
+                Setting::ActiveGame => pipe_msg(pipe_server::Msg::ActiveGame(None))?,
+                Setting::CursorSize(size) => {
                     set_cursor_size(size)?;
                 },
-                GamesSetting::Discord(mut ipc_client) => {
+                Setting::Discord(mut ipc_client) => {
                     ipc_client.close()?;
                 },
-                GamesSetting::DisplayMode(display_mode) => {
+                Setting::DisplayMode(display_mode) => {
                     set_display_mode(SetDisplayModeOp::Set(display_mode))?;
                 },
-                GamesSetting::ScreenExtent(screen_extent) => {
+                Setting::ScreenExtent(screen_extent) => {
                     set_screen_extent(screen_extent)?;
                 }
             }

@@ -12,62 +12,41 @@ crate-type = ["lib"]
 argfile = "0.2.1"
 bincode = { workspace = true }
 bitflags = "2.9.1"
-blake3 = { version = "1.8.2", default-features = false }
 cfg-if = "1.0.3"
 clap = { workspace = true }
-com-policy-config = "0.6.0"
-concat-string = "1.0.1"
+concat-string = { workspace = true }
 const_format = { workspace = true }
-ddc = "0.2.2"
-ddc-winapi = "0.2.2"
 discord-rich-presence = { workspace = true }
-eframe = { workspace = true }
-egui = { version = "0.33.0", default-features = false, features = ["serde"] }
-egui_extras = { version = "0.33.0", default-features = false }
 hidapi = { version = "*", default-features = false, features = ["windows-native"] }
-image = { workspace = true }
-indexmap = { version = "2.12.1", features = ["serde"] }
 log = { workspace = true }
-log-panics = { workspace = true }
+log-panics = "2.1.0"
 netcorehost = { workspace = true }
-nvapi-sys = { workspace = true }
-nvapi_sys_new = "=0.1.5"
-ogos_binds = { workspace = true }
-ogos_config = { path = "../ogos_config" }
+ogos_audio = { workspace = true }
+ogos_common = { workspace = true }
+ogos_config = { workspace = true }
 ogos_core = { workspace = true }
+ogos_discord = { workspace = true }
 ogos_display = { workspace = true }
 ogos_err = { workspace = true }
+ogos_gui = { path = "../ogos_gui" }
 ogos_mki = { workspace = true }
-ogos_window_foreground = { workspace = true }
-ogos_window_shift = { workspace = true }
-once_cell = { workspace = true }
-opener = { workspace = true }
-paste = "1.0.15"
+ogos_video = { workspace = true }
 qmk-via-api = { workspace = true }
 rand = { version = "0.9.2", default-features = false, features = ["thread_rng"] }
-raw-window-handle = "0.6.2"
-rayon = { workspace = true }
-resize = { workspace = true }
-rgb = "0.8.52"
-ron = { workspace = true }
-rust-ini = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 simplelog = { workspace = true }
 strum = { workspace = true }
-subenum = { version = "1.1.2", default-features = false }
-sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "system"] }
+subenum = { workspace = true }
+sysinfo = { workspace = true }
 tokio = { workspace = true }
-wgpu = { version = "27.0.1", features = ["dx12"] }
-which = { workspace = true }
-widestring = { workspace = true }
 windows = { workspace = true }
 windows_061 = { workspace = true }
 
 mki = { version = "0.2.3", optional = true }
 
 [package.metadata.cargo-shear]
-ignored = ["hidapi"]
+ignored = ["hidapi", "windows"]
 
 [features]
 about = ["mki"]

@@ -1,6 +1,5 @@
 use crate::{
     binds::{self, *},
-    common::*,
     cursor_watch::*,
     win32::*,
     window_watch::*,
@@ -11,7 +10,6 @@ use ogos_core::*;
 use ogos_err::*;
 use ogos_mki as mki;
 use mki::*;
-use ogos_window_foreground::*;
 
 use bitflags::bitflags;
 use log::*;
@@ -26,6 +24,7 @@ use std::{
     thread::{self, *},
     time::*
 };
+use strum::*;
 use tokio::sync::oneshot;
 use windows::Win32::{
     Foundation::*,
@@ -36,7 +35,6 @@ use windows::Win32::{
 };
 
 pub(crate) const PROGMAN_CLASS_NAME: &str = "Progman";
-pub(crate) const TASKBAR_CLASS_NAME: &str = "Shell_TrayWnd";
 pub(crate) const TASKBAR_START_MENU_CLASS_NAME: &str = "Start";
 pub(crate) const WORKERW_CLASS_NAME: &str = "WorkerW";
 pub(crate) const WINDOW_WATCH_CLASS_NAME: &str = "OgosWindowWatch";
@@ -80,14 +78,14 @@ pub(crate) type WinEventHooksSx = oneshot::Sender<Res<Vec<HWINEVENTHOOK>>>;
 
 #[derive(Default)]
 pub(crate) struct Senders {
-    pub(crate) window_foreground: Option<Sender<WindowForegroundMsg>>,
-    pub(crate) window_shift: Option<Sender<WindowShiftMsg>>
+    pub(crate) window_foreground: Option<Sender<Msg>>,
+    pub(crate) window_shift: Option<Sender<window_shift::Msg>>
 }
 
 #[derive(Default)]
 pub(crate) struct Receivers {
-    pub(crate) window_foreground: Option<Receiver<WindowForegroundMsg>>,
-    pub(crate) window_shift: Option<Receiver<WindowShiftMsg>>
+    pub(crate) window_foreground: Option<Receiver<Msg>>,
+    pub(crate) window_shift: Option<Receiver<window_shift::Msg>>
 }
 
 #[derive(Default)]
@@ -97,13 +95,13 @@ pub(crate) struct LongLivedChannels {
     pub(crate) rxs: Receivers
 }
 impl LongLivedChannels {
-    pub(crate) fn with_window_foreground(&mut self, channel: (Sender<WindowForegroundMsg>, Receiver<WindowForegroundMsg>)) {
+    pub(crate) fn with_window_foreground(&mut self, channel: (Sender<Msg>, Receiver<Msg>)) {
         self.enabled |= EnabledChannels::WINDOW_FOREGROUND;
         self.sxs.window_foreground = Some(channel.0);
         self.rxs.window_foreground = Some(channel.1);
     }
 
-    pub(crate) fn with_window_shift(&mut self, channel: (Sender<WindowShiftMsg>, Receiver<WindowShiftMsg>)) {
+    pub(crate) fn with_window_shift(&mut self, channel: (Sender<window_shift::Msg>, Receiver<window_shift::Msg>)) {
         self.enabled |= EnabledChannels::WINDOW_SHIFT;
         self.sxs.window_shift = Some(channel.0);
         self.rxs.window_shift = Some(channel.1);
@@ -172,20 +170,30 @@ pub(crate) enum HitboxState {
     Exit
 }
 
+#[derive(Display, IntoStaticStr)]
+pub(crate) enum Msg {
+    Broadcast(BroadcastMsg),
+    Pipe(pipe_server::Msg),
+    Taskbar(Box<Taskbar>),
+    WinEventHookAllForeground { hwnd: usize },
+    WinEventHookAllOtherForegroundDestroy { hook: usize, hwnd: usize },
+    WinEventHookExplorerDestroy { hwnd: usize },
+    WinEventHookForegroundLocationChange { hwnd: usize },
+    WinEventHookShellExperienceHostDestroy { hook: usize, hwnd: usize },
+    WinEventHookShellExperienceHostLocationChange { hook: usize, hwnd: usize },
+    WinEventHookTaskbarLocationChange { hwnd: usize },
+    WmMouseMove(LPARAM, Instant)
+}
+impl Name for Msg {
+    fn name(&self) -> &'static str {
+        self.into()
+    }
+}
+
 pub(crate) enum PendingHooks {
     Ok(),
     Check(WinEventHooksRx)
 }
-
-// #[derive(Clone, Copy, Default, Deserialize, PartialEq)]
-// #[serde(rename_all = "snake_case")]
-// pub(crate) enum Side {
-//     Left,
-//     Top,
-//     Right,
-//     #[default]
-//     Bottom
-// }
 
 fn leak_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> ResVar<()> { unsafe {
     let cargo: (Option<WinEventHooksSx>, _) = (None, request);
@@ -222,7 +230,7 @@ fn handle_wm_display_change(tb: &mut Taskbar, lparam: LPARAM) {
 
     tb.hitbox_pos = get_hitbox_pos(tb.taskbar_rect, tb.taskbar_side, tb.hitbox_entry_side, tb.hitbox_entry_inset_px, tb.hitbox_exit_taskbar_offset_px, tb.screen_extent);
     if let Some(cursor_watch) = tb.cursor_watch.as_ref() {
-        cursor_watch.sx.send(CursorWatchMsg::DisplayChange(tb.screen_extent)).unwrap();
+        cursor_watch.sx.send(cursor_watch::Msg::DisplayChange(tb.screen_extent)).unwrap();
     }
 
     tb.screen_extent_changed = true;
@@ -301,7 +309,7 @@ fn handle_wm_mouse_move(tb: &mut Taskbar, _lparam: LPARAM, stamp: Instant) -> Re
                                 cursor_watch.working.store(true, Ordering::Relaxed);
                                 cursor_watch.request_stop.store(false, Ordering::Relaxed);
 
-                                cursor_watch.sx.send(CursorWatchMsg::Begin).unwrap();
+                                cursor_watch.sx.send(cursor_watch::Msg::Begin).unwrap();
                             }
                         },
                         false => { // Snap the cursor. Landing on the hitbox will create another event whereby the hitbox will be moved.
@@ -846,9 +854,9 @@ fn init_binds<'a>() -> Res1<Binds<'a>> {
     .map_err(|err| err.msg("failed to init binds"))
 }
 
-fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
+fn init_taskbar(rx: &Receiver<Msg>) -> Res1<Taskbar> {
     match rx.recv()? {
-        WindowForegroundMsg::Taskbar(tb) => {
+        Msg::Taskbar(tb) => {
             tb.taskbar_hwnd.hide()?;
             tb.hitbox_hwnd.show_na(true)?;
 
@@ -858,7 +866,7 @@ fn init_taskbar(rx: &Receiver<WindowForegroundMsg>) -> Res1<Taskbar> {
     }
 }
 
-fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> Res<()> { unsafe {
+fn begin(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Tid) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let mut ts = ThreadState {
@@ -868,14 +876,14 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, 
         ..default!()
     };
 
-    let mut handle_msg = |msg: WindowForegroundMsg| -> Res<()> {
+    let mut handle_msg = |msg: Msg| -> Res<()> {
         match msg {
-            WindowForegroundMsg::BroadcastMsg(BroadcastMsg::WmDisplayChange(lparam)) => {
+            Msg::Broadcast(BroadcastMsg::WmDisplayChange(lparam)) => {
                 if let Some(tb) = ts.tb.as_mut() {
                     handle_wm_display_change(tb, lparam);
                 }
             },
-            WindowForegroundMsg::BroadcastMsg(BroadcastMsg::WmReloadConfig) => {
+            Msg::Broadcast(BroadcastMsg::WmReloadConfig) => {
                 if ts.binds.is_some() {
                     init_binds().map(|mut binds| {
                         unbind_maps(&mut binds);
@@ -888,10 +896,10 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, 
                     })?;
                 }
             },
-            WindowForegroundMsg::PipeMsg(pipe_msg) => if let PipeMsg::ActiveGame(exe) = pipe_msg {
+            Msg::Pipe(pipe_msg) => if let pipe_server::Msg::ActiveGame(exe) = pipe_msg {
                 ts.active_game = exe;
             },
-            WindowForegroundMsg::WmMouseMove(lparam, stamp) => {
+            Msg::WmMouseMove(lparam, stamp) => {
                 if let Err(mut err) = handle_wm_mouse_move(ts.tb.as_mut().unwrap(), lparam, stamp) {
                     let fg_hwnd = GetForegroundWindow();
                     let win_errored = ts.win_errored.entry(fg_hwnd.as_usize())
@@ -905,7 +913,7 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, 
                     }
                 }
             },
-            WindowForegroundMsg::WinEventHookAllForeground { hwnd } => {
+            Msg::WinEventHookAllForeground { hwnd } => {
                 if let Err(err) = handle_win_event_hook_all_foreground(&mut ts, hwnd.as_hwnd()) {
                     let win_errored = ts.win_errored.entry(hwnd)
                         .or_default();
@@ -918,22 +926,22 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, 
                     }
                 }
             },
-            WindowForegroundMsg::WinEventHookAllOtherForegroundDestroy { hook, hwnd } => {
+            Msg::WinEventHookAllOtherForegroundDestroy { hook, hwnd } => {
                 handle_win_event_hook_all_other_foreground_destroy(&mut ts, hook.as_hwineventhook(), hwnd.as_hwnd())?;
             },
-            WindowForegroundMsg::WinEventHookExplorerDestroy { hwnd } => {
+            Msg::WinEventHookExplorerDestroy { hwnd } => {
                 handle_win_event_hook_explorer_destroy(&mut ts, hwnd.as_hwnd())?;
             },
-            WindowForegroundMsg::WinEventHookShellExperienceHostDestroy { hook, hwnd } => {
+            Msg::WinEventHookShellExperienceHostDestroy { hook, hwnd } => {
                 handle_win_event_hook_shell_experience_host_destroy(&mut ts, hook.as_hwineventhook(), hwnd.as_hwnd())?;
             },
-            WindowForegroundMsg::WinEventHookForegroundLocationChange { hwnd } => {
+            Msg::WinEventHookForegroundLocationChange { hwnd } => {
                 handle_win_event_hook_foreground_location_change(ts.tb.as_ref().unwrap(), hwnd.as_hwnd())?;
             },
-            WindowForegroundMsg::WinEventHookShellExperienceHostLocationChange { hook, hwnd } => {
+            Msg::WinEventHookShellExperienceHostLocationChange { hook, hwnd } => {
                 handle_win_event_hook_shell_experience_host_location_change(&mut ts, hook.as_hwineventhook(), hwnd.as_hwnd())?;
             },
-            WindowForegroundMsg::WinEventHookTaskbarLocationChange { hwnd } => {
+            Msg::WinEventHookTaskbarLocationChange { hwnd } => {
                 handle_win_event_hook_taskbar_location_change(ts.tb.as_mut().unwrap(), hwnd.as_hwnd())?;
             },
             _ => info!("{}: {}", module_path!(), msg)
@@ -959,7 +967,7 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, 
     Ok(())
 } }
 
-pub(crate) fn spawn(enable: WindowForegroundComponents, rx: Receiver<WindowForegroundMsg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
+pub(crate) fn spawn(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
     thread::spawn(move || {
         begin(enable, rx, hook_mgr_tid).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

@@ -1,13 +1,8 @@
-use crate::common::*;
+use ogos_common::*;
 use ogos_core::*;
 use ogos_err::*;
 
 use log::*;
-use std::{
-    ops::*,
-    path::*
-};
-use widestring::*;
 use windows::{
     core::*,
     Win32::{
@@ -34,53 +29,6 @@ pub(crate) trait WinErrorExt {
 impl WinErrorExt for windows::core::Error {
     fn as_win32_error(&self) -> WIN32_ERROR {
         WIN32_ERROR((self.code().0 & 0xFFFF) as u32) // Assume facility is FACILITY_WIN32
-    }
-}
-
-pub(crate) struct WinStr {
-    _wide: U16CString,
-    pcwstr: PCWSTR
-}
-impl WinStr {
-    pub(crate) unsafe fn new(s: &str) -> Self { unsafe {
-        let _wide = U16CString::from_str_unchecked(s);
-        let pcwstr = PCWSTR(_wide.as_ptr());
-
-        Self {
-            _wide,
-            pcwstr
-        }
-    } }
-}
-impl Default for WinStr {
-    fn default() -> Self {
-        let _wide: U16CString = default!();
-        let pcwstr = PCWSTR(_wide.as_ptr());
-
-        Self {
-            _wide,
-            pcwstr
-        }
-    }
-}
-impl Deref for WinStr {
-    type Target = PCWSTR;
-
-    fn deref(&self) -> &Self::Target {
-        &self.pcwstr
-    }
-}
-impl From<&PathBuf> for WinStr {
-    fn from(value: &PathBuf) -> Self {
-        unsafe {
-            let _wide = U16CString::from_os_str_unchecked(value.as_os_str());
-            let pcwstr = PCWSTR(_wide.as_ptr());
-
-            Self {
-                _wide,
-                pcwstr
-            }
-        }
     }
 }
 
@@ -286,7 +234,7 @@ impl HwndExt for HWND {
     fn is_fullscreen(&self, screen_extent: Extent2d) -> windows::core::Result<bool> {
         let win_rect = self.get_rect()?;
 
-        Ok(win_rect == screen_extent.into_rect())
+        Ok(win_rect == screen_extent.into())
     }
 
     fn is_iconic(&self) -> bool { unsafe {

@@ -24,12 +24,14 @@ use strum::*;
 use thiserror::*;
 use tokio::sync::oneshot;
 use windows::{
-    core::HRESULT,
+    core::*,
     Win32::{
         Foundation::*,
         UI::Accessibility::*
     }
 };
+
+use std::result::Result;
 
 const WAIT_FAILED: u32 = 0xFFFFFFFF;
 

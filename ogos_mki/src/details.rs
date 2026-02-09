@@ -326,10 +326,10 @@ impl Registry {
 
     #[allow(unused)]
     pub(crate) fn update_mouse_position(&self, x: i32, y: i32) {
-        if self.is_tracking_enabled() {
-            if let Some(mouse_tracking) = self.mouse_tracking_callback.lock().unwrap().as_ref() {
-                mouse_tracking(x, y)
-            }
+        if self.is_tracking_enabled() &&
+            let Some(mouse_tracking) = self.mouse_tracking_callback.lock().unwrap().as_ref()
+        {
+            mouse_tracking(x, y)
         }
     }
 

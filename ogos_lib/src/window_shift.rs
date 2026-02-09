@@ -1,14 +1,13 @@
 use crate::{
-    common::*,
-    display::*,
     win32::*,
     window_foreground
 };
+use ogos_common::*;
 use ogos_config as config;
 use config::*;
 use ogos_core::*;
+use ogos_display::*;
 use ogos_err::*;
-use ogos_window_shift::*;
 
 use log::*;
 use std::{
@@ -21,6 +20,7 @@ use std::{
     thread::{self, *},
     time::*
 };
+use strum::*;
 use rand::seq::*;
 use windows::{
     core::*,
@@ -152,6 +152,19 @@ impl WinInfo {
     } }
 }
 
+#[derive(Display, IntoStaticStr)]
+pub(crate) enum Msg {
+    Broadcast(BroadcastMsg),
+    Destroy(usize),
+    MenuStart,
+    MenuEnd
+}
+impl Name for Msg {
+    fn name(&self) -> &'static str {
+        self.into()
+    }
+}
+
 #[derive(Default)]
 enum Papers {
     #[default]
@@ -174,6 +187,54 @@ macro_rules! dbg_window_shift_delta {
             $win_info.anchor_is_constrained
         );
     };
+}
+
+pub(crate) trait RectExt {
+    fn get_congruent_delta_from_anchor(&self, anchor_abs: AnchorAbsolute, leeway: u32) -> Option<Delta>;
+    fn height(&self) -> i32;
+    fn is_centered(&self, screen_extent: Extent2d) -> bool;
+    fn sub(&self, rhs: Self) -> Self;
+    fn width(&self) -> i32;
+}
+impl RectExt for RECT {
+    fn get_congruent_delta_from_anchor(&self, anchor_abs: AnchorAbsolute, leeway: u32) -> Option<Delta> {
+        let diffs = self.sub(anchor_abs.into());
+
+        let is_congruent =
+            diffs.left == diffs.right &&
+            diffs.top == diffs.bottom &&
+            diffs.left.unsigned_abs() <= leeway &&
+            diffs.top.unsigned_abs() <= leeway;
+
+        is_congruent.then_some(
+            Delta {
+                x: diffs.left,
+                y: diffs.top
+            }
+        )
+    }
+
+    fn height(&self) -> i32 {
+        self.bottom - self.top
+    }
+
+    fn is_centered(&self, screen_extent: Extent2d) -> bool {
+        self.left == (screen_extent.width - self.right) &&
+        self.top == (screen_extent.height - self.bottom)
+    }
+
+    fn sub(&self, rhs: Self) -> Self {
+        Self {
+            left: self.left - rhs.left,
+            top: self.top - rhs.top,
+            right: self.right - rhs.right,
+            bottom: self.bottom - rhs.bottom
+        }
+    }
+
+    fn width(&self) -> i32 {
+        self.right - self.left
+    }
 }
 
 unsafe extern "system" fn enum_desktop_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
@@ -359,7 +420,7 @@ fn set_win_attributes(win_info: &WinInfo, window_shift_config: &WindowShift) { u
 } }
 
 fn class_is_denied(class: &str) -> bool {
-    matches!(class, window_foreground::TASKBAR_CLASS_NAME | window_foreground::WINDOW_WATCH_CLASS_NAME)
+    matches!(class, TASKBAR_CLASS_NAME | window_foreground::WINDOW_WATCH_CLASS_NAME)
 }
 
 fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window_shift_config: &'a WindowShift, screen_extent: Extent2d, win_rect: RECT, hwnd: HWND) -> Res<&'a mut WinInfo> {
@@ -469,7 +530,7 @@ fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window_shift_
     Ok(win_info)
 }
 
-fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_errored: &mut HashMap<usize, Errored>, window_shift_config: &WindowShift, rx: &Receiver<WindowShiftMsg>) -> Res<()> {
+fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_errored: &mut HashMap<usize, Errored>, window_shift_config: &WindowShift, rx: &Receiver<Msg>) -> Res<()> {
     let interval_begin = now!();
     let interval_end = interval_begin + Duration::from_secs(u64::from(window_shift_config.interval_dur));
     let time_remaining = || interval_end - now!();
@@ -482,7 +543,7 @@ fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_erro
         };
 
         match msg {
-            WindowShiftMsg::BroadcastMsg(BroadcastMsg::WmDisplayChange(lparam)) => {
+            Msg::Broadcast(BroadcastMsg::WmDisplayChange(lparam)) => {
                 let width = (lparam.0 & 0xFFFF) as i32;
                 let height = ((lparam.0 >> 16) & 0xFFFF) as i32;
                 ts.screen_extent = Extent2d { width, height };
@@ -495,16 +556,16 @@ fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_erro
                     // Any anchors not updated here will become incongruent on the next iteration
                 }
             },
-            WindowShiftMsg::BroadcastMsg(BroadcastMsg::WmReloadConfig) => Err(ErrVar::ReloadConfig)?,
-            WindowShiftMsg::Destroy(hwnd) => {
+            Msg::Broadcast(BroadcastMsg::WmReloadConfig) => Err(ErrVar::ReloadConfig)?,
+            Msg::Destroy(hwnd) => {
                 #[cfg(feature = "dbg_window_shift_destroy")]
                 info!("{}: removing hwnd: {:#x}", module_path!(), hwnd);
 
                 win_infos.remove(&hwnd);
                 win_errored.remove(&hwnd);
             },
-            WindowShiftMsg::MenuStart => pause_shift = true,
-            WindowShiftMsg::MenuEnd => pause_shift = false
+            Msg::MenuStart => pause_shift = true,
+            Msg::MenuEnd => pause_shift = false
         }
 
         Ok(())
@@ -540,7 +601,7 @@ fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> Res<boo
     Ok(false)
 }
 
-fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> { unsafe {
+fn begin(rx: Receiver<Msg>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let config = config::get().read()?;
@@ -643,7 +704,7 @@ fn begin(rx: Receiver<WindowShiftMsg>) -> Res<()> { unsafe {
     Ok(())
 } }
 
-pub(crate) fn spawn(rx: Receiver<WindowShiftMsg>) -> JoinHandle<()> {
+pub(crate) fn spawn(rx: Receiver<Msg>) -> JoinHandle<()> {
     thread::spawn(|| {
         begin(rx).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);

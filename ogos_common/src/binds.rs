@@ -1,13 +1,11 @@
-use ogos_err::*;
-use ogos_mki as mki;
-use mki::*;
+use super::*;
+use ogos_mki::*;
 
 use const_format::*;
-use serde::*;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
-pub enum BindRepr<'a> {
+enum BindRepr<'a> {
     Enum(BindVarRaw),
     Num(u32),
     Str(&'a str)
@@ -17,7 +15,7 @@ macro_rules! impl_BindVar {
     ($($variant:ident),+) => {
         #[derive(Deserialize)]
         #[serde(rename_all = "snake_case")]
-        pub enum BindVarRaw {
+        enum BindVarRaw {
             $($variant,)+
         }
 
@@ -27,7 +25,7 @@ macro_rules! impl_BindVar {
             $($variant,)+
         }
         impl BindVar {
-            pub fn as_str(&self) -> &str {
+            pub(crate) fn as_str(&self) -> &str {
                 match self {
                     $(Self::$variant => map_ascii_case!(Case::Snake, stringify!($variant)),)+
                 }

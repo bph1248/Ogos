@@ -1,4 +1,4 @@
-use crate::common::*;
+use ogos_common::*;
 use ogos_config as config;
 use ogos_err::*;
 
@@ -7,7 +7,7 @@ use log::*;
 use std::{
     fmt::{self, *},
     fs,
-    process::Command
+    process::*
 };
 use windows_061::{
     core::*,
@@ -19,14 +19,14 @@ use windows_061::{
 };
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
-pub(crate) enum Hz {
+pub enum Hz {
     N44100,
     N48000,
     N88200,
     N96000
 }
 impl Hz {
-    pub(crate) fn as_str(&self) -> &str {
+    fn as_str(&self) -> &str {
         match self {
             Self::N44100 => "44100",
             Self::N48000 => "48000",
@@ -77,7 +77,7 @@ impl TryFrom<u32> for Hz {
     }
 }
 
-pub(crate) trait HzExt {
+pub trait HzExt {
     fn try_as_hz(&self) -> ResVar<Hz>;
 }
 impl<T> HzExt for T where
@@ -97,7 +97,7 @@ impl PlayNice for IPolicyConfig {
     } }
 }
 
-pub(crate) fn set_endpoint(name: &str) -> Res<()> { unsafe {
+pub fn set_endpoint(name: &str) -> Res<()> { unsafe {
     CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
     let set_endpoint_res = (|| -> Res<()> {
@@ -147,7 +147,22 @@ pub(crate) fn set_endpoint(name: &str) -> Res<()> { unsafe {
     Ok(())
 } }
 
-pub(crate) fn set_sample_rate(hz: Hz) -> Res<Option<Hz>> { unsafe {
+pub fn set_eq(name: &str) -> Res<()> {
+    let config = config::get().read()?;
+    let eq_apo = config.audio.as_ref()
+        .and_then(|audio_config| audio_config.eq_apo.as_ref())
+        .ok_or(ErrVar::MissingConfigKey { name: config::EqApo::NAME })?;
+
+    let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or(ErrVar::UnknownEq)?;
+
+    fs::copy(custom_config_path, eq_apo.master_config_path)?;
+
+    info!("{}: set eq: {}", module_path!(), name);
+
+    Ok(())
+}
+
+pub fn set_sample_rate(hz: Hz) -> Res<Option<Hz>> { unsafe {
     CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
     let prev_hz = (|| -> Res<Option<Hz>> {
@@ -184,18 +199,3 @@ pub(crate) fn set_sample_rate(hz: Hz) -> Res<Option<Hz>> { unsafe {
 
     prev_hz
 } }
-
-pub(crate) fn set_eq(name: &str) -> Res<()> {
-    let config = config::get().read()?;
-    let eq_apo = config.audio.as_ref()
-        .and_then(|audio_config| audio_config.eq_apo.as_ref())
-        .ok_or(ErrVar::MissingConfigKey { name: config::EqApo::NAME })?;
-
-    let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or(ErrVar::UnknownEq)?;
-
-    fs::copy(custom_config_path, eq_apo.master_config_path)?;
-
-    info!("{}: set eq: {}", module_path!(), name);
-
-    Ok(())
-}

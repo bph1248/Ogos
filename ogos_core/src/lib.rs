@@ -2,11 +2,10 @@ use once_cell::sync::*;
 use serde::*;
 use std::{
     borrow::*,
-    fmt::{self, Display, *},
+    fmt::{self, *},
     ops::*,
     path::*,
     process::*
-
 };
 use windows::Win32::Foundation::*;
 
@@ -16,6 +15,28 @@ pub static CURRENT_EXE_DIR: OnceCell<PathBuf> = OnceCell::new();
 macro_rules! default {
     () => {
         std::default::Default::default()
+    };
+}
+#[macro_export]
+macro_rules! _elapsed {
+    ($($s:stmt;)+) => {
+        let begin = std::time::Instant::now();
+
+        $($s)+
+
+        info!("elapsed: {}", begin.elapsed().as_micros());
+    };
+}
+#[macro_export]
+macro_rules! into {
+    () => {
+        |x| x.into()
+    };
+}
+#[macro_export]
+macro_rules! now {
+    () => {
+        std::time::Instant::now()
     };
 }
 
@@ -34,7 +55,7 @@ impl Extent2d {
         }
     }
 }
-impl Display for Extent2d {
+impl fmt::Display for Extent2d {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}x{}", self.width, self.height)
     }
@@ -116,21 +137,20 @@ fn fmt_command(cmd: &Command, f: &mut Formatter<'_>) -> Result {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FileKind {
+    Dir,
+    Image,
+    Vid,
+    Other
+}
+
 pub trait AsDisplay {
     fn as_display(&self) -> Displayer<'_, Self> where Self: Sized;
 }
 impl<T> AsDisplay for T {
     fn as_display(&self) -> Displayer<'_, Self> {
         Displayer::Borrowed(self)
-    }
-}
-
-pub trait IntoDisplay {
-    fn into_display(self) -> Displayer<'static, Self> where Self: Sized;
-}
-impl<T> IntoDisplay for T {
-    fn into_display(self) -> Displayer<'static, Self> {
-        Displayer::Owned(self)
     }
 }
 
