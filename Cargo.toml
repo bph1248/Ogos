@@ -1,19 +1,5 @@
 [workspace]
-members = [
-    "ogos",
-    "ogos_audio",
-    "ogos_common",
-    "ogos_config",
-    "ogos_core",
-    "ogos_discord",
-    "ogos_display",
-    "ogos_err",
-    "ogos_gui",
-    "ogos_lib",
-    "ogos_mki",
-    "ogos_proc_macros",
-    "ogos_video",
-]
+members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
@@ -35,15 +21,15 @@ log = "0.4.17"
 netcorehost = "0.19.0"
 nvapi-sys = "0.1.3"
 nvapi_sys_new = "=0.1.5"
-ogos_audio = { path = "./ogos_audio" }
-ogos_common = { path = "./ogos_common" }
-ogos_config = { path = "./ogos_config" }
-ogos_core = { path = "./ogos_core" }
-ogos_discord = { path = "./ogos_discord" }
-ogos_display = { path = "./ogos_display" }
-ogos_err = { path = "./ogos_err" }
-ogos_mki = { path = "./ogos_mki" }
-ogos_video = { path = "./ogos_video" }
+ogos_audio = { path = "crates/ogos_audio" }
+ogos_common = { path = "crates/ogos_common" }
+ogos_config = { path = "crates/ogos_config" }
+ogos_core = { path = "crates/ogos_core" }
+ogos_discord = { path = "crates/ogos_discord" }
+ogos_display = { path = "crates/ogos_display" }
+ogos_err = { path = "crates/ogos_err" }
+ogos_mki = { path = "crates/ogos_mki" }
+ogos_video = { path = "crates/ogos_video" }
 once_cell = "1.19.0"
 opener = "0.8.3"
 qmk-via-api = { version = "0.5", default-features = false }
