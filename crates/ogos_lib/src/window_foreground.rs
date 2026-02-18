@@ -908,7 +908,7 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Ti
                     if let ErrVar::WinCore(inner) = *err.var &&
                         win_errored.hresults.insert(inner.code())
                     {
-                        err.var = Box::new(ErrVar::FailedWmMouseMouse { inner, fg_hwnd: fg_hwnd.as_display().to_string(), fg_exe: fg_hwnd.get_exe_or_err() }); //$
+                        err.var = Box::new(ErrVar::FailedWmMouseMouse { inner, fg_hwnd, fg_exe: fg_hwnd.get_exe_or_err() });
                         Err(err)?;
                     }
                 }

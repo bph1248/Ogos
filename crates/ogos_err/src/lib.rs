@@ -1,5 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 
+use ogos_core::*;
 use ogos_mki::*;
 use ogos_proc_macros::*;
 
@@ -184,7 +185,7 @@ pub enum ErrVar {
     FailedSetWinEventHooks { ctx: String },
     FailedSpawnCommand { inner: io::Error, cmd: String },
     FailedToStr,
-    FailedWmMouseMouse { inner: windows::core::Error, fg_hwnd: String, fg_exe: String },
+    FailedWmMouseMouse { inner: windows::core::Error, fg_hwnd: HWND, fg_exe: String },
     FailedWriteFile { inner: io::Error, path: Cow<'static, Path> },
     InvalidDisplayMode,
     InvalidDisplayName,
@@ -279,7 +280,7 @@ impl Display for ErrVar {
             FailedSetWinEventHooks { ctx } => write!(f, "failed to set win event hooks: {}", ctx),
             FailedSpawnCommand { inner, cmd } => write!(f, "failed to spawn command: {}: {}", cmd, inner),
             FailedToStr => write!(f, "failed to convert value to str"),
-            FailedWmMouseMouse { inner, fg_hwnd, fg_exe} => write!(f, "failed on wm mouse move: fg_hwnd: {}, fg_exe: {}: {}", fg_hwnd, fg_exe, inner),
+            FailedWmMouseMouse { inner, fg_hwnd, fg_exe} => write!(f, "failed on wm mouse move: fg_hwnd: {}, fg_exe: {}: {}", fg_hwnd.as_display(), fg_exe, inner),
             FailedWriteFile { inner, path } => write!(f, "failed to write file: {}: {}", path.display(), inner),
             InvalidDisplayMode => write!(f, "invalid display mode"),
             InvalidDisplayName => write!(f, "invalid display name"),
