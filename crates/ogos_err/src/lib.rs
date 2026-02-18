@@ -407,7 +407,7 @@ macro_rules! impl_Win32CoreOk {
         )+
     };
 }
-impl_Win32CoreOk!(if self == 0 = { i32, u16, u32 });
+impl_Win32CoreOk!(if self == 0 = { i32, u16, u32, usize });
 
 pub trait Win32ErrorOk<T> {
     fn win32_err_ok(self) -> windows::core::Result<()>;

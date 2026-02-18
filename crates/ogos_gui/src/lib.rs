@@ -427,7 +427,7 @@ struct MediaBrowser<'a> {
     cache: Cache,
     cached_images_to_remove: Vec<Rc<str>>,
     frame: egui::Frame,
-    fixed_background: bool,
+    checked_background_brush: bool,
     view_kind: ViewKind,
     grid_entries: Vec<GridEntryInfo>,
     grid_cell_size: egui::Vec2,
@@ -456,18 +456,34 @@ struct MediaBrowser<'a> {
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if !self.fixed_background && let win_hnd = frame.window_handle().unwrap() && let raw_window_handle::RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
+        if !self.checked_background_brush && let win_hnd = frame.window_handle().unwrap() && let raw_window_handle::RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
             fn make_colorref(r: u8, g: u8, b: u8) -> COLORREF {
                 COLORREF(u32::from(r) | u32::from(g) << 8 | u32::from(b) << 16)
             }
 
             let hwnd = HWND(hnd.hwnd.get() as *mut c_void);
-            unsafe {
-                let new_brush = CreateSolidBrush(make_colorref(27, 27, 27));
-                SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, new_brush.0 as isize); //$ err
-            }
+            (|| -> Res<()> {
+                unsafe {
+                    let new_brush = CreateSolidBrush(make_colorref(27, 27, 27));
+                    let set = SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, new_brush.0 as isize);
 
-            self.fixed_background = true;
+                    if set == 0 {
+                        let maybe_err = GetLastError();
+
+                        let check = GetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND).win32_core_ok()?;
+                        if check != new_brush.0 as usize {
+                            maybe_err.ok()?;
+                        }
+                    }
+                }
+
+                Ok(())
+            })()
+            .unwrap_or_else(|err| {
+                error!("{}: failed to set background brush: {}", module_path!(), err);
+            });
+
+            self.checked_background_brush = true;
         }
 
         egui::CentralPanel::default()
@@ -812,7 +828,7 @@ impl<'a> MediaBrowser<'a> {
             cache,
             cached_images_to_remove,
             frame,
-            fixed_background: false,
+            checked_background_brush: false,
             view_kind: ViewKind::Grid,
             grid_entries,
             grid_cell_size,
