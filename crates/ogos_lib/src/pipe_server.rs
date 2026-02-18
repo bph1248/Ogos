@@ -131,7 +131,9 @@ fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<windo
 
         match msg {
             Msg::ActiveGame(_) => if let Some(sx) = window_foreground_sx.as_ref() {
-                sx.send(window_foreground::Msg::Pipe(msg)).unwrap(); //$ err
+                sx.send(window_foreground::Msg::Pipe(msg)).unwrap_or_else(|err| {
+                    error!("{}: failed to pipe active game: {}", module_path!(), err);
+                });
             },
             Msg::Close => {
                 DisconnectNamedPipe(pipe_hnd)?;
