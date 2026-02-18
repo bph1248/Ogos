@@ -259,6 +259,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                             discord::spawn_scoped_chess(s, &mut ipc_client, large_image, chess_username, rx);
 
                             gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;
+
                             discord_sx.send(discord::Msg::Close)?;
 
                             Ok(())
@@ -268,9 +269,6 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                         discord::begin(&mut ipc_client, &discord_info)?;
 
                         gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;
-
-                        ipc_client.clear_activity()?;
-                        ipc_client.close()?;
                     }
                 }
 
@@ -298,6 +296,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                     set_cursor_size(size)?;
                 },
                 Setting::Discord(mut ipc_client) => {
+                    ipc_client.clear_activity()?;
                     ipc_client.close()?;
                 },
                 Setting::DisplayMode(display_mode) => {
