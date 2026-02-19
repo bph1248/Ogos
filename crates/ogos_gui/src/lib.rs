@@ -42,6 +42,7 @@ const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color3
 const CHUNK_BYTE_COUNT: u64 = 500 * 1024;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
 const FRAME_MARGIN: f32 = 15.0;
+const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const SEPARATOR_WIDTH: f32 = 2.0;
 
 #[derive(Clone)]
@@ -140,37 +141,7 @@ fn blackman_filter() -> resize::Filter {
     )
 }
 
-fn ferry_image(info: ImageFerryInfo) -> Res1<()> {
-    let ImageFerryInfo {
-        src_path,
-        image_state_sx,
-        resize
-    } = info;
-
-    match resize {
-        Some(resize) => {
-            let ImageFerryResize { dst_path, dst_size } = resize;
-
-            let (color_image, pixels) = load_and_resize_color_image(src_path.as_path(), dst_size).unwrap();
-            let color_image_size = color_image.size;
-
-            image_state_sx.send(Ok(color_image)).unwrap();
-
-            let dst_file = fs::File::create(dst_path)?;
-            let dst_encoder = image::codecs::webp::WebPEncoder::new_lossless(&dst_file);
-
-            dst_encoder.encode(pixels.as_slice(), color_image_size[0] as u32, color_image_size[1] as u32, image::ExtendedColorType::Rgba8)?;
-        },
-        None => {
-            let color_image = load_color_image(src_path.as_path())?;
-            image_state_sx.send(Ok(color_image)).unwrap();
-        }
-    }
-
-    Ok(())
-}
-
-fn load_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
+fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
     let image = image::open(path)?;
 
     Ok(match image {
@@ -180,7 +151,7 @@ fn load_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>
 }
 
 fn load_color_image(path: &Path) -> ResVar<egui::ColorImage> {
-    let image = load_image(path)?;
+    let image = load_rgba_image(path)?;
 
     let (src_width, src_height) = image.dimensions();
     let src_pixels = image.as_raw();
@@ -190,10 +161,10 @@ fn load_color_image(path: &Path) -> ResVar<egui::ColorImage> {
     Ok(color_image)
 }
 
-fn load_and_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
+fn load_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
     use rgb::FromSlice;
 
-    let image = load_image(path)?;
+    let image = load_rgba_image(path)?;
     let (src_width, src_height) = image.dimensions();
     #[allow(clippy::cast_precision_loss)]
     let aspect_ratio_h = src_height as f32 / src_width as f32;
@@ -262,10 +233,10 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
     });
 }
 
-fn save_image(path: PathBuf, pixels: &[u8], width: u32, height: u32) -> Res<()> {
+fn save_image(path: &Path, pixels: &[u8], size: [usize; 2]) -> Res<()> {
     let image_file = fs::File::create(path)?;
     let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
-    encoder.encode(pixels, width, height, image::ExtendedColorType::Rgba8)?;
+    encoder.encode(pixels, size[0] as u32, size[1] as u32, image::ExtendedColorType::Rgba8)?;
 
     Ok(())
 }
@@ -334,20 +305,160 @@ fn update_active_view(active_view: &mut Vec<usize>, set: &BTreeSet<usize>) {
     active_view.extend(set.iter().cloned());
 }
 
-#[derive(Default)]
-enum ImageState {
-    #[default]
-    None,
-    Pending(oneshot::Receiver<Result<egui::ColorImage, ()>>),
-    Ready(egui::TextureHandle),
-    Failed
+fn load_image(src_path: &Path, image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>) -> ResVar<()> {
+    match load_color_image(src_path) {
+        Ok(image) => image_state_sx.send(Ok(image)).unwrap(),
+        Err(err) => {
+            image_state_sx.send(Err(())).unwrap();
+
+            Err(err)?;
+        }
+    }
+
+    Ok(())
 }
 
-#[derive(Default)]
-enum ViewKind {
-    #[default]
-    Grid,
-    Details
+fn load_resize_save_image(src_path: &Path, dst_path: &Path, cell_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>) -> Res1<()> {
+    match load_resize_color_image(src_path, cell_size) {
+        Ok((image, pixels)) => {
+            let size = image.size;
+
+            image_state_sx.send(Ok(image)).unwrap();
+
+            save_image(dst_path, pixels.as_slice(), size)?;
+        },
+        Err(err) => {
+            image_state_sx.send(Err(())).unwrap();
+
+            Err(err)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn queue_load_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>) {
+    queue_sx.send(
+        QueueImageInfo {
+            src_path,
+            image_state_sx,
+            resize: None
+        }
+    )
+    .unwrap();
+}
+
+fn queue_load_resize_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, dst_path: PathBuf, dst_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>) {
+    queue_sx.send(
+        QueueImageInfo {
+            src_path,
+            image_state_sx,
+            resize: Some(ResizeImage {
+                dst_path,
+                dst_size
+            })
+        }
+    )
+    .unwrap();
+}
+
+fn ferry_images(info: FerryImagesInfo) {
+    let FerryImagesInfo {
+        ctx,
+        thread_pool,
+        hash_sx,
+        queue_sx,
+        queue_rx,
+        image_dirs,
+        load_image_kind,
+        grid_cell_size,
+        details_cell_size,
+        ferry_image_infos,
+    } = info;
+
+    let handle_err = |err| {
+        error!("{}: failed to ferry image: {}", module_path!(), err);
+    };
+
+    for info in ferry_image_infos {
+        let FerryImageInfo {
+            image_file_name,
+            expected_hash,
+            grid_entry_i,
+            grid_image_state_sx,
+            details_image_state_sx,
+        } = info;
+
+        let ctx = ctx.clone();
+        let hash_sx = hash_sx.clone();
+        let queue_sx = queue_sx.clone();
+        let load_image_kind = load_image_kind.clone();
+
+        thread_pool.spawn_fifo(move || {
+            (|| -> Res<()> {
+                let load_image_path = match load_image_kind {
+                    LoadImageKind::Pick { dir, image_file_name } => dir.join(image_file_name.as_ref()),
+                    LoadImageKind::Startup => image_dirs.base.join(image_file_name.as_ref())
+                };
+                let grid_image_path = image_dirs.grid.join(image_file_name.as_ref()).with_extension("webp");
+                let details_image_path = image_dirs.details.join(image_file_name.as_ref()).with_extension("webp");
+
+                // Compute hash on chunk
+                let mut image_file = File::open(load_image_path.as_path())?;
+                let mut hasher = blake3::Hasher::new();
+                let mut chunk = [0_u8; CHUNK_BYTE_COUNT as usize];
+                _ = image_file.read(&mut chunk)?;
+                let hash = Arc::from(hasher.update(&chunk).finalize().to_hex().as_str());
+                let hash_mismatches = expected_hash.is_none_or(|expected_hash| expected_hash != hash);
+
+                match hash_mismatches {
+                    true => {
+                        hash_sx.send(HashInfo { grid_entry_i, hash }).unwrap();
+
+                        load_resize_save_image(load_image_path.as_path(), grid_image_path.as_path(), grid_cell_size, grid_image_state_sx)?;
+                        queue_load_resize_image(queue_sx, load_image_path, details_image_path, details_cell_size, details_image_state_sx);
+                    },
+                    false => {
+                        load_image(grid_image_path.as_path(), grid_image_state_sx)?;
+                        queue_load_image(queue_sx, details_image_path, details_image_state_sx);
+                    }
+                }
+
+                ctx.request_repaint();
+
+                Ok(())
+            })()
+            .unwrap_or_else(handle_err)
+        });
+    }
+
+    drop(queue_sx);
+    let thread_pool = thread_pool.clone();
+    thread::spawn(move || {
+        for info in queue_rx {
+            let QueueImageInfo {
+                src_path,
+                image_state_sx,
+                resize
+            } = info;
+
+            thread_pool.spawn_fifo(move || {
+                (|| -> Res<()> {
+                    match resize {
+                        Some(resize) => {
+                            let ResizeImage { dst_path, dst_size } = resize;
+
+                            load_resize_save_image(src_path.as_path(), dst_path.as_path(), dst_size, image_state_sx)?;
+                        },
+                        None => load_image(src_path.as_path(), image_state_sx)?
+                    }
+
+                    Ok(())
+                })()
+                .unwrap_or_else(handle_err);
+            });
+        }
+    });
 }
 
 #[derive(Serialize, Deserialize)]
@@ -379,6 +490,27 @@ struct DetailsInfo {
     dir_entries: Vec<DirEntryInfo>
 }
 
+struct FerryImageInfo {
+    image_file_name: Arc<str>,
+    expected_hash: Option<Arc<str>>,
+    grid_entry_i: usize,
+    grid_image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>,
+    details_image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>
+}
+
+struct FerryImagesInfo<'a> {
+    ctx: &'a egui::Context,
+    thread_pool: &'a Arc<ThreadPool>,
+    hash_sx: &'a mpsc::Sender<HashInfo>,
+    queue_sx: mpsc::Sender<QueueImageInfo>,
+    queue_rx: mpsc::Receiver<QueueImageInfo>,
+    image_dirs: &'static ImageDirs,
+    load_image_kind: LoadImageKind,
+    grid_cell_size: egui::Vec2,
+    details_cell_size: egui::Vec2,
+    ferry_image_infos: Vec<FerryImageInfo>
+}
+
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 struct GridEntryInfo {
     path: PathBuf,
@@ -387,27 +519,28 @@ struct GridEntryInfo {
     hash: Option<Arc<str>>
 }
 
+struct HashInfo {
+    grid_entry_i: usize,
+    hash: Arc<str>
+}
+
 struct ImageDirs {
     base: PathBuf,
     grid: PathBuf,
     details: PathBuf
 }
 
-struct ImageFerryInfo {
+struct QueueImageInfo {
     src_path: PathBuf,
     image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>,
-    resize: Option<ImageFerryResize>
+    resize: Option<ResizeImage>
 }
 
-struct ImageFerryResize {
-    dst_path: PathBuf,
-    dst_size: egui::Vec2
-}
 
 #[derive(Default)]
 struct ImageStates {
-    grid_state: ImageState,
-    details_state: ImageState
+    grid: ImageState,
+    details: ImageState
 }
 
 struct MenuPointerState {
@@ -418,11 +551,39 @@ struct MenuPointerState {
 #[derive(Default)]
 struct PointerContained(bool);
 
+struct ResizeImage {
+    dst_path: PathBuf,
+    dst_size: egui::Vec2
+}
+
+#[derive(Default)]
+enum ImageState {
+    #[default]
+    None,
+    Pending(oneshot::Receiver<Result<egui::ColorImage, ()>>),
+    Ready(egui::TextureHandle),
+    Failed
+}
+
+#[derive(Clone)]
+enum LoadImageKind {
+    Pick { dir: PathBuf, image_file_name: Arc<str> },
+    Startup
+}
+
+#[derive(Default)]
+enum ViewKind {
+    #[default]
+    Grid,
+    Details
+}
+
 struct MediaBrowser<'a> {
-    _thread_pool: Arc<rayon::ThreadPool>,
-    image_dirs: Arc<ImageDirs>,
+    thread_pool: Arc<rayon::ThreadPool>,
+    image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
-    hash_rx: mpsc::Receiver<(usize, Arc<str>)>,
+    hash_sx: mpsc::Sender<HashInfo>,
+    hash_rx: mpsc::Receiver<HashInfo>,
     cache_path: PathBuf,
     cache: Cache,
     cached_images_to_remove: Vec<Rc<str>>,
@@ -518,7 +679,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                 }
             }
 
-            for (grid_entry_i, hash) in self.hash_rx.iter() {
+            while let Ok(HashInfo { grid_entry_i, hash }) = self.hash_rx.try_recv() {
                 self.grid_entries[grid_entry_i].hash = Some(hash);
             }
 
@@ -552,17 +713,18 @@ impl<'a> MediaBrowser<'a> {
             .num_threads(thread::available_parallelism()?.get())
             .build()?);
         let (hash_sx, hash_rx) = mpsc::channel();
-        let (ferry_sx, ferry_rx) = mpsc::channel();
+        let (queue_sx, queue_rx) = mpsc::channel();
 
         let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
-        let image_dir = current_exe_dir.join("images");
-        let grid_image_dir = image_dir.join("grid");
-        let details_image_dir = image_dir.join("details");
-        let image_dirs = Arc::new(ImageDirs {
-            base: image_dir,
-            grid: grid_image_dir,
-            details: details_image_dir
-        });
+        let base_images_dir = current_exe_dir.join("images");
+        let grid_images_dir = base_images_dir.join("grid");
+        let details_images_dir = base_images_dir.join("details");
+        let image_dirs = ImageDirs {
+            base: base_images_dir,
+            grid: grid_images_dir,
+            details: details_images_dir
+        };
+        let image_dirs = Box::leak(Box::new(image_dirs));
 
         let cache_path = image_dirs.base.join("cache").with_extension("json");
         let cache_slc = fs::read(&cache_path)?;
@@ -607,8 +769,6 @@ impl<'a> MediaBrowser<'a> {
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
         let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * 1.5);
         let details_cell_size = egui::vec2(details_cell_width, details_cell_width * 1.5);
-        let grid_cell_size_changed = cache.grid_cell_size != grid_cell_size;
-        let details_cell_size_changed = cache.details_cell_size != details_cell_size;
 
         let mut grid_entries = media_dirs.iter()
             .map(|dir| Path::new(dir).read_dir())
@@ -633,10 +793,8 @@ impl<'a> MediaBrowser<'a> {
                     let cache_entry_info = cache.entries.get_mut(&path);
 
                     let try_get_image_file_name_i = || {
-                        let exts = [ ".jpg", ".jpeg", ".png", ".webp"];
-
-                        for ext in exts {
-                            let attempt = concat_string!(stem, ext);
+                        for ext in IMAGE_EXTS {
+                            let attempt = concat_string!(stem, ".", ext);
 
                             if let Some(image_file_name_i) = images.get_index_of(attempt.as_str()) {
                                 return Some(image_file_name_i)
@@ -681,148 +839,63 @@ impl<'a> MediaBrowser<'a> {
         let discord_display_kind = config.discord.display_kind;
         drop(config);
 
-        for (entry_i, info) in grid_entries.iter().enumerate() {
-            // Fill tags
-            if let Some(CacheEntryInfo { tags: tag_is, .. }) = cache.entries.get_mut(&info.path) {
-                for tag_i in tag_is {
-                    let tag = &cache.tags[*tag_i];
-                    let set = tags.get_mut(tag);
+        let ferry_image_infos = grid_entries.iter().enumerate()
+            .filter_map(|(entry_i, info)| {
+                // Fill tags
+                if let Some(CacheEntryInfo { tags: tag_is, .. }) = cache.entries.get_mut(&info.path) {
+                    for tag_i in tag_is {
+                        let tag = &cache.tags[*tag_i];
+                        let set = tags.get_mut(tag);
 
-                    if let Some(set) = set {
-                        set.insert(entry_i); // Grid entries are sorted / indices are stable
+                        if let Some(set) = set {
+                            set.insert(entry_i); // Grid entries are sorted / indices are stable
+                        }
                     }
                 }
-            }
 
-            // Load/resize images
-            if let Some(image_file_name_i) = info.image_file_name_i {
-                let ctx = ctx.clone();
-                let hash_sx = hash_sx.clone();
-                let ferry_sx = ferry_sx.clone();
-                let image_dirs = image_dirs.clone();
-                let (image_file_name, ImageStates { grid_state, details_state }) = images.get_index_mut(image_file_name_i).unwrap();
-                let image_file_name = image_file_name.clone();
-                let expected_hash = info.hash.clone();
-                let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-                let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
-                *grid_state = ImageState::Pending(grid_image_state_rx);
-                *details_state = ImageState::Pending(details_image_state_rx);
+                if let Some(image_file_name_i) = info.image_file_name_i {
+                    let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+                    let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                    let (image_file_name, ImageStates { grid: grid_state, details: details_state }) = images.get_index_mut(image_file_name_i).unwrap();
+                    *grid_state = ImageState::Pending(grid_image_state_rx);
+                    *details_state = ImageState::Pending(details_image_state_rx);
 
-                thread_pool.spawn_fifo(move || {
-                    (|| -> Res<()> {
-                        let image_path = image_dirs.base.join(image_file_name.as_ref());
-                        let grid_image_path = image_dirs.grid.join(image_file_name.as_ref()).with_extension("webp");
-                        let details_image_path = image_dirs.details.join(image_file_name.as_ref()).with_extension("webp");
+                    return Some(FerryImageInfo {
+                        image_file_name: image_file_name.clone(),
+                        expected_hash: info.hash.clone(),
+                        grid_entry_i: entry_i,
+                        grid_image_state_sx,
+                        details_image_state_sx
+                    })
+                }
 
-                        // Compute hash on chunk
-                        let mut image_file = File::open(image_path.as_path())?;
-                        let mut hasher = blake3::Hasher::new();
-                        let mut chunk = [0_u8; CHUNK_BYTE_COUNT as usize];
-                        _ = image_file.read(&mut chunk)?;
-                        let computed_hash = Arc::from(hasher.update(&chunk).finalize().to_hex().as_str());
-                        let hash_mismatches = expected_hash.is_none_or(|expected_hash| expected_hash != computed_hash);
+                None
+            })
+            .collect::<Vec<_>>();
 
-                        let load_grid_image = |grid_image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>| {
-                            match load_color_image(grid_image_path.as_path()) {
-                                Ok(grid_image) => grid_image_state_sx.send(Ok(grid_image)).unwrap(),
-                                Err(err) => {
-                                    error!("{}: failed to load image: {}", module_path!(), err);
-
-                                    grid_image_state_sx.send(Err(())).unwrap();
-                                }
-                            }
-                        };
-                        let resize_grid_image = |grid_image_path, grid_image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>| {
-                            match load_and_resize_color_image(image_path.as_path(), grid_cell_size) {
-                                Ok((grid_image, grid_pixels)) => {
-                                    let grid_image_width = grid_image.width() as u32;
-                                    let grid_image_height = grid_image.height() as u32;
-
-                                    grid_image_state_sx.send(Ok(grid_image)).unwrap();
-                                    ctx.request_repaint();
-
-                                    hash_sx.send((entry_i, computed_hash)).unwrap();
-
-                                    save_image(grid_image_path, grid_pixels.as_slice(), grid_image_width, grid_image_height)
-                                        .unwrap_or_else(|err| error!("{}: failed to save image: {}: {}", module_path!(), image_file_name, err));
-                                },
-                                Err(err) => {
-                                    error!("{}: failed to load and resize image: {}: {}", module_path!(), image_file_name, err);
-
-                                    grid_image_state_sx.send(Err(())).unwrap();
-                                }
-                            }
-                        };
-                        let ferry_load_details_image = |details_image_path, details_image_state_sx| {
-                            ferry_sx.send((
-                                image_file_name.clone(),
-                                ImageFerryInfo {
-                                    src_path: details_image_path,
-                                    image_state_sx: details_image_state_sx,
-                                    resize: None
-                                }
-                            ))
-                            .unwrap();
-                        };
-                        let ferry_resize_details_image = |image_path, details_image_path, details_image_state_sx| {
-                            ferry_sx.send((
-                                image_file_name.clone(),
-                                ImageFerryInfo {
-                                    src_path: image_path,
-                                    image_state_sx: details_image_state_sx,
-                                    resize: Some(ImageFerryResize {
-                                        dst_path: details_image_path,
-                                        dst_size: details_cell_size
-                                    })
-                                }
-                            ))
-                            .unwrap();
-                        };
-
-                        if hash_mismatches {
-                            resize_grid_image(grid_image_path, grid_image_state_sx);
-                            ferry_resize_details_image(image_path, details_image_path, details_image_state_sx);
-
-                            return Ok(())
-                        }
-                        match grid_cell_size_changed {
-                            true => resize_grid_image(grid_image_path, grid_image_state_sx),
-                            false => load_grid_image(grid_image_state_sx)
-                        }
-                        match details_cell_size_changed {
-                            true => ferry_resize_details_image(image_path, details_image_path, details_image_state_sx),
-                            false => ferry_load_details_image(details_image_path, details_image_state_sx)
-                        }
-
-                        Ok(())
-                    })()
-                    .unwrap_or_else(|err| {
-                        error!("{}: failed to ferry image: {}: {}", module_path!(), image_file_name, err);
-                    });
-                });
-            }
-        }
-
-        drop(ferry_sx);
-        let thread_pool_ = thread_pool.clone();
-        thread::spawn(move || {
-            for (image_file_name, info) in ferry_rx {
-                thread_pool_.spawn_fifo(move || {
-                    ferry_image(info).unwrap_or_else(|err| {
-                        error!("{}: failed to ferry image: {}: {}", module_path!(), image_file_name, err);
-                    });
-                });
-            }
-        });
+        let ferry_images_info = FerryImagesInfo {
+            ctx,
+            thread_pool: &thread_pool,
+            hash_sx: &hash_sx,
+            queue_sx,
+            queue_rx,
+            image_dirs,
+            load_image_kind: LoadImageKind::Startup,
+            grid_cell_size,
+            details_cell_size,
+            ferry_image_infos
+        };
+        ferry_images(ferry_images_info);
 
         let frame = egui::Frame::central_panel(&ctx.style()).inner_margin(
             egui::Margin::symmetric(FRAME_MARGIN as i8, FRAME_MARGIN as i8)
         );
 
         Ok(Self {
-            _thread_pool: thread_pool,
+            thread_pool,
             image_dirs,
             images,
+            hash_sx,
             hash_rx,
             cache_path,
             cache,
@@ -1039,7 +1112,7 @@ impl<'a> MediaBrowser<'a> {
         let mut image_info = grid_entry_info.image_file_name_i.and_then(|image_file_name_i| self.images.get_index_mut(image_file_name_i));
 
         let cell_resp = match image_info.as_mut() {
-            Some((image_file_name, ImageStates { grid_state, .. })) => {
+            Some((image_file_name, ImageStates { grid: grid_state, .. })) => {
                 try_add_image(ui, grid_state, image_file_name.as_ref(), grid_entry_info.stem.as_ref())
             },
             None => add_label(ui, grid_entry_info.stem.as_ref())
@@ -1100,6 +1173,19 @@ impl<'a> MediaBrowser<'a> {
         egui::Popup::context_menu(cell_resp)
             .close_behavior(egui::PopupCloseBehavior::IgnoreClicks) // Close manually to avoid close/show flash on right click cell while menu is open
             .show(|ui| {
+                if ui.button("Image").clicked() {
+                    ui.close();
+
+                    let pick_image_file = rfd::FileDialog::new()
+                        .add_filter("images", IMAGE_EXTS)
+                        .pick_file();
+
+                    if let Some(path) = pick_image_file {
+                        self.pick_image(ui.ctx(), path, grid_entry_i).unwrap_or_else(|err| {
+                            error!("{}: failed to pick image: {}", module_path!(), err);
+                        });
+                    }
+                }
                 let tags_menu_resp = self.tags_menu(ui, grid_entry_i, cell_i);
 
                 let painter = ui.painter().clone().with_layer_id(cell_ui.layer_id());
@@ -1112,6 +1198,68 @@ impl<'a> MediaBrowser<'a> {
                     entry_clicked: tags_menu_resp.response.clicked() || tags_menu_resp.response.secondary_clicked()
                 }
             })
+    }
+
+    fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf, grid_entry_i: usize) -> Res<()> {
+        let (queue_sx, queue_rx) = mpsc::channel();
+        let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+        let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+
+        let pick_image_dir = path.get_dir()?.to_path_buf();
+        let pick_image_file_name = path.get_file_name()?;
+        let pick_image_file_name: Arc<str> = Arc::from(pick_image_file_name);
+
+        let image_file_name_i = self.grid_entries[grid_entry_i].image_file_name_i;
+        let image_file_name = match image_file_name_i {
+            Some(image_file_name_i) => {
+                self.images[image_file_name_i] = ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx) };
+                let (image_file_name, _) = self.images.get_index(image_file_name_i).unwrap();
+
+                image_file_name.clone()
+            },
+            None => {
+                let cell_stem = self.grid_entries[grid_entry_i].stem.as_ref();
+                let pick_image_ext = path.get_file_ext()?;
+                let image_file_name = concat_string!(cell_stem, ".", pick_image_ext);
+                let image_file_name: Arc<str> = Arc::from(image_file_name.as_str());
+
+                let (image_file_name_i, _) = self.images.insert_full(image_file_name.clone(), ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx) });
+                self.grid_entries[grid_entry_i].image_file_name_i = Some(image_file_name_i);
+
+                image_file_name.clone()
+            }
+        };
+        let image_path = self.image_dirs.base.join(image_file_name.as_ref());
+
+        let ferry_images_info = FerryImagesInfo {
+            ctx,
+            thread_pool:  &self.thread_pool,
+            hash_sx: &self.hash_sx,
+            queue_sx,
+            queue_rx,
+            image_dirs: self.image_dirs,
+            load_image_kind: LoadImageKind::Pick { dir: pick_image_dir, image_file_name: pick_image_file_name.clone() },
+            grid_cell_size: self.grid_cell_size,
+            details_cell_size: self.details_cell_size,
+            ferry_image_infos: vec![
+                FerryImageInfo {
+                    image_file_name,
+                    expected_hash: None,
+                    grid_entry_i,
+                    grid_image_state_sx,
+                    details_image_state_sx
+                }
+            ]
+        };
+        ferry_images(ferry_images_info);
+
+        self.thread_pool.spawn(move || {
+            _ = fs::copy(path.as_path(), image_path.as_path()).inspect_err(|err| {
+                error!("{}: failed to copy image to cache: {}: {}", module_path!(), path.display(), err);
+            });
+        });
+
+        Ok(())
     }
 
     fn tags_menu(&mut self, ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize) -> egui::InnerResponse<Option<PointerContained>> {
@@ -1191,7 +1339,7 @@ impl<'a> MediaBrowser<'a> {
 
             let details_state = image_file_name.as_ref()
                 .and_then(|image_file_name| self.images.get_mut(image_file_name.as_ref()))
-                .map(|info|&mut info.details_state );
+                .map(|info|&mut info.details );
 
             match details_state {
                 Some(details_state) => try_add_image(ui, details_state, image_file_name.as_ref().unwrap().as_ref(), dir_name.as_ref()),

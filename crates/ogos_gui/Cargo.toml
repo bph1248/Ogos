@@ -28,6 +28,7 @@ opener = { workspace = true }
 raw-window-handle = "0.6.2"
 rayon = { workspace = true }
 resize = { workspace = true }
+rfd = "0.17.2"
 rgb = "0.8.52"
 serde = { workspace = true }
 serde_json = { workspace = true }
