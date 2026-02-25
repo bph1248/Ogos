@@ -597,8 +597,9 @@ struct MediaBrowser<'a> {
     active_view: Vec<usize>, // Indices into grid_entries
     removed_entry_from_active_view: bool,
     selected_cell: Option<usize>,
-    tag_edit: String,
-    show_filter_win: bool,
+    tag_add_edit: String,
+    open_filter_win: bool,
+    tag_rename_edit: String,
     filter_win_stamp: Option<Instant>,
     filter_win_cursor_checked: bool,
     details_info: DetailsInfo,
@@ -910,8 +911,9 @@ impl<'a> MediaBrowser<'a> {
             active_view: default!(),
             removed_entry_from_active_view: default!(),
             selected_cell: default!(),
-            tag_edit: default!(),
-            show_filter_win: default!(),
+            tag_add_edit: default!(),
+            open_filter_win: default!(),
+            tag_rename_edit: default!(),
             filter_win_stamp: default!(),
             filter_win_cursor_checked: default!(),
             details_info: default!(),
@@ -947,91 +949,131 @@ impl<'a> MediaBrowser<'a> {
             [250.0, (max_rect.height() - FRAME_MARGIN).max(0.0)].into()
         );
 
-        let filter_win_resp = egui::Window::new("filter_win")
-            .fixed_rect(filter_win_rect)
-            .title_bar(false)
-            .fade_in(true)
-            .fade_out(true)
-            .open(&mut self.show_filter_win)
-            .show(ui.ctx(), |ui| {
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
-                    ui.heading("Tags");
+        let filter_win_resp = self.open_filter_win.and_then(|| {
+            egui::Window::new("filter_win")
+                .fixed_rect(filter_win_rect)
+                .title_bar(false)
+                .fade_in(true)
+                .fade_out(true)
+                .show(ui.ctx(), |ui| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                        ui.heading("Tags");
 
-                    ui.separator();
+                        ui.separator();
 
-                    let all_button_resp = ui.button("All");
+                        let (tag_rename_menu_open, tag_to_rename) = self.filter_win_tag_buttons(ui);
 
-                    if all_button_resp.clicked() {
-                        self.active_tag = None;
-                    }
-                    if self.active_tag.is_none() {
-                        all_button_resp.highlight();
-                    }
+                        if let Some(tag_to_rename) = tag_to_rename {
+                            let set = self.tags.remove(&tag_to_rename).unwrap();
+                            let tag = Rc::from(self.tag_rename_edit.as_str());
+                            self.tags.insert(tag, set);
 
-                    for (tag, set) in self.tags.iter() {
-                        if !set.is_empty() {
-                            let tag_button_resp = ui.button(tag.as_ref());
-
-                            if tag_button_resp.clicked() {
-                                update_active_view(&mut self.active_view, set);
-
-                                self.active_tag = Some(tag.clone());
-                                self.selected_cell = None;
-                            }
-                            if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
-                                tag_button_resp.highlight();
-                            }
+                            self.tag_rename_edit.clear();
                         }
-                    }
 
-                    ui.take_available_space();
-                });
-            });
+                        ui.take_available_space();
 
-        let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
-        match hover_pos {
-            Some(hover_pos) => {
-                self.filter_win_cursor_checked = false;
+                        tag_rename_menu_open
+                    })
+                })
+        });
 
-                if let Some(resp) = filter_win_resp.as_ref() {
-                    match resp.response.contains_pointer() {
-                        true => self.filter_win_stamp = Some(now!()),
-                        false => {
-                            if hover_pos.x > resp.response.rect.right() {
+        let tag_rename_menu_open = filter_win_resp.as_ref()
+            .and_then(|resp| resp.inner.as_ref())
+            .map(|resp| resp.inner)
+            .unwrap_or(false);
+
+        if !tag_rename_menu_open {
+            let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
+            match hover_pos {
+                Some(hover_pos) => {
+                    self.filter_win_cursor_checked = false;
+
+                    if let Some(resp) = filter_win_resp.as_ref() {
+                        match resp.response.contains_pointer() {
+                            true => self.filter_win_stamp = Some(now!()),
+                            false => if hover_pos.x > resp.response.rect.right() {
                                 self.filter_win_stamp = None;
-                                self.show_filter_win = false;
+                                self.open_filter_win = false;
                             }
                         }
                     }
                 }
-            }
-            None => {
-                if !self.filter_win_cursor_checked {
-                    let mut cursor_pos = POINT::default();
-                    unsafe { if GetCursorPos(&mut cursor_pos).is_err() {
-                        return
-                    } }
-                    #[allow(clippy::cast_precision_loss)]
-                    let cursor_pos = egui::pos2(cursor_pos.x as f32, cursor_pos.y as f32);
+                None => {
+                    if !self.filter_win_cursor_checked {
+                        let mut cursor_pos = POINT::default();
+                        unsafe { if GetCursorPos(&mut cursor_pos).is_err() {
+                            return
+                        } }
+                        #[allow(clippy::cast_precision_loss)]
+                        let cursor_pos = egui::pos2(cursor_pos.x as f32, cursor_pos.y as f32);
 
-                    if let Some(inner_rect) = ui.ctx().input(|state| state.viewport().inner_rect) {
-                        let cursor_catch_rect = egui::Rect::everything_left_of(inner_rect.left());
+                        if let Some(inner_rect) = ui.ctx().input(|state| state.viewport().inner_rect) {
+                            let cursor_catch_rect = egui::Rect::everything_left_of(inner_rect.left());
 
-                        if cursor_catch_rect.contains(cursor_pos) {
-                            self.filter_win_stamp = Some(now!());
-                            self.show_filter_win = true;
+                            if cursor_catch_rect.contains(cursor_pos) {
+                                self.filter_win_stamp = Some(now!());
+                                self.open_filter_win = true;
+                            }
+
+                            self.filter_win_cursor_checked = true;
                         }
-
-                        self.filter_win_cursor_checked = true;
                     }
                 }
             }
+
+            if let Some(filter_win_stamp) = self.filter_win_stamp && filter_win_stamp.elapsed() > Duration::from_secs(3) {
+                self.filter_win_stamp = None;
+                self.open_filter_win = false;
+            }
+        }
+    }
+
+    fn filter_win_tag_buttons(&mut self, ui: &mut egui::Ui) -> (bool, Option<Rc<str>>) {
+        let all_button_resp = ui.button("All");
+
+        if all_button_resp.clicked() {
+            self.active_tag = None;
+        }
+        if self.active_tag.is_none() {
+            all_button_resp.highlight();
         }
 
-        if let Some(filter_win_stamp) = self.filter_win_stamp && filter_win_stamp.elapsed() > Duration::from_secs(3) {
-            self.filter_win_stamp = None;
-            self.show_filter_win = false;
-        }
+        self.tags.iter().fold((false, None::<Rc<str>>), |(mut tag_rename_menu_open, mut tag_to_rename), (tag, set)| {
+            if !set.is_empty() {
+                let tag_button_resp = ui.button(tag.as_ref());
+
+                tag_rename_menu_open |= egui::Popup::context_menu(&tag_button_resp)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        let tag_rename_edit_resp = egui::TextEdit::singleline(&mut self.tag_rename_edit)
+                            .hint_text("Rename")
+                            .show(ui)
+                            .response;
+
+                        tag_rename_edit_resp.request_focus();
+
+                        if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
+                            tag_to_rename = Some(tag.clone());
+
+                            ui.close();
+                        }
+                    })
+                    .is_some();
+
+                if tag_button_resp.clicked() {
+                    update_active_view(&mut self.active_view, set);
+
+                    self.active_tag = Some(tag.clone());
+                    self.selected_cell = None;
+                }
+                if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
+                    tag_button_resp.highlight();
+                }
+            }
+
+            (tag_rename_menu_open, tag_to_rename)
+        })
     }
 
     fn grid_view(&mut self, ui: &mut egui::Ui) {
@@ -1186,7 +1228,7 @@ impl<'a> MediaBrowser<'a> {
                         });
                     }
                 }
-                let tags_menu_resp = self.tags_menu(ui, grid_entry_i, cell_i);
+                let tags_menu_resp = self.grid_cell_tags_menu(ui, grid_entry_i, cell_i);
 
                 let painter = ui.painter().clone().with_layer_id(cell_ui.layer_id());
                 stroke_rect_painter(painter, cell_resp.rect);
@@ -1262,21 +1304,21 @@ impl<'a> MediaBrowser<'a> {
         Ok(())
     }
 
-    fn tags_menu(&mut self, ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize) -> egui::InnerResponse<Option<PointerContained>> {
+    fn grid_cell_tags_menu(&mut self, ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize) -> egui::InnerResponse<Option<PointerContained>> {
         ui.menu_button("Tags", |ui| {
             // Add tag
-            let tag_edit_resp = egui::TextEdit::singleline(&mut self.tag_edit)
+            let tag_add_edit_resp = egui::TextEdit::singleline(&mut self.tag_add_edit)
                 .hint_text("Add")
                 .show(ui)
                 .response;
 
-            if tag_edit_resp.lost_focus() && ui.input(|state| state.key_pressed(egui::Key::Enter)) {
-                self.tags.entry(Rc::from(self.tag_edit.as_str()))
+            if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
+                self.tags.entry(Rc::from(self.tag_add_edit.as_str()))
                     .and_modify(|set| _ = set.insert(cell_i))
                     .or_insert([cell_i].into_iter().collect());
 
-                self.tag_edit.clear();
-                tag_edit_resp.request_focus();
+                self.tag_add_edit.clear();
+                tag_add_edit_resp.request_focus();
             }
 
             ui.separator();
