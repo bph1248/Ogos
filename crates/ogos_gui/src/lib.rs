@@ -162,18 +162,22 @@ fn load_color_image(path: &Path) -> ResVar<egui::ColorImage> {
     Ok(color_image)
 }
 
-fn load_resize_color_image(path: &Path, size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
+fn load_resize_color_image(path: &Path, dst_size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
     use rgb::FromSlice;
 
     let image = load_rgba_image(path)?;
     let (src_width, src_height) = image.dimensions();
-    #[allow(clippy::cast_precision_loss)]
-    let aspect_ratio_h = src_height as f32 / src_width as f32;
-
     let src_width = src_width as usize;
     let src_height = src_height as usize;
-    let dst_width = size[0] as usize;
-    let dst_height = (size[0] * aspect_ratio_h).round() as usize;
+
+    let src_aspect_ratio_h = src_height as f32 / src_width as f32;
+    let dst_aspect_ratio_h = dst_size.y / dst_size.x;
+
+    let (dst_width, dst_height) = if src_aspect_ratio_h <= dst_aspect_ratio_h {
+        (dst_size.x as usize, (dst_size.x * src_aspect_ratio_h).round() as usize) // Wide
+    } else {
+        ((dst_size.y / src_aspect_ratio_h).round() as usize, dst_size.y as usize) // Tall
+    };
 
     let mut tmp_pixels = vec![0_u8; dst_width * src_height * 4];
     let mut dst_pixels = vec![0_u8; dst_width * dst_height * 4];
@@ -245,7 +249,7 @@ fn save_image(path: &Path, pixels: &[u8], size: [usize; 2]) -> Res<()> {
 fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle) -> egui::Response {
     let image = egui::Image::new(tex).sense(egui::Sense::click_and_drag()).fit_to_exact_size(tex.size_vec2());
 
-    ui.add(image)
+    ui.centered_and_justified(|ui| ui.add(image)).inner
 }
 
 fn add_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
