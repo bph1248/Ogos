@@ -41,6 +41,7 @@ use windows::Win32::{
 const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color32::from_rgb(250, 246, 235) };
 const CHUNK_BYTE_COUNT: u64 = 500 * 1024;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
+const DETAILS_ENTRY_COUNT: usize = 64;
 const FRAME_MARGIN: f32 = 15.0;
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const SEPARATOR_WIDTH: f32 = 2.0;
@@ -261,7 +262,7 @@ fn alloc_hover_response(ui: &mut egui::Ui) -> egui::Response {
     ui.allocate_response(ui.available_size(), egui::Sense::hover())
 }
 
-fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, name_tex: &str, label: &str) -> egui::Response {
+fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str, label: &str) -> egui::Response {
     match image_state {
         ImageState::Ready(tex) => add_image(ui, tex),
         ImageState::Pending(rx) => {
@@ -273,7 +274,7 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, name_tex: &str
 
             match recvd {
                 Ok(color_image) => {
-                    let tex = ui.ctx().load_texture(name_tex, color_image, default!());
+                    let tex = ui.ctx().load_texture(tex_name, color_image, default!());
                     let resp = add_image(ui, &tex);
                     *image_state = ImageState::Ready(tex);
 
@@ -483,13 +484,6 @@ struct Cache {
     entries: HashMap<PathBuf, CacheEntryInfo>
 }
 
-#[derive(Default)]
-struct DetailsInfo {
-    image_file_name: Option<Arc<str>>,
-    dir_name: Rc<str>,
-    dir_entries: Vec<DirEntryInfo>
-}
-
 struct FerryImageInfo {
     image_file_name: Arc<str>,
     expected_hash: Option<Arc<str>>,
@@ -511,10 +505,10 @@ struct FerryImagesInfo<'a> {
     ferry_image_infos: Vec<FerryImageInfo>
 }
 
-#[derive(Eq, Ord, PartialEq, PartialOrd)]
 struct GridEntryInfo {
     path: PathBuf,
     stem: Rc<str>,
+    file_kind: FileKind,
     image_file_name_i: Option<usize>,
     hash: Option<Arc<str>>
 }
@@ -591,22 +585,25 @@ struct MediaBrowser<'a> {
     checked_background_brush: bool,
     view_kind: ViewKind,
     grid_entries: Vec<GridEntryInfo>,
+    grid_entry_i: usize,
     grid_cell_size: egui::Vec2,
+    grid_cell_i: usize,
+    grid_selected_cell_i: Option<usize>,
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
     active_tag: Option<Rc<str>>,
     active_view: Vec<usize>, // Indices into grid_entries
     removed_entry_from_active_view: bool,
-    selected_cell: Option<usize>,
     tag_add_edit: String,
     open_filter_win: bool,
     tag_rename_edit: String,
     filter_win_stamp: Option<Instant>,
     filter_win_cursor_checked: bool,
-    details_info: DetailsInfo,
-    details_cell_size: egui::Vec2,
+    details_grid_entry_i: usize,
+    details_dir_entries: Vec<DirEntryInfo>,
     details_button_resps: Vec<egui::Response>,
+    details_cell_size: egui::Vec2,
+    details_hovered_dir_entry_i: usize,
     vscroll_multiplier: f32,
-    hovered_details_entry_i: usize,
     maintain_sample_rate: bool,
     use_glsl_shaders: bool,
     discord_app_ids: DiscordAppIds<'a>,
@@ -791,7 +788,7 @@ impl<'a> MediaBrowser<'a> {
                     }
 
                     let stem = Rc::from(path.get_file_stem()?);
-                    let cache_entry_info = cache.entries.get_mut(&path);
+                    let file_kind = path.get_file_kind()?;
 
                     let try_get_image_file_name_i = || {
                         for ext in IMAGE_EXTS {
@@ -804,6 +801,8 @@ impl<'a> MediaBrowser<'a> {
 
                         None
                     };
+
+                    let cache_entry_info = cache.entries.get_mut(&path);
                     let image_file_name_i = match cache_entry_info.as_ref() {
                         Some(info) => {
                             let image_file_name = info.image_file_name_i
@@ -825,7 +824,7 @@ impl<'a> MediaBrowser<'a> {
 
                     let hash = cache_entry_info.and_then(|info| info.hash.clone());
 
-                    Ok(Some(GridEntryInfo { path, stem, image_file_name_i, hash }))
+                    Ok(Some(GridEntryInfo { path, stem, file_kind, image_file_name_i, hash }))
                 })
                 .unwrap_or_else(|err| {
                     error!("{}: failed to read dir entry: {}", module_path!(), err);
@@ -905,21 +904,24 @@ impl<'a> MediaBrowser<'a> {
             checked_background_brush: false,
             view_kind: ViewKind::Grid,
             grid_entries,
+            grid_entry_i: default!(),
             grid_cell_size,
+            grid_cell_i: default!(),
+            grid_selected_cell_i: default!(),
             tags,
             active_tag: default!(),
             active_view: default!(),
             removed_entry_from_active_view: default!(),
-            selected_cell: default!(),
             tag_add_edit: default!(),
             open_filter_win: default!(),
             tag_rename_edit: default!(),
             filter_win_stamp: default!(),
             filter_win_cursor_checked: default!(),
-            details_info: default!(),
+            details_grid_entry_i: default!(),
+            details_dir_entries: Vec::with_capacity(DETAILS_ENTRY_COUNT),
+            details_button_resps: Vec::with_capacity(DETAILS_ENTRY_COUNT),
             details_cell_size,
-            details_button_resps: Vec::with_capacity(24),
-            hovered_details_entry_i: default!(),
+            details_hovered_dir_entry_i: default!(),
             vscroll_multiplier,
             maintain_sample_rate: default!(),
             use_glsl_shaders: default!(),
@@ -1065,7 +1067,7 @@ impl<'a> MediaBrowser<'a> {
                     update_active_view(&mut self.active_view, set);
 
                     self.active_tag = Some(tag.clone());
-                    self.selected_cell = None;
+                    self.grid_selected_cell_i = None;
                 }
                 if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
                     tag_button_resp.highlight();
@@ -1126,12 +1128,12 @@ impl<'a> MediaBrowser<'a> {
             .columns(egui_extras::Column::initial(self.grid_cell_size.x).at_most(self.grid_cell_size.x), row_cell_count)
             .body(|body| {
                 body.rows(self.grid_cell_size.y, row_count, |mut row| {
-                    let mut cell_i = (row_start + row.index()) * row_cell_count + row.col_index();
+                    self.grid_cell_i = (row_start + row.index()) * row_cell_count + row.col_index();
 
-                    while row.col_index() < row_cell_count && cell_i < max_cell_count {
+                    while row.col_index() < row_cell_count && self.grid_cell_i < max_cell_count {
                         row.col(|ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                self.grid_cell(ui, cell_i);
+                                self.grid_cell(ui);
                             });
                         });
 
@@ -1141,16 +1143,16 @@ impl<'a> MediaBrowser<'a> {
                                 max_cell_count -= 1;
                                 self.removed_entry_from_active_view = false;
                             },
-                            false => cell_i += 1
+                            false => self.grid_cell_i += 1
                         }
                     }
                 });
             });
     }
 
-    fn grid_cell(&mut self, ui: &mut egui::Ui, cell_i: usize) {
-        let grid_entry_i = self.active_tag.as_ref().map(|_| self.active_view[cell_i]).unwrap_or(cell_i);
-        let grid_entry_info = &self.grid_entries[grid_entry_i];
+    fn grid_cell(&mut self, ui: &mut egui::Ui) {
+        self.grid_entry_i = self.active_tag.as_ref().map(|_| self.active_view[self.grid_cell_i]).unwrap_or(self.grid_cell_i);
+        let grid_entry_info = &self.grid_entries[self.grid_entry_i];
         let mut image_info = grid_entry_info.image_file_name_i.and_then(|image_file_name_i| self.images.get_index_mut(image_file_name_i));
 
         let cell_resp = match image_info.as_mut() {
@@ -1160,37 +1162,51 @@ impl<'a> MediaBrowser<'a> {
             None => add_label(ui, grid_entry_info.stem.as_ref())
         };
 
-        if cell_resp.clicked() && grid_entry_info.path.is_dir() {
-            let dir_entries = || -> Res<_> {
-                let read_dir = grid_entry_info.path.read_dir()
-                    .inspect_err(|err| error!("{}: failed to read dir: {}", module_path!(), err))?;
+        if cell_resp.clicked() {
+            self.details_grid_entry_i = self.grid_entry_i;
+            self.details_dir_entries.clear();
 
-                Ok(read_dir.filter_map(|dir_entry| {
-                    dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
-                        let path = dir_entry.path();
-                        let stem = path.get_file_stem()?.to_string();
-                        let file_kind = path.get_file_kind()?;
+            match grid_entry_info.path.is_dir() {
+                true => {
+                    let dir_entries_iter = || -> Res<_> {
+                        let read_dir = grid_entry_info.path.read_dir()?;
 
-                        Ok(DirEntryInfo { path, stem, file_kind })
-                    })
-                    .inspect_err(|err|  error!("{}: failed to read dir entry: {}", module_path!(), err))
-                    .ok()
-                })
-                .collect::<Vec<_>>())
-            };
+                        let iter = read_dir.filter_map(|dir_entry| {
+                            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
+                                let path = dir_entry.path();
+                                let stem = path.get_file_stem()?.to_string();
+                                let file_kind = path.get_file_kind()?;
 
-            self.details_info = DetailsInfo {
-                image_file_name: image_info.map(|info| info.0.clone()),
-                dir_name: self.grid_entries[grid_entry_i].stem.clone(),
-                dir_entries: dir_entries().unwrap_or_default()
-            };
+                                Ok(DirEntryInfo { path, stem, file_kind })
+                            })
+                            .inspect_err(|err| error!("{}: failed to read dir entry: {}", module_path!(), err))
+                            .ok()
+                        });
+
+                        Ok(iter)
+                    };
+
+                    match dir_entries_iter() {
+                        Ok(iter) => self.details_dir_entries.extend(iter),
+                        Err(err) => error!("{}: failed to read dir: {}", module_path!(), err)
+                    }
+                },
+                false => self.details_dir_entries.push(
+                    DirEntryInfo {
+                        path: grid_entry_info.path.clone(),
+                        stem: grid_entry_info.stem.to_string(),
+                        file_kind: grid_entry_info.file_kind
+                    }
+                )
+            }
+
             self.view_kind = ViewKind::Details;
         }
 
-        let cell_context_menu_resp = self.grid_cell_context_menu(ui, grid_entry_i, cell_i, &cell_resp);
+        let cell_context_menu_resp = self.grid_cell_context_menu(ui, &cell_resp);
 
-        match self.selected_cell {
-            Some(cell_i_) => if cell_i_ == cell_i { // Cell was secondary clicked
+        match self.grid_selected_cell_i {
+            Some(cell_i) => if cell_i == self.grid_cell_i { // Cell was secondary clicked
                 stroke_rect(ui, cell_resp.rect);
 
                 match cell_context_menu_resp {
@@ -1201,7 +1217,7 @@ impl<'a> MediaBrowser<'a> {
                             egui::Popup::close_all(ui.ctx());
                         }
                     },
-                    None => self.selected_cell = None // Context menu was closed - deselect cell
+                    None => self.grid_selected_cell_i = None // Context menu was closed - deselect cell
                 }
             },
             // No context menu
@@ -1211,7 +1227,7 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn grid_cell_context_menu(&mut self, cell_ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize, cell_resp: &egui::Response) -> Option<egui::InnerResponse<MenuPointerState>> {
+    fn grid_cell_context_menu(&mut self, cell_ui: &mut egui::Ui, cell_resp: &egui::Response) -> Option<egui::InnerResponse<MenuPointerState>> {
         egui::Popup::context_menu(cell_resp)
             .close_behavior(egui::PopupCloseBehavior::IgnoreClicks) // Close manually to avoid close/show flash on right click cell while menu is open
             .show(|ui| {
@@ -1223,17 +1239,17 @@ impl<'a> MediaBrowser<'a> {
                         .pick_file();
 
                     if let Some(path) = pick_image_file {
-                        self.pick_image(ui.ctx(), path, grid_entry_i).unwrap_or_else(|err| {
+                        self.pick_image(ui.ctx(), path).unwrap_or_else(|err| {
                             error!("{}: failed to pick image: {}", module_path!(), err);
                         });
                     }
                 }
-                let tags_menu_resp = self.grid_cell_tags_menu(ui, grid_entry_i, cell_i);
+                let tags_menu_resp = self.grid_cell_tags_menu(ui, self.grid_cell_i);
 
                 let painter = ui.painter().clone().with_layer_id(cell_ui.layer_id());
                 stroke_rect_painter(painter, cell_resp.rect);
 
-                self.selected_cell = Some(cell_i);
+                self.grid_selected_cell_i = Some(self.grid_cell_i);
 
                 MenuPointerState {
                     pointer_contained: ui.ui_contains_pointer() || tags_menu_resp.inner.unwrap_or_default().0,
@@ -1242,7 +1258,7 @@ impl<'a> MediaBrowser<'a> {
             })
     }
 
-    fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf, grid_entry_i: usize) -> Res<()> {
+    fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf) -> Res<()> {
         let (queue_sx, queue_rx) = mpsc::channel();
         let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
         let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
@@ -1251,7 +1267,7 @@ impl<'a> MediaBrowser<'a> {
         let pick_image_file_name = path.get_file_name()?;
         let pick_image_file_name: Arc<str> = Arc::from(pick_image_file_name);
 
-        let image_file_name_i = self.grid_entries[grid_entry_i].image_file_name_i;
+        let image_file_name_i = self.grid_entries[self.grid_entry_i].image_file_name_i;
         let image_file_name = match image_file_name_i {
             Some(image_file_name_i) => {
                 self.images[image_file_name_i] = ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx) };
@@ -1260,13 +1276,13 @@ impl<'a> MediaBrowser<'a> {
                 image_file_name.clone()
             },
             None => {
-                let cell_stem = self.grid_entries[grid_entry_i].stem.as_ref();
+                let cell_stem = self.grid_entries[self.grid_entry_i].stem.as_ref();
                 let pick_image_ext = path.get_file_ext()?;
                 let image_file_name = concat_string!(cell_stem, ".", pick_image_ext);
                 let image_file_name: Arc<str> = Arc::from(image_file_name.as_str());
 
                 let (image_file_name_i, _) = self.images.insert_full(image_file_name.clone(), ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx) });
-                self.grid_entries[grid_entry_i].image_file_name_i = Some(image_file_name_i);
+                self.grid_entries[self.grid_entry_i].image_file_name_i = Some(image_file_name_i);
 
                 image_file_name.clone()
             }
@@ -1287,7 +1303,7 @@ impl<'a> MediaBrowser<'a> {
                 FerryImageInfo {
                     image_file_name,
                     expected_hash: None,
-                    grid_entry_i,
+                    grid_entry_i: self.grid_entry_i,
                     grid_image_state_sx,
                     details_image_state_sx
                 }
@@ -1304,7 +1320,7 @@ impl<'a> MediaBrowser<'a> {
         Ok(())
     }
 
-    fn grid_cell_tags_menu(&mut self, ui: &mut egui::Ui, grid_entry_i: usize, cell_i: usize) -> egui::InnerResponse<Option<PointerContained>> {
+    fn grid_cell_tags_menu(&mut self, ui: &mut egui::Ui, cell_i: usize) -> egui::InnerResponse<Option<PointerContained>> {
         ui.menu_button("Tags", |ui| {
             // Add tag
             let tag_add_edit_resp = egui::TextEdit::singleline(&mut self.tag_add_edit)
@@ -1327,9 +1343,9 @@ impl<'a> MediaBrowser<'a> {
             for (tag, set) in self.tags.iter_mut() { if !set.is_empty() {
                 let tag_button_resp = ui.button(tag.as_ref());
 
-                match (tag_button_resp.clicked(), set.contains(&grid_entry_i)) {
+                match (tag_button_resp.clicked(), set.contains(&self.grid_entry_i)) {
                     (_tag_button_clicked @ true, _entry_is_tagged @ true) => {
-                        set.remove(&grid_entry_i);
+                        set.remove(&self.grid_entry_i);
 
                         let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or_default();
                         if tag_is_active {
@@ -1345,7 +1361,7 @@ impl<'a> MediaBrowser<'a> {
                             ui.close();
                         }
                     },
-                    (_tag_button_clicked @ true, _entry_is_tagged @ false) => _ = set.insert(grid_entry_i),
+                    (_tag_button_clicked @ true, _entry_is_tagged @ false) => _ = set.insert(self.grid_entry_i),
                     (_tag_button_clicked @ false, _entry_is_tagged @ true) => _ = tag_button_resp.highlight(),
                     _ => ()
                 }
@@ -1356,6 +1372,10 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn details_view(&mut self, ui: &mut egui::Ui) {
+        let (image_file_name, image_states) = self.grid_entries[self.details_grid_entry_i].image_file_name_i
+            .and_then(|image_file_name_i| self.images.get_index_mut(image_file_name_i))
+            .unzip();
+
         // Subdivisions
         let middle_subd_width = 2.0 * FRAME_MARGIN + SEPARATOR_WIDTH;
         let side_subd_width = ((ui.available_width() - middle_subd_width) / 2.0).floor();
@@ -1376,16 +1396,12 @@ impl<'a> MediaBrowser<'a> {
         );
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(image_rect), |ui| {
-            let dir_name = &self.details_info.dir_name;
-            let image_file_name = &self.details_info.image_file_name;
-
-            let details_state = image_file_name.as_ref()
-                .and_then(|image_file_name| self.images.get_mut(image_file_name.as_ref()))
-                .map(|info|&mut info.details );
+            let details_state = image_states.map(|states| &mut states.details);
+            let dir_name = self.grid_entries[self.details_grid_entry_i].stem.as_ref();
 
             match details_state {
-                Some(details_state) => try_add_image(ui, details_state, image_file_name.as_ref().unwrap().as_ref(), dir_name.as_ref()),
-                None => add_label(ui, dir_name.as_ref())
+                Some(details_state) => try_add_image(ui, details_state, image_file_name.unwrap().as_ref(), dir_name),
+                None => add_label(ui, dir_name)
             }
         });
 
@@ -1414,7 +1430,7 @@ impl<'a> MediaBrowser<'a> {
                     let button_height = ui.spacing().interact_size.y;
                     let button_spacing = ui.spacing().item_spacing[1];
                     #[allow(clippy::cast_precision_loss)]
-                    let button_count = self.details_info.dir_entries.len() as f32;
+                    let button_count = self.details_dir_entries.len() as f32;
                     let buttons_height = button_count * (button_height + button_spacing);
 
                     let remaining_space = ui.available_height() - buttons_height;
@@ -1423,7 +1439,7 @@ impl<'a> MediaBrowser<'a> {
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
                         ui.add_space(top_padding);
 
-                        if self.details_info.dir_entries.is_empty() {
+                        if self.details_dir_entries.is_empty() {
                             ui.take_available_space();
                         } else {
                             self.dir_entries(ui);
@@ -1448,21 +1464,21 @@ impl<'a> MediaBrowser<'a> {
             .show(ui, |ui| {
                 self.details_button_resps.clear();
                 self.details_button_resps.extend(
-                    self.details_info.dir_entries.iter()
+                    self.details_dir_entries.iter()
                         .map(|info| ui.button(info.stem.as_str()).interact(egui::Sense::click()))
                 );
 
                 for (i, resp) in self.details_button_resps.iter().enumerate() {
                     if resp.hovered() {
-                        self.hovered_details_entry_i = i;
+                        self.details_hovered_dir_entry_i = i;
                     }
 
                     if resp.clicked() {
                         let discord_info = self.discord_enabled.then_some(self.make_discord_info(i));
 
                         open_media(
-                            self.details_info.dir_entries[i].path.clone(),
-                            self.details_info.dir_entries[i].file_kind,
+                            self.details_dir_entries[i].path.clone(),
+                            self.details_dir_entries[i].file_kind,
                             self.maintain_sample_rate,
                             self.use_glsl_shaders,
                             discord_info
@@ -1473,6 +1489,8 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn make_discord_info(&self, i: usize) -> config::DiscordInfo {
+        let dir_name = &self.grid_entries[self.details_grid_entry_i].stem;
+
         config::DiscordInfo {
             client_id: match self.discord_watching {
                 Watching::Movie => self.discord_app_ids.movies.unwrap().to_string(), // App ID is Some when Discord is enabled
@@ -1482,21 +1500,21 @@ impl<'a> MediaBrowser<'a> {
             activity: config::DiscordActivity::Watching,
             details: match self.discord_details.is_empty() {
                 true => match self.discord_watching {
-                    Watching::TV => self.details_info.dir_name.to_string(),
-                    _ => self.details_info.dir_entries[i].stem.clone()
+                    Watching::TV => dir_name.to_string(),
+                    _ => self.details_dir_entries[i].stem.clone()
                 },
                 false => self.discord_details.clone()
             },
             state: self.discord_watching.eq(&Watching::TV).then(|| {
                 match self.discord_state.is_empty() {
-                    true => self.details_info.dir_entries[i].stem.clone(),
+                    true => self.details_dir_entries[i].stem.clone(),
                     false => self.discord_state.clone()
                 }
             }),
             display_kind: self.discord_display_kind,
             large_image: match self.discord_watching {
-                Watching::TV => Some(to_discord_asset_name(self.details_info.dir_name.as_ref())),
-                _ => Some(to_discord_asset_name(self.details_info.dir_entries[i].stem.as_str()))
+                Watching::TV => Some(to_discord_asset_name(dir_name)),
+                _ => Some(to_discord_asset_name(self.details_dir_entries[i].stem.as_str()))
             },
             chess_username: None
         }
@@ -1506,7 +1524,7 @@ impl<'a> MediaBrowser<'a> {
         egui::Popup::context_menu(total_alloc_resp)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                ui.add_enabled_ui(!self.details_info.dir_entries.is_empty(), |ui| {
+                ui.add_enabled_ui(!self.details_dir_entries.is_empty(), |ui| {
                     ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
                     ui.checkbox(&mut self.use_glsl_shaders, "Override GLSL shaders");
                     ui.menu_button("Discord Rich Presence", |ui| self.discord_menu(ui));
@@ -1550,8 +1568,8 @@ impl<'a> MediaBrowser<'a> {
             ui.label(details_label_galley);
 
             let details_hint_text = match self.discord_watching {
-                Watching::TV => self.details_info.dir_name.as_ref(),
-                _ => self.details_info.dir_entries[self.hovered_details_entry_i].stem.as_str()
+                Watching::TV => self.grid_entries[self.details_grid_entry_i].stem.as_ref(),
+                _ => self.details_dir_entries[self.details_hovered_dir_entry_i].stem.as_str()
             };
             let details_hint_galley = egui::WidgetText::from(details_hint_text)
                 .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
@@ -1566,7 +1584,7 @@ impl<'a> MediaBrowser<'a> {
             if self.discord_watching == Watching::TV {
                 ui.label("State");
 
-                let state_hint_text = self.details_info.dir_entries[self.hovered_details_entry_i].stem.as_str();
+                let state_hint_text = self.details_dir_entries[self.details_hovered_dir_entry_i].stem.as_str();
                 let state_hint_galley = egui::WidgetText::from(state_hint_text)
                     .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
                 let state_text_edit = egui::TextEdit::singleline(&mut self.discord_state)
