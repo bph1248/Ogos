@@ -466,6 +466,29 @@ fn ferry_images(info: FerryImagesInfo) {
     });
 }
 
+fn replace_dir_entries(entries: &mut Vec<DirEntryInfo>, dir: &Path) {
+    (|| -> ResVar<()> {
+        entries.clear();
+
+        let read_dir = dir.read_dir()?;
+        for dir_entry in read_dir {
+            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
+                let path = dir_entry.path();
+                let stem = path.get_file_stem()?.to_string();
+                let file_kind = path.get_file_kind()?;
+
+                entries.push(DirEntryInfo { path, stem, file_kind });
+
+                Ok(())
+            })
+            .unwrap_or_else(|err| error!("{}: failed to read dir entry: dir: {}: {}", module_path!(), dir.display(), err));
+        }
+
+        Ok(())
+    })()
+    .unwrap_or_else(|err| error!("{}: failed to read dir: {}: {}", module_path!(), dir.display(), err));
+}
+
 #[derive(Serialize, Deserialize)]
 struct CacheEntryInfo {
     #[serde(rename = "image")]
@@ -607,6 +630,7 @@ struct MediaBrowser<'a> {
     details_button_resps: Vec<egui::Response>,
     details_cell_size: egui::Vec2,
     details_hovered_dir_entry_i: usize,
+    details_levels: Vec<PathBuf>,
     vscroll_multiplier: f32,
     maintain_sample_rate: bool,
     use_glsl_shaders: bool,
@@ -926,6 +950,7 @@ impl<'a> MediaBrowser<'a> {
             details_button_resps: Vec::with_capacity(DETAILS_ENTRY_COUNT),
             details_cell_size,
             details_hovered_dir_entry_i: default!(),
+            details_levels: Vec::with_capacity(16),
             vscroll_multiplier,
             maintain_sample_rate: default!(),
             use_glsl_shaders: default!(),
@@ -1171,30 +1196,7 @@ impl<'a> MediaBrowser<'a> {
             self.details_dir_entries.clear();
 
             match grid_entry_info.path.is_dir() {
-                true => {
-                    let dir_entries_iter = || -> Res<_> {
-                        let read_dir = grid_entry_info.path.read_dir()?;
-
-                        let iter = read_dir.filter_map(|dir_entry| {
-                            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
-                                let path = dir_entry.path();
-                                let stem = path.get_file_stem()?.to_string();
-                                let file_kind = path.get_file_kind()?;
-
-                                Ok(DirEntryInfo { path, stem, file_kind })
-                            })
-                            .inspect_err(|err| error!("{}: failed to read dir entry: {}", module_path!(), err))
-                            .ok()
-                        });
-
-                        Ok(iter)
-                    };
-
-                    match dir_entries_iter() {
-                        Ok(iter) => self.details_dir_entries.extend(iter),
-                        Err(err) => error!("{}: failed to read dir: {}", module_path!(), err)
-                    }
-                },
+                true => replace_dir_entries(&mut self.details_dir_entries, &grid_entry_info.path),
                 false => self.details_dir_entries.push(
                     DirEntryInfo {
                         path: grid_entry_info.path.clone(),
@@ -1456,7 +1458,20 @@ impl<'a> MediaBrowser<'a> {
 
         ui.ctx().input(|state| {
             if state.pointer.button_released(egui::PointerButton::Extra1) {
-                self.view_kind = ViewKind::Grid;
+                if self.details_levels.is_empty() {
+                    self.view_kind = ViewKind::Grid;
+
+                    return
+                }
+
+                self.details_levels.pop();
+                match self.details_levels.is_empty() {
+                    true => replace_dir_entries(&mut self.details_dir_entries, &self.grid_entries[self.details_grid_entry_i].path),
+                    false => {
+                        let dir = self.details_levels.last().cloned().unwrap();
+                        replace_dir_entries(&mut self.details_dir_entries, &dir);
+                    }
+                }
             }
         });
     }
@@ -1469,7 +1484,7 @@ impl<'a> MediaBrowser<'a> {
                 self.details_button_resps.clear();
                 self.details_button_resps.extend(
                     self.details_dir_entries.iter()
-                        .map(|info| ui.button(info.stem.as_str()).interact(egui::Sense::click()))
+                        .map(|info| ui.button(info.stem.as_str()))
                 );
 
                 for (i, resp) in self.details_button_resps.iter().enumerate() {
@@ -1478,15 +1493,25 @@ impl<'a> MediaBrowser<'a> {
                     }
 
                     if resp.clicked() {
-                        let discord_info = self.discord_enabled.then_some(self.make_discord_info(i));
+                        match self.details_dir_entries[i].file_kind {
+                            FileKind::Dir => {
+                                let dir = self.details_dir_entries[i].path.clone();
+                                replace_dir_entries(&mut self.details_dir_entries, &dir);
 
-                        open_media(
-                            self.details_dir_entries[i].path.clone(),
-                            self.details_dir_entries[i].file_kind,
-                            self.maintain_sample_rate,
-                            self.use_glsl_shaders,
-                            discord_info
-                        );
+                                self.details_levels.push(dir);
+                            },
+                            _ => {
+                                let discord_info = self.discord_enabled.then_some(self.make_discord_info(i));
+
+                                open_media(
+                                    self.details_dir_entries[i].path.clone(),
+                                    self.details_dir_entries[i].file_kind,
+                                    self.maintain_sample_rate,
+                                    self.use_glsl_shaders,
+                                    discord_info
+                                );
+                            }
+                        }
                     }
                 }
             });
