@@ -493,17 +493,17 @@ pub struct DisplayModes<'a> {
 impl_name!(DisplayModes, 'a);
 
 #[derive(Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum DiscordDisplayKind {
     #[default]
-    Name,
+    AppName,
     State,
     Details
 }
 impl From<DiscordDisplayKind> for drpa::StatusDisplayType {
     fn from(value: DiscordDisplayKind) -> Self {
         match value {
-            DiscordDisplayKind::Name => Self::Name,
+            DiscordDisplayKind::AppName => Self::Name,
             DiscordDisplayKind::State => Self::State,
             DiscordDisplayKind::Details => Self::Details
         }
