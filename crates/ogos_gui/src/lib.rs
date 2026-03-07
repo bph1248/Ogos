@@ -40,6 +40,7 @@ use windows::Win32::{
     UI::WindowsAndMessaging::*
 };
 
+const ASPECT_RATIO_3_2: f32 = 1.5;
 const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color32::from_rgb(250, 246, 235) };
 const CHUNK_BYTE_COUNT: u64 = 500 * 1024;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
@@ -144,6 +145,10 @@ fn blackman_filter() -> resize::Filter {
     )
 }
 
+fn get_aspect_ratio_v(width: f32, height: f32) -> AspectRatioV {
+    height / width
+}
+
 fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
     let image = image::open(path)?;
 
@@ -151,63 +156,6 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
         image::DynamicImage::ImageRgba8(image) => image,
         _ => image.to_rgba8()
     })
-}
-
-fn load_color_image(path: &Path) -> ResVar<egui::ColorImage> {
-    let image = load_rgba_image(path)?;
-
-    let (src_width, src_height) = image.dimensions();
-    let src_pixels = image.as_raw();
-
-    let color_image = egui::ColorImage::from_rgba_unmultiplied([src_width as usize, src_height as usize], src_pixels);
-
-    Ok(color_image)
-}
-
-fn load_resize_color_image(path: &Path, dst_size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>)> {
-    use rgb::FromSlice;
-
-    let image = load_rgba_image(path)?;
-    let (src_width, src_height) = image.dimensions();
-    let src_width = src_width as usize;
-    let src_height = src_height as usize;
-
-    let src_aspect_ratio_h = src_height as f32 / src_width as f32;
-    let dst_aspect_ratio_h = dst_size.y / dst_size.x;
-
-    let (dst_width, dst_height) = if src_aspect_ratio_h <= dst_aspect_ratio_h {
-        (dst_size.x as usize, (dst_size.x * src_aspect_ratio_h).round() as usize) // Wide
-    } else {
-        ((dst_size.y / src_aspect_ratio_h).round() as usize, dst_size.y as usize) // Tall
-    };
-
-    let mut tmp_pixels = vec![0_u8; dst_width * src_height * 4];
-    let mut dst_pixels = vec![0_u8; dst_width * dst_height * 4];
-
-    let mut resizer = resize::new(
-        src_width,
-        src_height,
-        dst_width,
-        src_height,
-        resize::Pixel::RGBA8,
-        resize::Type::Custom(blackman_filter())
-    )?;
-    let src_pixels = image.as_raw();
-    resizer.resize(src_pixels.as_rgba(), tmp_pixels.as_rgba_mut())?;
-
-    let mut resizer = resize::new(
-        dst_width,
-        src_height,
-        dst_width,
-        dst_height,
-        resize::Pixel::RGBA8,
-        resize::Type::Custom(blackman_filter())
-    )?;
-    resizer.resize(tmp_pixels.as_rgba(), dst_pixels.as_rgba_mut())?;
-
-    let color_image = egui::ColorImage::from_rgba_unmultiplied([dst_width, dst_height], dst_pixels.as_slice());
-
-    Ok((color_image, dst_pixels))
 }
 
 fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordInfo>) {
@@ -240,18 +188,14 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
     });
 }
 
-fn save_image(path: &Path, pixels: &[u8], size: [usize; 2]) -> Res<()> {
-    let image_file = fs::File::create(path)?;
-    let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
-    encoder.encode(pixels, size[0] as u32, size[1] as u32, image::ExtendedColorType::Rgba8)?;
-
-    Ok(())
-}
-
-fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle) -> egui::Response {
+fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle, orientation: Orientation) -> egui::Response {
     let image = egui::Image::new(tex).sense(egui::Sense::click_and_drag()).fit_to_exact_size(tex.size_vec2());
 
-    ui.centered_and_justified(|ui| ui.add(image)).inner
+    match orientation {
+        Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)),
+        Orientation::Tall => ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| ui.add(image))
+    }
+    .inner
 }
 
 fn add_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
@@ -270,7 +214,7 @@ fn alloc_hover_response(ui: &mut egui::Ui) -> egui::Response {
 
 fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str, label: &str) -> egui::Response {
     match image_state {
-        ImageState::Ready(tex) => add_image(ui, tex),
+        ImageState::Ready((tex, orientation)) => add_image(ui, tex, *orientation),
         ImageState::Pending(rx) => {
             let recvd = match rx.try_recv() {
                 Ok(res) => res,
@@ -279,10 +223,10 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str
             };
 
             match recvd {
-                Ok(color_image) => {
+                Ok((color_image, orientation)) => {
                     let tex = ui.ctx().load_texture(tex_name, color_image, default!());
-                    let resp = add_image(ui, &tex);
-                    *image_state = ImageState::Ready(tex);
+                    let resp = add_image(ui, &tex, orientation);
+                    *image_state = ImageState::Ready((tex, orientation));
 
                     resp
                 },
@@ -312,9 +256,20 @@ fn update_active_view(active_view: &mut Vec<usize>, set: &BTreeSet<usize>) {
     active_view.extend(set.iter().cloned());
 }
 
-fn load_image(src_path: &Path, image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>) -> ResVar<()> {
-    match load_color_image(src_path) {
-        Ok(image) => image_state_sx.send(Ok(image)).unwrap(),
+fn ferry_cached_image(path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> ResVar<()> {
+    fn inner(path: PathBuf) -> ResVar<(egui::ColorImage, AspectRatioV)> {
+        let image = load_rgba_image(path.as_path())?;
+        let (width, height) = image.dimensions();
+        let aspect_ratio_v = get_aspect_ratio_v(width as f32, height as f32);
+
+        let pixels = image.as_raw();
+        let color_image = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], pixels);
+
+        Ok((color_image, aspect_ratio_v))
+    }
+
+    match inner(path) {
+        Ok((image, aspect_ratio_v)) => image_state_sx.send(Ok((image, aspect_ratio_v.as_orientation()))).unwrap(),
         Err(err) => {
             image_state_sx.send(Err(())).unwrap();
 
@@ -325,14 +280,59 @@ fn load_image(src_path: &Path, image_state_sx: oneshot::Sender<Result<egui::Colo
     Ok(())
 }
 
-fn load_resize_save_image(src_path: &Path, dst_path: &Path, cell_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>) -> Res1<()> {
-    match load_resize_color_image(src_path, cell_size) {
-        Ok((image, pixels)) => {
-            let size = image.size;
+fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> Res1<()> {
+    fn inner(src_path: &Path, cell_size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>, AspectRatioV)> {
+        use rgb::FromSlice;
 
-            image_state_sx.send(Ok(image)).unwrap();
+        let src_image = load_rgba_image(src_path)?;
+        let (src_width, src_height) = src_image.dimensions();
+        let src_aspect_ratio_v = get_aspect_ratio_v(src_width as f32, src_height as f32);
 
-            save_image(dst_path, pixels.as_slice(), size)?;
+        let (dst_width, dst_height) = if src_aspect_ratio_v <= ASPECT_RATIO_3_2 {
+            (cell_size.x as usize, (cell_size.x * src_aspect_ratio_v).round() as usize) // Wide
+        } else {
+            ((cell_size.y / src_aspect_ratio_v).round() as usize, cell_size.y as usize) // Tall
+        };
+
+        let src_width = src_width as usize;
+        let src_height = src_height as usize;
+        let mut tmp_pixels = vec![0_u8; dst_width * src_height * 4];
+        let mut dst_pixels = vec![0_u8; dst_width * dst_height * 4];
+
+        let mut resizer = resize::new(
+            src_width,
+            src_height,
+            dst_width,
+            src_height,
+            resize::Pixel::RGBA8,
+            resize::Type::Custom(blackman_filter())
+        )?;
+        let src_pixels = src_image.as_raw();
+        resizer.resize(src_pixels.as_rgba(), tmp_pixels.as_rgba_mut())?;
+
+        let mut resizer = resize::new(
+            dst_width,
+            src_height,
+            dst_width,
+            dst_height,
+            resize::Pixel::RGBA8,
+            resize::Type::Custom(blackman_filter())
+        )?;
+        resizer.resize(tmp_pixels.as_rgba(), dst_pixels.as_rgba_mut())?;
+
+        let color_image = egui::ColorImage::from_rgba_unmultiplied([dst_width, dst_height], dst_pixels.as_slice());
+
+        Ok((color_image, dst_pixels, src_aspect_ratio_v))
+    }
+
+    match inner(src_path, cell_size) {
+        Ok((image, pixels, aspect_ratio)) => {
+            let image_size = image.size;
+            image_state_sx.send(Ok((image, aspect_ratio.as_orientation()))).unwrap();
+
+            let image_file = fs::File::create(dst_path)?;
+            let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
+            encoder.encode(pixels.as_slice(), image_size[0] as u32, image_size[1] as u32, image::ExtendedColorType::Rgba8)?;
         },
         Err(err) => {
             image_state_sx.send(Err(())).unwrap();
@@ -344,7 +344,7 @@ fn load_resize_save_image(src_path: &Path, dst_path: &Path, cell_size: egui::Vec
     Ok(())
 }
 
-fn queue_load_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>) {
+fn queue_ferry_cached_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
     queue_sx.send(
         QueueImageInfo {
             src_path,
@@ -355,7 +355,7 @@ fn queue_load_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, i
     .unwrap();
 }
 
-fn queue_load_resize_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, dst_path: PathBuf, dst_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>) {
+fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, dst_path: PathBuf, dst_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
     queue_sx.send(
         QueueImageInfo {
             src_path,
@@ -377,10 +377,10 @@ fn ferry_images(info: FerryImagesInfo) {
         queue_sx,
         queue_rx,
         image_dirs,
-        load_image_kind,
+        base_image_kind,
         grid_cell_size,
         details_cell_size,
-        ferry_image_infos,
+        ferry_image_infos
     } = info;
 
     let handle_err = |err| {
@@ -399,22 +399,22 @@ fn ferry_images(info: FerryImagesInfo) {
         let ctx = ctx.clone();
         let hash_sx = hash_sx.clone();
         let queue_sx = queue_sx.clone();
-        let load_image_kind = load_image_kind.clone();
+        let base_image_kind = base_image_kind.clone();
 
         thread_pool.spawn_fifo(move || {
             (|| -> Res<()> {
-                let load_image_path = match load_image_kind {
-                    LoadImageKind::Pick { dir, image_file_name } => dir.join(image_file_name.as_ref()),
-                    LoadImageKind::Startup => image_dirs.base.join(image_file_name.as_ref())
+                let base_image_path = match base_image_kind {
+                    BaseImageKind::Pick { dir, image_file_name } => dir.join(image_file_name.as_ref()),
+                    BaseImageKind::Startup => image_dirs.base.join(image_file_name.as_ref())
                 };
                 let grid_image_path = image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp");
                 let details_image_path = image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp");
 
                 // Compute hash on chunk
-                let mut image_file = File::open(load_image_path.as_path())?;
+                let mut base_image_file = File::open(base_image_path.as_path())?;
                 let mut hasher = blake3::Hasher::new();
                 let mut chunk = [0_u8; CHUNK_BYTE_COUNT as usize];
-                _ = image_file.read(&mut chunk)?;
+                _ = base_image_file.read(&mut chunk)?;
                 let hash = Arc::from(hasher.update(&chunk).finalize().to_hex().as_str());
                 let hash_mismatches = expected_hash.is_none_or(|expected_hash| expected_hash != hash);
 
@@ -422,12 +422,12 @@ fn ferry_images(info: FerryImagesInfo) {
                     true => {
                         hash_sx.send(HashInfo { grid_entry_i, hash }).unwrap();
 
-                        load_resize_save_image(load_image_path.as_path(), grid_image_path.as_path(), grid_cell_size, grid_image_state_sx)?;
-                        queue_load_resize_image(queue_sx, load_image_path, details_image_path, details_cell_size, details_image_state_sx);
+                        ferry_base_image(base_image_path.as_path(), grid_image_path, grid_cell_size, grid_image_state_sx)?;
+                        queue_ferry_base_image(queue_sx, base_image_path, details_image_path, details_cell_size, details_image_state_sx);
                     },
                     false => {
-                        load_image(grid_image_path.as_path(), grid_image_state_sx)?;
-                        queue_load_image(queue_sx, details_image_path, details_image_state_sx);
+                        ferry_cached_image(grid_image_path, grid_image_state_sx)?;
+                        queue_ferry_cached_image(queue_sx, details_image_path, details_image_state_sx);
                     }
                 }
 
@@ -455,9 +455,9 @@ fn ferry_images(info: FerryImagesInfo) {
                         Some(resize) => {
                             let ResizeImage { dst_path, dst_size } = resize;
 
-                            load_resize_save_image(src_path.as_path(), dst_path.as_path(), dst_size, image_state_sx)?;
+                            ferry_base_image(src_path.as_path(), dst_path, dst_size, image_state_sx)?;
                         },
-                        None => load_image(src_path.as_path(), image_state_sx)?
+                        None => ferry_cached_image(src_path, image_state_sx)?
                     }
 
                     Ok(())
@@ -491,6 +491,8 @@ fn replace_dir_entries(entries: &mut Vec<DirEntryInfo>, dir: &Path) {
     .unwrap_or_else(|err| error!("{}: failed to read dir: {}: {}", module_path!(), dir.display(), err));
 }
 
+type AspectRatioV = f32;
+
 #[derive(Serialize, Deserialize)]
 struct CacheEntryInfo {
     #[serde(rename = "image")]
@@ -517,8 +519,8 @@ struct FerryImageInfo {
     image_file_name: Arc<str>,
     expected_hash: Option<Arc<str>>,
     grid_entry_i: usize,
-    grid_image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>,
-    details_image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>
+    grid_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
+    details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>
 }
 
 struct FerryImagesInfo<'a> {
@@ -528,7 +530,7 @@ struct FerryImagesInfo<'a> {
     queue_sx: mpsc::Sender<QueueImageInfo>,
     queue_rx: mpsc::Receiver<QueueImageInfo>,
     image_dirs: &'static ImageDirs,
-    load_image_kind: LoadImageKind,
+    base_image_kind: BaseImageKind,
     grid_cell_size: egui::Vec2,
     details_cell_size: egui::Vec2,
     ferry_image_infos: Vec<FerryImageInfo>
@@ -555,10 +557,9 @@ struct ImageDirs {
 
 struct QueueImageInfo {
     src_path: PathBuf,
-    image_state_sx: oneshot::Sender<Result<egui::ColorImage, ()>>,
+    image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
     resize: Option<ResizeImage>
 }
-
 
 #[derive(Default)]
 struct ImageStates {
@@ -589,15 +590,21 @@ struct ResizeImage {
 enum ImageState {
     #[default]
     None,
-    Pending(oneshot::Receiver<Result<egui::ColorImage, ()>>),
-    Ready(egui::TextureHandle),
+    Pending(oneshot::Receiver<Result<(egui::ColorImage, Orientation), ()>>),
+    Ready((egui::TextureHandle, Orientation)),
     Failed
 }
 
 #[derive(Clone)]
-enum LoadImageKind {
+enum BaseImageKind {
     Pick { dir: PathBuf, image_file_name: Arc<str> },
     Startup
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Orientation {
+    Wide,
+    Tall
 }
 
 #[derive(Default)]
@@ -605,6 +612,18 @@ enum ViewKind {
     #[default]
     Grid,
     Details
+}
+
+trait AsOrientation {
+    fn as_orientation(&self) -> Orientation;
+}
+impl AsOrientation for f32 {
+    fn as_orientation(&self) -> Orientation {
+        match *self <= ASPECT_RATIO_3_2 {
+            true => Orientation::Wide,
+            false => Orientation::Tall
+        }
+    }
 }
 
 struct MediaBrowser<'a> {
@@ -801,8 +820,8 @@ impl<'a> MediaBrowser<'a> {
                 )
             })
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
-        let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * 1.5);
-        let details_cell_size = egui::vec2(details_cell_width, details_cell_width * 1.5);
+        let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
+        let details_cell_size = egui::vec2(details_cell_width, details_cell_width * ASPECT_RATIO_3_2);
 
         let mut grid_entries = media_dirs.iter()
             .map(|dir| Path::new(dir).read_dir())
@@ -919,7 +938,7 @@ impl<'a> MediaBrowser<'a> {
             queue_sx,
             queue_rx,
             image_dirs,
-            load_image_kind: LoadImageKind::Startup,
+            base_image_kind: BaseImageKind::Startup,
             grid_cell_size,
             details_cell_size,
             ferry_image_infos
@@ -1340,7 +1359,7 @@ impl<'a> MediaBrowser<'a> {
             queue_sx,
             queue_rx,
             image_dirs: self.image_dirs,
-            load_image_kind: LoadImageKind::Pick { dir: pick_image_dir, image_file_name: pick_image_file_name.clone() },
+            base_image_kind: BaseImageKind::Pick { dir: pick_image_dir, image_file_name: pick_image_file_name.clone() },
             grid_cell_size: self.grid_cell_size,
             details_cell_size: self.details_cell_size,
             ferry_image_infos: vec![
