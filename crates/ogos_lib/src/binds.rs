@@ -1,3 +1,4 @@
+use crate::win32::*;
 use ogos_config as config;
 use config::*;
 use ogos_core::*;
@@ -9,7 +10,6 @@ use mki::{
     *
 };
 
-use cfg_if::*;
 use log::*;
 use qmk_via_api::{
     api as qmk_api,
@@ -19,24 +19,20 @@ use serde::*;
 use std::{
     cell::*,
     collections::*,
+    fmt::Write,
     fs,
     sync::mpsc::{self, *},
     thread,
     time::*
 };
-use windows::Win32::System::Power::*;
-
-cfg_if! { if #[cfg(feature = "dbg_window_info")] {
-    use crate::win32::*;
-
-    use windows::{
-        core::*,
-        Win32::{
-            Foundation::*,
-            UI::WindowsAndMessaging::*
-        }
-    };
-} }
+use windows::{
+    core::*,
+    Win32::{
+        Foundation::*,
+        UI::WindowsAndMessaging::*,
+        System::Power::*
+    }
+};
 
 pub(crate) mod qmk_deser {
     use super::*;
@@ -82,14 +78,9 @@ mod trigger_watch {
                     Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
                         error!("{}: failed to toggle display mode: {}", module_path!(), err);
                     }),
-                    #[cfg(feature = "dbg_window_info")]
-                    Task::GetForegroundInfo => {
-                        print_foreground_info().unwrap_or_else(|err| {
-                            error!("{}: failed to get foreground info: {}", module_path!(), err);
-                        });
-
-                        print_eligible_for_shift_info().unwrap_or_else(|err| {
-                            error!("{}: failed to get eligible-for-shift info: {}", module_path!(), err);
+                    Task::PrintWindowInfo => {
+                        print_window_info().unwrap_or_else(|err| {
+                            error!("{}: failed to print window info: {}", module_path!(), err);
                         });
                     }
                 }
@@ -100,7 +91,6 @@ mod trigger_watch {
     }
 }
 
-#[cfg(feature = "dbg_window_info")]
 struct EligibleForShiftInfo {
     eligibles: Vec<HWND>,
     screen_extent: Extent2d
@@ -151,7 +141,6 @@ struct ThreadState {
     prefixes_pressed: HashSet<Key>
 }
 
-#[cfg(feature = "dbg_window_info")]
 struct TopLevelSiblingsInfo {
     fg_pid: u32,
     siblings: Vec<HWND>
@@ -392,121 +381,117 @@ impl TryAsKey for Keycode {
     }
 }
 
-cfg_if! { if #[cfg(feature = "dbg_window_info")] {
-    unsafe extern "system" fn enum_windows_eligible_for_shift_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
-        let EligibleForShiftInfo { eligibles, screen_extent } = &mut *(lparam.0 as *mut _);
+unsafe extern "system" fn enum_windows_eligible_for_shift_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
+    let EligibleForShiftInfo { eligibles, screen_extent } = &mut *(lparam.0 as *mut _);
 
-        if hwnd.is_eligible_for_shift(*screen_extent).unwrap_or_default() {
-            eligibles.push(hwnd);
-        }
+    if hwnd.is_eligible_for_shift(*screen_extent).unwrap_or_default() {
+        eligibles.push(hwnd);
+    }
 
-        TRUE
-    } }
+    TRUE
+} }
 
-    unsafe extern "system" fn enum_child_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
-        let children = &mut *(lparam.0 as *mut Vec<HWND>);
-        children.push(hwnd);
+unsafe extern "system" fn enum_child_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
+    let children = &mut *(lparam.0 as *mut Vec<HWND>);
+    children.push(hwnd);
 
-        TRUE
-    } }
+    TRUE
+} }
 
-    unsafe extern "system" fn enum_windows_tl_siblings_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
-        let TopLevelSiblingsInfo { fg_pid, siblings } = &mut *(lparam.0 as *mut _);
+unsafe extern "system" fn enum_windows_tl_siblings_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
+    let TopLevelSiblingsInfo { fg_pid, siblings } = &mut *(lparam.0 as *mut _);
 
-        let mut win_pid = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut win_pid));
+    let mut win_pid = 0;
+    GetWindowThreadProcessId(hwnd, Some(&mut win_pid));
 
-        if win_pid == *fg_pid && IsWindowVisible(hwnd).as_bool() {
-            siblings.push(hwnd);
-        }
+    if win_pid == *fg_pid && IsWindowVisible(hwnd).as_bool() {
+        siblings.push(hwnd);
+    }
 
-        TRUE
-    } }
+    TRUE
+} }
 
-    fn _is_top_level_window(hwnd: HWND) -> bool { unsafe {
+fn _is_top_level_window(hwnd: HWND) -> bool { unsafe {
+    let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
+    let parent = hwnd.get_parent().unwrap_or_default();
+
+    let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
+    let is_child_window = style & WS_CHILD == WS_CHILD;
+    let is_owned_popup = !owner.is_invalid() && (style & WS_POPUP == WS_POPUP);
+
+    !is_child_window && (parent.is_invalid() || is_owned_popup)
+} }
+
+fn print_window_info() -> Res<()> { unsafe {
+    let mut s = String::new();
+
+    let fg_hwnd = GetForegroundWindow();
+    let fg_exe = fg_hwnd.get_exe_or_err();
+    let fg_tpids = fg_hwnd.get_thread_proc_ids().unwrap_or_default();
+    let fg_caption = fg_hwnd.get_caption_or_err();
+    let fg_class = fg_hwnd._get_class_or_err();
+    let fg_owner = GetWindow(fg_hwnd, GW_OWNER).unwrap_or_default();
+    let fg_parent = fg_hwnd.get_parent().unwrap_or_default();
+
+    let mut children: Vec<HWND> = Vec::new();
+    _ = EnumChildWindows(Some(fg_hwnd), Some(enum_child_windows_proc), LPARAM(&mut children as *mut _ as _)); // Return value is not used
+    let mut tl_siblings_info = TopLevelSiblingsInfo {
+        fg_pid: fg_tpids.proc,
+        siblings: Vec::new()
+    };
+    EnumWindows(Some(enum_windows_tl_siblings_proc), LPARAM(&mut tl_siblings_info as *mut _ as _))?;
+
+    writeln!(s, "foreground:").unwrap();
+    writeln!(s, "\thwnd: {}, exe: {}, caption: {}, class: {}, owner: {}, parent: {}",
+        fg_hwnd.as_display(), fg_exe, fg_caption, fg_class, fg_owner.as_display(), fg_parent.as_display()).unwrap();
+
+    writeln!(s, "foreground children:").unwrap();
+    for hwnd in children {
+        let caption = hwnd.get_caption_or_err();
+        let class = hwnd._get_class_or_err();
         let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
         let parent = hwnd.get_parent().unwrap_or_default();
 
-        let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
-        let is_child_window = style & WS_CHILD == WS_CHILD;
-        let is_owned_popup = !owner.is_invalid() && (style & WS_POPUP == WS_POPUP);
+        writeln!(s, "\thwnd: {}, caption: {}, class: {}, owner: {}, parent: {}",
+            hwnd.as_display(), caption, class, owner.as_display(), parent.as_display()).unwrap();
+    }
 
-        !is_child_window && (parent.is_invalid() || is_owned_popup)
-    } }
+    let fg_root_owner = GetAncestor(fg_hwnd, GA_ROOTOWNER);
+    writeln!(s, "foreground top level siblings:").unwrap();
+    for hwnd in tl_siblings_info.siblings {
+        if hwnd == fg_root_owner { continue }
 
-    fn print_eligible_for_shift_info() -> Res<()> { unsafe {
-        let screen_extent = get_screen_extent()?;
-        let mut eligible_for_shift_info = EligibleForShiftInfo {
-            eligibles: Vec::new(),
-            screen_extent
-        };
-        EnumWindows(Some(enum_windows_eligible_for_shift_proc), LPARAM(&mut eligible_for_shift_info as *mut _ as _))?;
+        let caption = hwnd.get_caption_or_err();
+        let class = hwnd._get_class_or_err();
+        let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
+        let parent = hwnd.get_parent().unwrap_or_default();
 
-        info!("{}: eligible for shift:", module_path!());
-        for hwnd in eligible_for_shift_info.eligibles {
-            let exe = hwnd.get_exe_or_err();
-            let tpids = hwnd.get_thread_proc_ids().unwrap_or_default();
-            let caption = hwnd.get_caption_or_err();
-            let class = hwnd._get_class_or_err();
-            let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
-            let parent = hwnd.get_parent().unwrap_or_default();
+        writeln!(s, "\thwnd: {}, caption: {}, class: {}, owner: {}, parent: {}",
+            hwnd.as_display(), caption, class, owner.as_display(), parent.as_display()).unwrap();
+    }
 
-            info!("{}: \thwnd: {:p}, exe: {}, tid: {}, caption: {}, class: {}, owner: {:p}, parent: {:p}",
-                module_path!(), hwnd.0, exe, tpids.thread, caption, class, owner.0, parent.0);
-        }
+    let screen_extent = get_screen_extent()?;
+    let mut eligible_for_shift_info = EligibleForShiftInfo {
+        eligibles: Vec::new(),
+        screen_extent
+    };
+    EnumWindows(Some(enum_windows_eligible_for_shift_proc), LPARAM(&mut eligible_for_shift_info as *mut _ as _))?;
 
-        Ok(())
-    } }
+    writeln!(s, "eligible for shift:").unwrap();
+    for hwnd in eligible_for_shift_info.eligibles {
+        let exe = hwnd.get_exe_or_err();
+        let caption = hwnd.get_caption_or_err();
+        let class = hwnd._get_class_or_err();
+        let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
+        let parent = hwnd.get_parent().unwrap_or_default();
 
-    fn print_foreground_info() -> Res<()> { unsafe {
-        let fg_hwnd = GetForegroundWindow();
-        let fg_exe = fg_hwnd.get_exe_or_err();
-        let fg_tpids = fg_hwnd.get_thread_proc_ids().unwrap_or_default();
-        let fg_caption = fg_hwnd.get_caption_or_err();
-        let fg_class = fg_hwnd._get_class_or_err();
-        let fg_owner = GetWindow(fg_hwnd, GW_OWNER).unwrap_or_default();
-        let fg_parent = fg_hwnd.get_parent().unwrap_or_default();
+        writeln!(s, "\thwnd: {}, exe: {}, caption: {}, class: {}, owner: {}, parent: {}",
+            hwnd.as_display(), exe, caption, class, owner.as_display(), parent.as_display()).unwrap();
+    }
 
-        info!("{}: fg:", module_path!());
-        info!("{}: \thwnd: {:p}, exe: {}, tid: {}, caption: {}, class: {}, owner: {:p}, parent: {:p}",
-            module_path!(), fg_hwnd.0, fg_exe, fg_tpids.thread, fg_caption, fg_class, fg_owner.0, fg_parent.0);
+    info!("{}: \n{}", module_path!(), s);
 
-        let mut children: Vec<HWND> = Vec::new();
-        _ = EnumChildWindows(Some(fg_hwnd), Some(enum_child_windows_proc), LPARAM(&mut children as *mut _ as _));
-
-        let mut tl_siblings_info = TopLevelSiblingsInfo {
-            fg_pid: fg_tpids.proc,
-            siblings: Vec::new()
-        };
-        EnumWindows(Some(enum_windows_tl_siblings_proc), LPARAM(&mut tl_siblings_info as *mut _ as _))?;
-
-        info!("{}: fg children:", module_path!());
-        for hwnd in children {
-            let tpids = hwnd.get_thread_proc_ids().unwrap_or_default();
-            let caption = hwnd.get_caption_or_err();
-            let class = hwnd._get_class_or_err();
-            let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
-            let parent = hwnd.get_parent().unwrap_or_default();
-            info!("{}: \thwnd: {:p}, tid: {}, caption: {}, class: {}, owner: {:p}, parent: {:p}",
-                module_path!(), hwnd.0, tpids.thread, caption, class, owner.0, parent.0);
-        }
-
-        let fg_root_owner = GetAncestor(fg_hwnd, GA_ROOTOWNER);
-        info!("{}: fg top level siblings:", module_path!());
-        for hwnd in tl_siblings_info.siblings {
-            if hwnd == fg_root_owner { continue }
-
-            let tpids = hwnd.get_thread_proc_ids().unwrap_or_default();
-            let caption = hwnd.get_caption_or_err();
-            let class = hwnd._get_class_or_err();
-            let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
-            let parent = hwnd.get_parent().unwrap_or_default();
-            info!("{}: \thwnd: {:p}, tid: {}, caption: {}, class: {}, owner: {:p}, parent: {:p}",
-                module_path!(), hwnd.0, tpids.thread, caption, class, owner.0, parent.0);
-        }
-
-        Ok(())
-    } }
+    Ok(())
 } }
 
 pub(crate) fn click_with_sleep(event: InputEvent) {
@@ -552,8 +537,6 @@ pub(crate) fn configure_static_binds() -> Res<()> {
     if let Some(hotkeys) = binds_config.hotkeys.as_ref() {
         #[allow(unused_mut)]
         let mut tasks = hotkeys.tasks.clone();
-        #[cfg(feature = "dbg_window_info")]
-        tasks.insert(Key::F, Task::GetForegroundInfo);
 
         // Invoke tasks
         let pixel_cleaning_prelude = config.pixel_cleaning;
@@ -595,8 +578,6 @@ pub(crate) fn configure_static_binds() -> Res<()> {
 
         let prefixes_len = hotkeys.prefixes.len();
         let tasks_iter = hotkeys.tasks.keys();
-        #[cfg(feature = "dbg_window_info")]
-        let tasks_iter = tasks_iter.chain([&Key::F]);
 
         for trigger in tasks_iter {
             let invoke_task_sx = invoke_task_sx.clone();

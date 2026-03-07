@@ -113,7 +113,7 @@ impl fmt::Display for Displayer<'_, &mut Command> {
 }
 impl fmt::Display for Displayer<'_, HWND> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{:p}", self)
+        write!(f, "{:p}", self.0)
     }
 }
 impl fmt::Display for Displayer<'_, Option<&str>> {

@@ -570,7 +570,7 @@ pub enum Task {
     LetWalkAway,
     GoToSleep,
     ToggleDisplayMode,
-    GetForegroundInfo
+    PrintWindowInfo
 }
 
 #[derive(Deserialize)]
