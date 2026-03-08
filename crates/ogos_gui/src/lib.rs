@@ -406,7 +406,7 @@ fn ferry_images(info: FerryImagesInfo) {
         thread_pool.spawn_fifo(move || {
             (|| -> Res<()> {
                 let base_image_path = match base_image_kind {
-                    BaseImageKind::Pick { dir, image_file_name } => dir.join(image_file_name.as_ref()),
+                    BaseImageKind::Pick { path } => path,
                     BaseImageKind::Startup => image_dirs.base.join(image_file_name.as_ref())
                 };
                 let grid_image_path = image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp");
@@ -608,7 +608,7 @@ enum ImageState {
 
 #[derive(Clone)]
 enum BaseImageKind {
-    Pick { dir: PathBuf, image_file_name: Arc<str> },
+    Pick { path: PathBuf },
     Startup
 }
 
@@ -1312,26 +1312,22 @@ impl<'a> MediaBrowser<'a> {
         let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
         let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
 
-        let pick_image_dir = path.get_dir()?.to_path_buf();
-        let pick_image_file_name = path.get_file_name()?;
-        let pick_image_file_name: Arc<str> = Arc::from(pick_image_file_name);
-
         let image_file_name_i = self.grid_entries[self.grid_entry_i].image_file_name_i;
         let grid_entry_stem = self.grid_entries[self.grid_entry_i].stem.as_ref();
         let pick_image_ext = path.get_file_ext()?;
 
-        let image_file_name = match image_file_name_i {
+        let (new_image_file_name, prev_image_file_name) = match image_file_name_i {
             Some(image_file_name_i) => {
-                let (cur_image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+                let (prev_image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
 
-                match image_states.ref_count > 1 {
-                    true => {
+                match &mut image_states.ref_count { // Multiple entries reference the image
+                    ref_count @ 2.. => {
                         const BYTES: usize = 2;
                         const GRAMMAR_CHAR_COUNT: usize = 4;
                         const DUP_DIGIT_COUNT: usize = 2;
                         let mut s = String::with_capacity(grid_entry_stem.len() + pick_image_ext.len() + BYTES * (DUP_DIGIT_COUNT + GRAMMAR_CHAR_COUNT));
 
-                        for i in image_states.ref_count.. {
+                        for i in *ref_count.. {
                             write!(s, "{} ({}).{}", grid_entry_stem, i, pick_image_ext).unwrap();
                             let check_path = self.image_dirs.base.join(&s);
 
@@ -1341,29 +1337,41 @@ impl<'a> MediaBrowser<'a> {
                         }
                         let new_image_file_name: Arc<str> = Arc::from(s.as_str());
 
-                        let (image_file_name_i, _) = self.images.insert_full(new_image_file_name.clone(), ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx), ref_count: 1 });
-                        self.grid_entries[self.grid_entry_i].image_file_name_i = Some(image_file_name_i);
+                        *ref_count -= 1;
 
-                        new_image_file_name
+                        (new_image_file_name, None)
                     },
-                    false => {
-                        *image_states = ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx), ref_count: 1 };
+                    _ => { // Only this entry references the image
+                        let new_image_file_name = concat_string!(grid_entry_stem, ".", pick_image_ext);
+                        let remove_prev_image = new_image_file_name.as_str() != prev_image_file_name.as_ref();
 
-                        cur_image_file_name.clone()
+                        match remove_prev_image {
+                            true => {
+                                let new_image_file_name: Arc<str> = Arc::from(new_image_file_name.as_str());
+
+                                (new_image_file_name, Some(prev_image_file_name.clone()))
+                            },
+                            false => {
+                                let same_image_file_name = prev_image_file_name.clone();
+
+                                (same_image_file_name, None)
+                            }
+                        }
                     }
                 }
             },
-            None => {
-                let image_file_name = concat_string!(grid_entry_stem, ".", pick_image_ext);
-                let image_file_name: Arc<str> = Arc::from(image_file_name.as_str());
+            None => { // Entry doesn't reference an image
+                let new_image_file_name = concat_string!(grid_entry_stem, ".", pick_image_ext);
+                let new_image_file_name: Arc<str> = Arc::from(new_image_file_name.as_str());
 
-                let (image_file_name_i, _) = self.images.insert_full(image_file_name.clone(), ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx), ref_count: 1 });
-                self.grid_entries[self.grid_entry_i].image_file_name_i = Some(image_file_name_i);
-
-                image_file_name.clone()
+                (new_image_file_name, None)
             }
         };
-        let image_path = self.image_dirs.base.join(image_file_name.as_ref());
+        let (image_file_name_i, _) = self.images.insert_full(new_image_file_name.clone(), ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx), ref_count: 1 });
+        self.grid_entries[self.grid_entry_i].image_file_name_i = Some(image_file_name_i);
+
+        let base_image_path = self.image_dirs.base.join(new_image_file_name.as_ref());
+        let remove_image_path = prev_image_file_name.map(|prev_image_file_name| self.image_dirs.base.join(prev_image_file_name.as_ref()));
 
         let ferry_images_info = FerryImagesInfo {
             ctx,
@@ -1372,14 +1380,14 @@ impl<'a> MediaBrowser<'a> {
             queue_sx,
             queue_rx,
             image_dirs: self.image_dirs,
-            base_image_kind: BaseImageKind::Pick { dir: pick_image_dir, image_file_name: pick_image_file_name.clone() },
+            base_image_kind: BaseImageKind::Pick { path: path.clone() },
             grid_cell_size: self.grid_cell_size,
             force_resize_grid_images: false,
             details_cell_size: self.details_cell_size,
             force_resize_details_images: false,
             ferry_image_infos: vec![
                 FerryImageInfo {
-                    image_file_name,
+                    image_file_name: new_image_file_name,
                     expected_hash: None,
                     grid_entry_i: self.grid_entry_i,
                     grid_image_state_sx,
@@ -1390,9 +1398,15 @@ impl<'a> MediaBrowser<'a> {
         ferry_images(ferry_images_info);
 
         self.thread_pool.spawn(move || {
-            _ = fs::copy(path.as_path(), image_path.as_path()).inspect_err(|err| {
+            _ = fs::copy(&path, &base_image_path).inspect_err(|err| {
                 error!("{}: failed to copy image to cache: {}: {}", module_path!(), path.display(), err);
             });
+
+            if let Some(remove_image_path) = remove_image_path {
+                _ = fs::remove_file(&remove_image_path).inspect_err(|err| {
+                    error!("{}: failed to remove image: {}: {}", module_path!(), remove_image_path.display(), err);
+                });
+            }
         });
 
         Ok(())
