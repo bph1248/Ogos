@@ -654,6 +654,7 @@ struct MediaBrowser<'a> {
     grid_cell_size: egui::Vec2,
     grid_cell_i: usize,
     grid_selected_cell_i: Option<usize>,
+    grid_scroll_offset: f32,
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
     active_tag: Option<Rc<str>>,
     active_view: Vec<usize>, // Indices into grid_entries
@@ -979,6 +980,7 @@ impl<'a> MediaBrowser<'a> {
             grid_cell_size,
             grid_cell_i: default!(),
             grid_selected_cell_i: default!(),
+            grid_scroll_offset: default!(),
             tags,
             active_tag: default!(),
             active_view: default!(),
@@ -1163,10 +1165,11 @@ impl<'a> MediaBrowser<'a> {
             let row_cell_count = row_cell_count.clamp(1, max_cell_count);
             let max_row_count = max_cell_count.div_ceil(row_cell_count);
 
-            egui::ScrollArea::new([false, true])
+            self.grid_scroll_offset = egui::ScrollArea::new([false, true])
                 .auto_shrink(false)
                 .scroll_source(egui::scroll_area::ScrollSource::SCROLL_BAR | egui::scroll_area::ScrollSource::MOUSE_WHEEL)
                 .wheel_scroll_multiplier([1.0, self.vscroll_multiplier].into())
+                .vertical_scroll_offset(self.grid_scroll_offset)
                 .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
                     let available_rect = ui.available_rect_before_wrap();
 
@@ -1188,7 +1191,8 @@ impl<'a> MediaBrowser<'a> {
                             self.active_tag = None;
                         }
                     });
-                });
+                })
+                .state.offset.y;
         });
     }
 
