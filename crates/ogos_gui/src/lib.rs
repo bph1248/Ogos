@@ -379,7 +379,9 @@ fn ferry_images(info: FerryImagesInfo) {
         image_dirs,
         base_image_kind,
         grid_cell_size,
+        force_resize_grid_images,
         details_cell_size,
+        force_resize_details_images,
         ferry_image_infos
     } = info;
 
@@ -426,8 +428,15 @@ fn ferry_images(info: FerryImagesInfo) {
                         queue_ferry_base_image(queue_sx, base_image_path, details_image_path, details_cell_size, details_image_state_sx);
                     },
                     false => {
-                        ferry_cached_image(grid_image_path, grid_image_state_sx)?;
-                        queue_ferry_cached_image(queue_sx, details_image_path, details_image_state_sx);
+                        match force_resize_grid_images {
+                            true => ferry_base_image(base_image_path.as_path(), grid_image_path, grid_cell_size, grid_image_state_sx)?,
+                            false => ferry_cached_image(grid_image_path, grid_image_state_sx)?
+                        }
+
+                        match force_resize_details_images {
+                            true => queue_ferry_base_image(queue_sx, base_image_path, details_image_path, details_cell_size, details_image_state_sx),
+                            false => queue_ferry_cached_image(queue_sx, details_image_path, details_image_state_sx)
+                        }
                     }
                 }
 
@@ -532,7 +541,9 @@ struct FerryImagesInfo<'a> {
     image_dirs: &'static ImageDirs,
     base_image_kind: BaseImageKind,
     grid_cell_size: egui::Vec2,
+    force_resize_grid_images: bool,
     details_cell_size: egui::Vec2,
+    force_resize_details_images: bool,
     ferry_image_infos: Vec<FerryImageInfo>
 }
 
@@ -940,7 +951,9 @@ impl<'a> MediaBrowser<'a> {
             image_dirs,
             base_image_kind: BaseImageKind::Startup,
             grid_cell_size,
+            force_resize_grid_images: cache.grid_cell_size != grid_cell_size,
             details_cell_size,
+            force_resize_details_images: cache.details_cell_size != details_cell_size,
             ferry_image_infos
         };
         ferry_images(ferry_images_info);
@@ -1361,7 +1374,9 @@ impl<'a> MediaBrowser<'a> {
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Pick { dir: pick_image_dir, image_file_name: pick_image_file_name.clone() },
             grid_cell_size: self.grid_cell_size,
+            force_resize_grid_images: false,
             details_cell_size: self.details_cell_size,
+            force_resize_details_images: false,
             ferry_image_infos: vec![
                 FerryImageInfo {
                     image_file_name,
