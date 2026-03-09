@@ -32,6 +32,7 @@ use nvapi_sys_new as nvapi_530;
 use nvapi_530::*;
 use once_cell::sync::*;
 use std::{
+    ffi::*,
     fmt::{self, *},
     process::*,
     ptr,
@@ -82,8 +83,11 @@ struct _NV_GPU_DITHER_CONTROL_V1 {
 }
 type NV_GPU_DITHER_CONTROL = _NV_GPU_DITHER_CONTROL_V1;
 
+#[repr(transparent)]
+struct NvPhysicalGpuHandleFfi(*const c_void);
+
 type NvAPI_GPU_SetDitherControl_fn = unsafe extern "C" fn(
-    hPhysicalGpu: NvPhysicalGpuHandle,
+    hPhysicalGpu: NvPhysicalGpuHandleFfi,
     output_id: NvU32,
     state: NV_DITHER_STATE,
     bits: NV_DITHER_BITS,
@@ -550,7 +554,9 @@ fn set_dither_control(gpu_hnd: NvPhysicalGpuHandle, display_id: NvU32, state: Di
         return Ok(None)
     }
 
-    (*NVAPI_GPU_SET_DITHER_CONTROL_FN)(gpu_hnd, display_id, *state, *bit_depth, *mode).nvapi_ok()?;
+    let gpu_hnd_raw = &gpu_hnd as *const _ as *const c_void;
+    let gpu_hnd_ffi = NvPhysicalGpuHandleFfi(gpu_hnd_raw);
+    (*NVAPI_GPU_SET_DITHER_CONTROL_FN)(gpu_hnd_ffi, display_id, *state, *bit_depth, *mode).nvapi_ok()?;
 
     info!("{}: dither: state: {}, bit depth: {}, mode: {}", module_path!(), state, bit_depth, mode);
 
