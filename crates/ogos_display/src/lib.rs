@@ -6,7 +6,6 @@ use ogos_common::{
     *
 };
 use ogos_config as config;
-use config::*;
 use ogos_core::*;
 use ogos_err::*;
 
@@ -34,12 +33,8 @@ use once_cell::sync::*;
 use std::{
     ffi::*,
     fmt::{self, *},
-    process::*,
-    ptr,
-    thread,
-    time::*
+    ptr
 };
-use sysinfo::*;
 use widestring::*;
 use windows::Win32::{
     Devices::Display::*,
@@ -204,38 +199,10 @@ pub enum SetDisplayModeOp {
     Toggle
 }
 
-enum WallpaperEngineArg {
-    Play,
-    Stop
-}
-impl WallpaperEngineArg {
-    fn as_str(&self) -> &str {
-        match self {
-            Self::Play => "play",
-            Self::Stop => "stop"
-        }
-    }
-}
-impl Display for WallpaperEngineArg {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
 pub fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>) -> Res2<()> { unsafe {
-    let system = (|| -> Res<Option<System>> {
-        if let Some(prelude) = prelude {
-            if prelude.let_walk_away { let_walk_away()?; }
-            if prelude.pause_wallpaper_engine {
-                let mut system = System::new();
-                control_wallpaper_engine(WallpaperEngineArg::Stop, &mut system)?;
-
-                return Ok(Some(system))
-            }
-        }
-
-        Ok(None)
-    })()?;
+    if let Some(prelude) = prelude && prelude.let_walk_away {
+        let_walk_away()?;
+    }
 
     let path = get_first_display_path()?;
     let friendly_name = get_display_friendly_name(path)?;
@@ -272,39 +239,12 @@ pub fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>) -> Res2<()> 
             monitor.set_vcp_feature(VCP_FEATURE_PIXEL_CLEANING, vcp_value)?;
 
             info!("{}: enable pixel cleaning: vcp {:#x}: {:#x}", module_path!(), VCP_FEATURE_PIXEL_CLEANING, vcp_value);
-
-            if let Some(mut system) = system {
-                thread::spawn(move || {
-                    thread::sleep(Duration::from_secs(420));
-
-                    control_wallpaper_engine(WallpaperEngineArg::Play, &mut system).unwrap_or_else(|err| {
-                        error!("{}: failed to resume wallpaper engine after pixel cleaning: {}", module_path!(), err);
-                    });
-                });
-            }
         },
         _ => Err(ErrVar::InvalidPixelCleaningVcpValue { vcp_value })?
     }
 
     Ok(())
 } }
-
-fn control_wallpaper_engine(arg: WallpaperEngineArg, system: &mut System) -> Res1<()> {
-    if get_first_process(App::WALLPAPER_ENGINE, system).is_some() {
-        let config = config::get().read()?;
-        let wallpaper_engine_path = confirm_or_find_app(App::WALLPAPER_ENGINE, config.app_paths.wallpaper_engine.as_ref())?;
-
-        drop(config);
-
-        let mut cmd = Command::new(wallpaper_engine_path);
-        cmd.args(["-control", arg.as_str()]);
-
-        output_command(&mut cmd)?;
-        info!("{}: wallpaper engine: {}", module_path!(), arg);
-    }
-
-    Ok(())
-}
 
 fn control_windows(arg: ControlWindowsArg) -> Res1<()> { unsafe {
     let taskbar_class_name = window_foreground::TASKBAR_CLASS_NAME.to_win_str();

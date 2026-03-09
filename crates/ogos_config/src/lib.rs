@@ -353,8 +353,7 @@ impl_name!(Taskbar);
 #[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PixelCleaning {
-    pub let_walk_away: bool,
-    pub pause_wallpaper_engine: bool
+    pub let_walk_away: bool
 }
 
 const fn reshade_layer_path() -> &'static str { r"C:\ProgramData\ReShade\ReShade64.json" }
@@ -657,8 +656,7 @@ pub struct AppPaths<'a> {
     pub novideo_srgb: Option<&'a str>,
     pub skif: Option<&'a str>,
     #[serde(default = "steam")]
-    pub steam: &'a str,
-    pub wallpaper_engine: Option<&'a str>
+    pub steam: &'a str
 }
 
 #[derive(Deserialize)]

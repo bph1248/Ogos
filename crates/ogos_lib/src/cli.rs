@@ -39,10 +39,11 @@ pub(crate) struct Cli {
     pub(crate) help: bool,
 
     #[arg(help =
-        "Parse an arg file or launch a video file.\n\
+        "Parse an arg file or launch a video with mpv.\n\
         \n\
-        If PATH is a video file, launch it with Mpv. Valid video file extensions are m2ts, mkv, mp4, mts, ts, and webm.\n\
-        If ffprobe is available, set display mode and default audio endpoint sample rate to match video metadata."
+        Arg files follow Python's fromfile format and use the .ogos extension.
+        \n\
+        Valid video file extensions are m2ts, mkv, mp4, mts, ts, and webm. On launch, set display mode, default audio endpoint sample rate, and tone mapping parameters to match video metadata."
     )]
     pub(crate) path: Option<String>,
 
@@ -55,7 +56,7 @@ pub(crate) struct Cli {
     pub(crate) set_endpoint: Option<String>,
     #[arg(long = EQ, name = EQ, help = "Set the current Equalizer APO config")]
     pub(crate) set_eq: Option<String>,
-    #[arg(long, help = "Toggle display mode and set color bit depth, dither state, and novideo_srgb state")]
+    #[arg(long, help = "Enable/disable HDR mode and set color bit depth, dither state, and novideo_srgb state.")]
     pub(crate) toggle_display_mode: bool,
     #[arg(long, alias = "clamp")]
     pub(crate) novideo_srgb: Option<NovideoSrgbOp>,
