@@ -1375,7 +1375,6 @@ impl<'a> MediaBrowser<'a> {
         self.grid_entries[self.grid_entry_i].image_file_name_i = Some(image_file_name_i);
 
         let base_image_path = self.image_dirs.base.join(new_image_file_name.as_ref());
-        let remove_image_path = prev_image_file_name.map(|prev_image_file_name| self.image_dirs.base.join(prev_image_file_name.as_ref()));
 
         let ferry_images_info = FerryImagesInfo {
             ctx,
@@ -1401,15 +1400,23 @@ impl<'a> MediaBrowser<'a> {
         };
         ferry_images(ferry_images_info);
 
+        let image_dirs = self.image_dirs;
         self.thread_pool.spawn(move || {
             _ = fs::copy(&path, &base_image_path).inspect_err(|err| {
                 error!("{}: failed to copy image to cache: {}: {}", module_path!(), path.display(), err);
             });
 
-            if let Some(remove_image_path) = remove_image_path {
-                _ = fs::remove_file(&remove_image_path).inspect_err(|err| {
-                    error!("{}: failed to remove image: {}: {}", module_path!(), remove_image_path.display(), err);
-                });
+            if let Some(prev_image_file_name) = prev_image_file_name {
+                let paths = [
+                    image_dirs.base.join(prev_image_file_name.as_ref()),
+                    image_dirs.grid.join(prev_image_file_name.as_ref()).with_added_extension("webp"),
+                    image_dirs.details.join(prev_image_file_name.as_ref()).with_added_extension("webp")
+                ];
+                for path in paths {
+                    _ = fs::remove_file(&path).inspect_err(|err| {
+                        error!("{}: failed to remove image: {}: {}", module_path!(), path.display(), err);
+                    });
+                }
             }
         });
 
