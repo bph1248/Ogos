@@ -80,7 +80,7 @@ pub enum Msg {
     Close
 }
 
-pub fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfoView) -> Res<()> {
+pub fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordActivityInfoView, display_kind: DiscordDisplayKind) -> Res<()> {
     info!("{}: begin", module_path!());
 
     ipc_client.connect()?;
@@ -90,7 +90,7 @@ pub fn begin(ipc_client: &mut DiscordIpcClient, info: &DiscordInfoView) -> Res<(
         .activity_type(info.activity.into())
         .timestamps(Timestamps::new().start(time_start))
         .details(info.details)
-        .status_display_type(info.display_kind.into());
+        .status_display_type(display_kind.into());
 
     if let Some(state) = info.state {
         activity = activity.state(state);

@@ -64,6 +64,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
         let games_config = config.games.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Games::NAME })?;
         let game_info = games_config.0.get(name).ok_or_else(|| ErrVar::UnknownGame { name: name.into() })?;
         let discord_info = game_info.discord.clone();
+        let discord_display_kind = config.discord.display_kind;
 
         pipe_msg(pipe_server::Msg::ActiveGame(Some(game_info.proc.into())))?;
         revert_to.push(Setting::ActiveGame);
@@ -258,7 +259,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                             let chess_username = discord_info.chess_username.ok_or(ErrVar::MissingUsername)?;
                             discord::spawn_scoped_chess(s, &mut ipc_client, large_image, chess_username, rx);
 
-                            gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;
+                            gui::begin(gui::Kind::Discord { name: name.into(), info: discord_info })?;
 
                             discord_sx.send(discord::Msg::Close)?;
 
@@ -266,9 +267,9 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                         })?;
                     },
                     _ => {
-                        discord::begin(&mut ipc_client, &discord_info)?;
+                        discord::begin(&mut ipc_client, &discord_info, discord_display_kind)?;
 
-                        gui::begin(gui::Kind::Discord { name: name.into(), discord_info })?;
+                        gui::begin(gui::Kind::Discord { name: name.into(), info: discord_info })?;
                     }
                 }
 

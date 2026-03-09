@@ -413,23 +413,21 @@ impl From<DiscordActivity> for drpa::ActivityType {
     }
 }
 
-pub struct DiscordInfo {
+pub struct DiscordActivityInfo {
     pub client_id: String,
     pub activity: DiscordActivity,
     pub details: String,
     pub state: Option<String>,
-    pub display_kind: DiscordDisplayKind,
     pub large_image: Option<String>,
     pub chess_username: Option<String>
 }
-impl DiscordInfo {
-    pub fn as_view(&self) -> DiscordInfoView<'_> {
-        DiscordInfoView {
+impl DiscordActivityInfo {
+    pub fn as_view(&self) -> DiscordActivityInfoView<'_> {
+        DiscordActivityInfoView {
             client_id: self.client_id.as_str(),
             activity: self.activity,
             details: self.details.as_str(),
             state: self.state.as_deref(),
-            display_kind: self.display_kind,
             large_image: self.large_image.as_deref(),
             chess_username: self.chess_username.as_deref()
         }
@@ -438,13 +436,11 @@ impl DiscordInfo {
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DiscordInfoView<'a> {
+pub struct DiscordActivityInfoView<'a> {
     pub client_id: &'a str,
     pub activity: DiscordActivity,
     pub details: &'a str,
     pub state: Option<&'a str>,
-    #[serde(default)]
-    pub display_kind: DiscordDisplayKind,
     pub large_image: Option<&'a str>,
     pub chess_username: Option<&'a str>
 }
@@ -457,7 +453,7 @@ pub struct GameInfo<'a> {
     pub args: Option<Vec<&'a str>>,
     pub cursor_size: Option<usize>,
     pub res: Option<Extent2dU>,
-    pub discord: Option<DiscordInfoView<'a>>
+    pub discord: Option<DiscordActivityInfoView<'a>>
 }
 
 #[derive(Deserialize)]

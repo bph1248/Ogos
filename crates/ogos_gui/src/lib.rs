@@ -57,7 +57,7 @@ struct DirEntryInfo {
 }
 
 pub enum Kind {
-    Discord { name: String, discord_info: DiscordInfoView<'static> },
+    Discord { name: String, info: DiscordActivityInfoView<'static> },
     MediaBrowser
 }
 
@@ -84,13 +84,13 @@ fn to_discord_asset_name(s: impl AsRef<str>) -> String {
 
 struct Discord {
     name: String,
-    discord_info: DiscordInfoView<'static>
+    info: DiscordActivityInfoView<'static>
 }
 impl Discord {
-    fn new(_cctx: &eframe::CreationContext<'_>, name: String, discord_info: DiscordInfoView<'static>) -> Self {
+    fn new(_cctx: &eframe::CreationContext<'_>, name: String, info: DiscordActivityInfoView<'static>) -> Self {
         Self {
             name,
-            discord_info
+            info
         }
     }
 }
@@ -104,7 +104,7 @@ impl eframe::App for Discord {
 
                 ui.separator();
 
-                let text_edit = egui::TextEdit::singleline(&mut self.discord_info.details).desired_width(f32::INFINITY);
+                let text_edit = egui::TextEdit::singleline(&mut self.info.details).desired_width(f32::INFINITY);
                 let details = ui.label("Details");
 
                 ui.add(text_edit).labelled_by(details.id);
@@ -158,13 +158,13 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
     })
 }
 
-fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordInfo>) {
+fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind) {
     thread::spawn(move || {
         (|| -> Res<()> {
             let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
                 let mut ipc_client = DiscordIpcClient::new(discord_info.client_id.as_str());
 
-                discord::begin(&mut ipc_client, &discord_info.as_view())?;
+                discord::begin(&mut ipc_client, &discord_info.as_view(), discord_display_kind)?;
 
                 Ok(ipc_client)
             })
@@ -1605,7 +1605,8 @@ impl<'a> MediaBrowser<'a> {
                                     self.details_dir_entries[i].file_kind,
                                     self.maintain_sample_rate,
                                     self.use_glsl_shaders,
-                                    discord_info
+                                    discord_info,
+                                    self.discord_display_kind
                                 );
                             }
                         }
@@ -1614,10 +1615,10 @@ impl<'a> MediaBrowser<'a> {
             });
     }
 
-    fn make_discord_info(&self, i: usize) -> config::DiscordInfo {
+    fn make_discord_info(&self, i: usize) -> config::DiscordActivityInfo {
         let dir_name = &self.grid_entries[self.details_grid_entry_i].stem;
 
-        config::DiscordInfo {
+        config::DiscordActivityInfo {
             client_id: match self.discord_watching {
                 Watching::Movie => self.discord_app_ids.movies.unwrap().to_string(), // App ID is Some when Discord is enabled
                 Watching::TV => self.discord_app_ids.tv.unwrap().to_string(),
@@ -1637,7 +1638,6 @@ impl<'a> MediaBrowser<'a> {
                     false => self.discord_state.clone()
                 }
             }),
-            display_kind: self.discord_display_kind,
             large_image: match self.discord_watching {
                 Watching::TV => Some(to_discord_asset_name(dir_name)),
                 _ => Some(to_discord_asset_name(self.details_dir_entries[i].stem.as_str()))
@@ -1789,7 +1789,7 @@ pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
             cctx.egui_ctx.set_style(style);
 
             Ok(match kind {
-                Kind::Discord { name, discord_info } => Box::new(Discord::new(cctx, name, discord_info)),
+                Kind::Discord { name, info } => Box::new(Discord::new(cctx, name, info)),
                 Kind::MediaBrowser => Box::new(MediaBrowser::new(&cctx.egui_ctx)?)
             })
         })
