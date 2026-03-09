@@ -1554,7 +1554,7 @@ impl<'a> MediaBrowser<'a> {
         self.details_context_menu(&total_alloc_resp);
 
         ui.ctx().input(|state| {
-            if state.pointer.button_released(egui::PointerButton::Extra1) {
+            if state.pointer.button_released(egui::PointerButton::Extra1) || state.key_pressed(egui::Key::Escape) {
                 if self.details_levels.is_empty() {
                     self.view_kind = ViewKind::Grid;
 
