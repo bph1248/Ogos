@@ -134,7 +134,7 @@ pub fn set_endpoint(name: &str) -> Res<()> { unsafe {
     let config = config::get().read()?;
     let apps = config.audio.as_ref().and_then(|audio_config| audio_config.endpoint_apps.as_ref());
     if let Some(apps) = apps &&
-        let Some(app) = apps.0.get(name)
+        let Some(app) = apps.get(name)
     {
         let mut cmd = Command::new(app.path);
         cmd.args(&app.args);

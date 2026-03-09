@@ -620,14 +620,10 @@ impl<'a> App<'a> {
 }
 
 #[derive(Deserialize)]
-#[serde(transparent)]
-pub struct EndpointApps<'a>(#[serde(borrow)] pub HashMap<&'a str, App<'a>>);
-
-#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Audio<'a> {
     #[serde(borrow)]
-    pub endpoint_apps: Option<EndpointApps<'a>>,
+    pub endpoint_apps: Option<HashMap<&'a str, App<'a>>>,
     pub eq_apo: Option<EqApo<'a>>
 }
 
