@@ -283,10 +283,11 @@ fn criteria_text_matches(criteria: &Criteria, win_text: &WindowText) -> bool {
     }
 }
 
-fn left_button_is_down() -> bool { unsafe {
-    const MSB: u16 = 0x8000;
+fn disabling_key_held() -> bool { unsafe {
+    let lbutton = GetAsyncKeyState(i32::from(VK_LBUTTON.0));
+    let lcontrol = GetAsyncKeyState(i32::from(VK_LCONTROL.0));
 
-    GetAsyncKeyState(i32::from(VK_LBUTTON.0)) as u16 & MSB == MSB
+    lbutton.min(lcontrol) < 0
 } }
 
 fn top_level_window_relation_found(tid_of: HWND, owned_by: Option<HWND>, criteria: &Criteria) -> Res2<bool> { unsafe {
@@ -628,7 +629,7 @@ fn begin(rx: Receiver<Msg>) -> Res<()> { unsafe {
             Ok(_) => {
                 let fg_hwnd = GetForegroundWindow();
 
-                if left_button_is_down() ||
+                if disabling_key_held() ||
                     fg_hwnd.is_invalid() ||
                     foreground_disallows_shift(fg_hwnd, ts.screen_extent)
                         .inspect_err(|err| warn!("{}: failed to determine if foreground disallows shift - allowing: {}", module_path!(), err))
