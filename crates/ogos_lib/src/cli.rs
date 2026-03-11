@@ -11,6 +11,7 @@ use std::{
 const ENDPOINT: &str = "endpoint";
 const EQ: &str = "eq";
 const GAME: &str = "game";
+const STATE: &str = "state";
 
 #[derive(Clone, ValueEnum)]
 pub(crate) enum NovideoSrgbOp {
@@ -20,15 +21,15 @@ pub(crate) enum NovideoSrgbOp {
 #[derive(Args)]
 #[group(requires = GAME, multiple = true)]
 pub(crate) struct Gaming {
-    #[arg(long = "cursor-size", alias = "cursor", help = concatcp!("Set the cursor size before launching a game. Requires --", GAME, ". Reverts on game exit"))]
+    #[arg(long = "cursor-size", visible_alias = "cursor", help = concatcp!("Set the cursor size on game launch. Requires --", GAME, ". Reverts on exit."))]
     pub(crate) set_cursor_size: bool,
-    #[arg(long = "hdr", help = concatcp!("Switch to HDR mode before launching a game. Requires --", GAME, ". Reverts on game exit"))]
+    #[arg(long = "hdr", help = concatcp!("Switch to HDR mode on game launch. Requires --", GAME, ". Reverts on exit."))]
     pub(crate) set_display_mode_hdr: bool,
-    #[arg(long = "res", help = concatcp!("Set the desktop resolution before launching a game. Requires --", GAME, ". Reverts on game exit"))]
+    #[arg(long = "res", help = concatcp!("Set the desktop resolution on game launch. Requires --", GAME, ". Reverts on exit."))]
     pub(crate) set_res: bool,
-    #[arg(long, help = concatcp!("Affinitize a game process to run on every other hardware thread (ie. soft-disable SMT/Hyperthreading). Requires --", GAME, ". Reverts on game exit"))]
+    #[arg(long, help = concatcp!("Affinitize a game process to run on every other hardware thread (i.e. soft-disable SMT/Hyperthreading). Requires --", GAME, "."))]
     pub(crate) stagger: bool,
-    #[arg(long = "special-k", alias = "sk", help = concatcp!("Launch a game via SKIF (Special K Injection Frontend). Requires --", GAME))]
+    #[arg(long = "special-k", visible_alias = "sk", help = concatcp!("Launch a game via SKIF (Special K Injection Frontend). Requires --", GAME, "."))]
     pub(crate) use_special_k: bool
 }
 
@@ -47,34 +48,34 @@ pub(crate) struct Cli {
     )]
     pub(crate) path: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, help = "Launch the media browser.")]
     pub(crate) media_browser: bool,
 
-    #[arg(long, help = "Prevent setting the sample rate of the default audio endpoint to match video metadata")]
+    #[arg(long, help = "Temporarily prevent setting the default audio endpoint sample rate to match video metadata.")]
     pub(crate) maintain_sample_rate: bool,
-    #[arg(long = ENDPOINT, name = ENDPOINT, help = "Set the default audio endpoint")]
+    #[arg(long = ENDPOINT, name = "device", help = concatcp!("Set the default audio endpoint device, where <device> is listed in System > Sound > Output."))]
     pub(crate) set_endpoint: Option<String>,
-    #[arg(long = EQ, name = EQ, help = "Set the current Equalizer APO config")]
+    #[arg(long = EQ, name = EQ, help = concatcp!("Overwrite the master Equalizer APO config file, where <", EQ, "> is a config-defined custom config path."))]
     pub(crate) set_eq: Option<String>,
     #[arg(long, help = "Enable/disable HDR mode and set color bit depth, dither state, and novideo_srgb state.")]
     pub(crate) toggle_display_mode: bool,
-    #[arg(long, alias = "clamp")]
+    #[arg(long, name = STATE, visible_alias = "clamp", hide_possible_values = true, help = concatcp!("Set novideo_srgb's color space clamp, where <", STATE, "> is either on or off."))]
     pub(crate) novideo_srgb: Option<NovideoSrgbOp>,
 
-    #[arg(long = GAME, name = GAME, help = "Launch a game")]
+    #[arg(long = GAME, name = GAME, help = concatcp!("Launch a game, where <", GAME, "> is a config-defined set of launch parameters and additional settings."))]
     pub(crate) launch_game: Option<String>,
     #[command(flatten)]
     pub(crate) gaming: Gaming,
     //
-    #[arg(long, help = "Enable global hotkeys and dynamic keymaps")]
+    #[arg(long, help = "Enable global hotkeys and dynamic keymaps.")]
     pub(crate) binds: bool,
 
     #[arg(long, help =
-        "Manage taskbar visibility by monitoring collisions between the mouse cursor and an invisible, always-on-top window, or 'hitbox'.\n\
-        If the foreground window is full screen, the hitbox is disabled"
+        "Manage taskbar visibility by monitoring cursor collisions against an invisible window or 'hitbox'.\n\
+        The hitbox is disabled if the foreground window is full screen."
     )]
     pub(crate) taskbar: bool,
-    #[arg(long, help = "Periodically 'pixel-shift' desktop windows. Shifting is disabled if the foreground window is full screen, or the left mouse button is held down")]
+    #[arg(long, help = "Periodically 'pixel-shift' windows about the desktop. Shifting is disabled if the foreground window is full screen, or the left mouse button is held down.")]
     pub(crate) window_shift: bool
 }
 
@@ -98,7 +99,7 @@ pub(crate) fn parse_cli() -> Res<(Cli, CliPathKind)> {
         {
             let arg_file_path = maybe_arg_file_path; // No longer a maybe
             let prefixed_arg_file_path = OsString::from( // Let the expander know this is an arg file
-                format!("{}{}", argfile::PREFIX, arg_file_path.to_str().ok_or(ErrVar::FailedToStr)?)
+                format!("{}{}", argfile::PREFIX, arg_file_path.display())
             );
             let head = [probably_current_exe_path, arg_file_path, prefixed_arg_file_path];
             let unexpanded_args = head.iter().cloned().chain(args_os); // Chain remaining os args onto head
