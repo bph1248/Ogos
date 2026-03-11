@@ -31,7 +31,7 @@ const fn novideo_srgb_enable_clamp() -> bool { true }
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NovideoSrgbInfo<'a> {
-    #[serde(default = "novideo_srgb_enable_clamp")]
+    #[serde(default = "novideo_srgb_enable_clamp", skip)]
     pub enable_clamp: bool,
     #[serde(borrow, rename = "primaries")]
     pub primaries_source: PrimariesSource<'a>,

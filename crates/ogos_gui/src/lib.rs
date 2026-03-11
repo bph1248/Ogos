@@ -162,7 +162,7 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
     thread::spawn(move || {
         (|| -> Res<()> {
             let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
-                let mut ipc_client = DiscordIpcClient::new(discord_info.client_id.as_str());
+                let mut ipc_client = DiscordIpcClient::new(discord_info.app_id.as_str());
 
                 discord::begin(&mut ipc_client, &discord_info.as_view(), discord_display_kind)?;
 
@@ -670,7 +670,7 @@ struct MediaBrowser<'a> {
     details_cell_size: egui::Vec2,
     details_hovered_dir_entry_i: usize,
     details_levels: Vec<PathBuf>,
-    vscroll_multiplier: f32,
+    scroll_multiplier: f32,
     maintain_sample_rate: bool,
     use_glsl_shaders: bool,
     discord_app_ids: DiscordAppIds<'a>,
@@ -820,7 +820,7 @@ impl<'a> MediaBrowser<'a> {
         let (media_dirs,
             grid_cell_width,
             details_cell_width,
-            vscroll_multiplier
+            scroll_multiplier
         ) = config.media_browser.as_ref()
             .map(|media_browser_config| {
                 #[allow(clippy::cast_precision_loss)]
@@ -828,7 +828,7 @@ impl<'a> MediaBrowser<'a> {
                     &media_browser_config.dirs,
                     media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
                     media_browser_config.details_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.vscroll_multiplier
+                    media_browser_config.scroll_multiplier
                 )
             })
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
@@ -996,7 +996,7 @@ impl<'a> MediaBrowser<'a> {
             details_cell_size,
             details_hovered_dir_entry_i: default!(),
             details_levels: Vec::with_capacity(16),
-            vscroll_multiplier,
+            scroll_multiplier,
             maintain_sample_rate: default!(),
             use_glsl_shaders: default!(),
             discord_app_ids,
@@ -1182,7 +1182,7 @@ impl<'a> MediaBrowser<'a> {
             self.grid_scroll_offset = egui::ScrollArea::new([false, true])
                 .auto_shrink(false)
                 .scroll_source(egui::scroll_area::ScrollSource::SCROLL_BAR | egui::scroll_area::ScrollSource::MOUSE_WHEEL)
-                .wheel_scroll_multiplier([1.0, self.vscroll_multiplier].into())
+                .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
                 .vertical_scroll_offset(self.grid_scroll_offset)
                 .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
                     let available_rect = ui.available_rect_before_wrap();
@@ -1545,7 +1545,7 @@ impl<'a> MediaBrowser<'a> {
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(right_subd_rect), |ui| {
             egui::ScrollArea::vertical()
-                .wheel_scroll_multiplier([1.0, self.vscroll_multiplier].into())
+                .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
                 .show(ui, |ui| {
                     let button_height = ui.spacing().interact_size.y;
                     let button_spacing = ui.spacing().item_spacing[1];
@@ -1636,7 +1636,7 @@ impl<'a> MediaBrowser<'a> {
         let dir_name = &self.grid_entries[self.details_grid_entry_i].stem;
 
         config::DiscordActivityInfo {
-            client_id: match self.discord_watching {
+            app_id: match self.discord_watching {
                 Watching::Movie => self.discord_app_ids.movies.unwrap().to_string(), // App ID is Some when Discord is enabled
                 Watching::TV => self.discord_app_ids.tv.unwrap().to_string(),
                 Watching::Words => self.discord_app_ids.words.unwrap().to_string()

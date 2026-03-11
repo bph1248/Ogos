@@ -287,6 +287,11 @@ pub struct Stride {
     pub x: u32,
     pub y: u32
 }
+impl Default for Stride {
+    fn default() -> Self {
+        Self { x: 1, y: 1 }
+    }
+}
 impl From<[u32; 2]> for Stride {
     fn from(value: [u32; 2]) -> Self {
         Self {
@@ -299,12 +304,13 @@ impl From<[u32; 2]> for Stride {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WindowShift<'a> {
+    #[serde(default)]
     pub enable_immersive_dark_mode: bool,
     #[serde(rename = "interval_s")]
     pub interval_dur: u32,
     #[serde(rename = "leeway_px")]
     pub leeway: u32,
-    #[serde(rename = "stride_px")]
+    #[serde(default, rename = "stride_px")]
     pub stride: Stride,
     #[serde(borrow)]
     pub constraints: HashMap<&'a str, Constraints<'a>>
@@ -379,7 +385,7 @@ pub struct Mpv<'a> {
 }
 impl_name!(Mpv, 'a);
 
-const fn vscroll_multiplier() -> f32 { 1.0 }
+const fn scroll_multiplier() -> f32 { 1.0 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -389,8 +395,8 @@ pub struct MediaBrowser<'a> {
     pub window_inner_size: Option<Extent2dU>,
     pub grid_cell_width: u32,
     pub details_cell_width: u32,
-    #[serde(default = "vscroll_multiplier")]
-    pub vscroll_multiplier: f32
+    #[serde(default = "scroll_multiplier")]
+    pub scroll_multiplier: f32
 }
 impl_name!(MediaBrowser, 'a);
 
@@ -414,7 +420,7 @@ impl From<DiscordActivity> for drpa::ActivityType {
 }
 
 pub struct DiscordActivityInfo {
-    pub client_id: String,
+    pub app_id: String,
     pub activity: DiscordActivity,
     pub details: String,
     pub state: Option<String>,
@@ -424,7 +430,7 @@ pub struct DiscordActivityInfo {
 impl DiscordActivityInfo {
     pub fn as_view(&self) -> DiscordActivityInfoView<'_> {
         DiscordActivityInfoView {
-            client_id: self.client_id.as_str(),
+            app_id: self.app_id.as_str(),
             activity: self.activity,
             details: self.details.as_str(),
             state: self.state.as_deref(),
@@ -437,7 +443,7 @@ impl DiscordActivityInfo {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DiscordActivityInfoView<'a> {
-    pub client_id: &'a str,
+    pub app_id: &'a str,
     pub activity: DiscordActivity,
     pub details: &'a str,
     pub state: Option<&'a str>,
@@ -572,8 +578,8 @@ pub enum Task {
 #[serde(deny_unknown_fields)]
 pub struct Hotkeys {
     #[serde(deserialize_with = "deserialize_keys")]
-    pub prefixes: Vec<Key>,
-    #[serde(deserialize_with = "deserialize_tasks")]
+    pub prefix: Vec<Key>,
+    #[serde(deserialize_with = "deserialize_tasks", rename = "triggers")]
     pub tasks: HashMap<Key, Task>
 }
 

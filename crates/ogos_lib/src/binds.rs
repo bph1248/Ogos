@@ -60,9 +60,9 @@ pub(crate) mod qmk_deser {
 mod trigger_watch {
     use super::*;
 
-    pub(crate) fn begin(hotkey_tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: Receiver<InputEvent>) {
+    pub(crate) fn begin(tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: Receiver<InputEvent>) {
         for trigger in rx.iter() {
-            if let InputEvent::Keyboard(key) = trigger && let Some(task) = hotkey_tasks.get(&key) {
+            if let InputEvent::Keyboard(key) = trigger && let Some(task) = tasks.get(&key) {
                 match task {
                     Task::BeginPixelCleaning => begin_pixel_cleaning(pixel_cleaning_prelude).unwrap_or_else(|err| {
                         error!("{}: failure during pixel cleaning: {}", module_path!(), err);
@@ -138,7 +138,7 @@ impl QmkRuntime {
 struct ThreadState {
     trigger_to_send: Option<InputEvent>,
     trigger_is_pressed: bool,
-    prefixes_pressed: HashSet<Key>
+    prefix_pressed: HashSet<Key>
 }
 
 struct TopLevelSiblingsInfo {
@@ -543,22 +543,22 @@ pub(crate) fn configure_static_binds() -> Res<()> {
         let (invoke_task_sx, rx) = mpsc::channel::<InputEvent>();
         thread::spawn(move || trigger_watch::begin(tasks, pixel_cleaning_prelude, rx));
 
-        for prefix in hotkeys.prefixes.iter() {
+        for key in hotkeys.prefix.iter() {
             let invoke_task_sx = invoke_task_sx.clone();
 
             let callback = Box::new(move |event, state| {
                 match state {
                     State::Pressed => if let InputEvent::Keyboard(key) = event {
                         THREAD_STATE.with_borrow_mut(|ts| {
-                            ts.prefixes_pressed.insert(key);
+                            ts.prefix_pressed.insert(key);
                         });
                     },
                     State::Released => THREAD_STATE.with_borrow_mut(|ts| {
                         if let InputEvent::Keyboard(key) = event {
-                            ts.prefixes_pressed.remove(&key);
+                            ts.prefix_pressed.remove(&key);
                         }
 
-                        if ts.prefixes_pressed.is_empty() && !ts.trigger_is_pressed && let Some(trigger) = ts.trigger_to_send.take() {
+                        if ts.prefix_pressed.is_empty() && !ts.trigger_is_pressed && let Some(trigger) = ts.trigger_to_send.take() {
                             invoke_task_sx.send(trigger).unwrap();
                         }
                     }),
@@ -573,13 +573,13 @@ pub(crate) fn configure_static_binds() -> Res<()> {
                 sequencer: false
             };
 
-            prefix.act_on(action);
+            key.act_on(action);
         }
 
-        let prefixes_len = hotkeys.prefixes.len();
-        let tasks_iter = hotkeys.tasks.keys();
+        let prefix_len = hotkeys.prefix.len();
+        let triggers_iter = hotkeys.tasks.keys();
 
-        for trigger in tasks_iter {
+        for key in triggers_iter {
             let invoke_task_sx = invoke_task_sx.clone();
 
             let callback = Box::new(move |event, state| {
@@ -587,14 +587,14 @@ pub(crate) fn configure_static_binds() -> Res<()> {
                     State::Pressed => THREAD_STATE.with_borrow_mut(|ts| {
                         ts.trigger_is_pressed = true;
 
-                        if ts.prefixes_pressed.len() == prefixes_len && ts.trigger_to_send.is_none() {
+                        if ts.prefix_pressed.len() == prefix_len && ts.trigger_to_send.is_none() {
                             ts.trigger_to_send = Some(event);
                         }
                     }),
                     State::Released => THREAD_STATE.with_borrow_mut(|ts| {
                         ts.trigger_is_pressed = false;
 
-                        if ts.prefixes_pressed.is_empty() && let Some(trigger) = ts.trigger_to_send.take() {
+                        if ts.prefix_pressed.is_empty() && let Some(trigger) = ts.trigger_to_send.take() {
                             invoke_task_sx.send(trigger).unwrap();
                         }
                     }),
@@ -608,7 +608,7 @@ pub(crate) fn configure_static_binds() -> Res<()> {
                 sequencer: false
             };
 
-            trigger.act_on(action);
+            key.act_on(action);
         }
     }
 

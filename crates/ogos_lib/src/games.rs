@@ -247,7 +247,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
 
         match discord_info {
             Some(discord_info) => {
-                let mut ipc_client = DiscordIpcClient::new(discord_info.client_id);
+                let mut ipc_client = DiscordIpcClient::new(discord_info.app_id);
 
                 info!("{}: calling discord and waiting for gui to terminate...", module_path!());
                 match name {
