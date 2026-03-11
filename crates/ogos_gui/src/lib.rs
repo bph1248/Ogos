@@ -1040,8 +1040,14 @@ impl<'a> MediaBrowser<'a> {
                         let (tag_rename_menu_open, tag_to_rename) = self.filter_win_tag_buttons(ui);
 
                         if let Some(tag_to_rename) = tag_to_rename {
+                            let tag_to_rename_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == &tag_to_rename).unwrap_or(false);
+
                             let set = self.tags.remove(&tag_to_rename).unwrap();
-                            let tag = Rc::from(self.tag_rename_edit.as_str());
+                            let tag: Rc<str> = Rc::from(self.tag_rename_edit.as_str());
+
+                            if tag_to_rename_is_active {
+                                self.active_tag = Some(tag.clone());
+                            }
                             self.tags.insert(tag, set);
 
                             self.tag_rename_edit.clear();
@@ -1119,7 +1125,7 @@ impl<'a> MediaBrowser<'a> {
             if !set.is_empty() {
                 let tag_button_resp = ui.button(tag.as_ref());
 
-                tag_rename_menu_open |= egui::Popup::context_menu(&tag_button_resp)
+                let tag_rename_menu = egui::Popup::context_menu(&tag_button_resp)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show(|ui| {
                         let tag_rename_edit_resp = egui::TextEdit::singleline(&mut self.tag_rename_edit)
@@ -1130,12 +1136,20 @@ impl<'a> MediaBrowser<'a> {
                         tag_rename_edit_resp.request_focus();
 
                         if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
-                            tag_to_rename = Some(tag.clone());
+                            if !self.tag_rename_edit.is_empty() {
+                                tag_to_rename = Some(tag.clone());
 
-                            ui.close();
+                                ui.close();
+                            } else {
+                                tag_rename_edit_resp.request_focus();
+                            }
                         }
-                    })
-                    .is_some();
+                    });
+
+                tag_rename_menu_open = tag_rename_menu.is_some();
+                if let Some(tag_rename_menu) = tag_rename_menu && tag_rename_menu.response.should_close() {
+                    self.filter_win_stamp = Some(now!());
+                }
 
                 if tag_button_resp.clicked() {
                     update_active_view(&mut self.active_view, set);
@@ -1432,11 +1446,14 @@ impl<'a> MediaBrowser<'a> {
                 .response;
 
             if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
-                self.tags.entry(Rc::from(self.tag_add_edit.as_str()))
-                    .and_modify(|set| _ = set.insert(cell_i))
-                    .or_insert([cell_i].into_iter().collect());
+                if !self.tag_add_edit.is_empty() {
+                    self.tags.entry(Rc::from(self.tag_add_edit.as_str()))
+                        .and_modify(|set| _ = set.insert(cell_i))
+                        .or_insert([cell_i].into_iter().collect());
 
-                self.tag_add_edit.clear();
+                    self.tag_add_edit.clear();
+                }
+
                 tag_add_edit_resp.request_focus();
             }
 
