@@ -424,8 +424,7 @@ pub struct DiscordActivityInfo {
     pub activity: DiscordActivity,
     pub details: String,
     pub state: Option<String>,
-    pub large_image: Option<String>,
-    pub chess_username: Option<String>
+    pub large_image: Option<String>
 }
 impl DiscordActivityInfo {
     pub fn as_view(&self) -> DiscordActivityInfoView<'_> {
@@ -434,8 +433,7 @@ impl DiscordActivityInfo {
             activity: self.activity,
             details: self.details.as_str(),
             state: self.state.as_deref(),
-            large_image: self.large_image.as_deref(),
-            chess_username: self.chess_username.as_deref()
+            large_image: self.large_image.as_deref()
         }
     }
 }
@@ -447,8 +445,7 @@ pub struct DiscordActivityInfoView<'a> {
     pub activity: DiscordActivity,
     pub details: &'a str,
     pub state: Option<&'a str>,
-    pub large_image: Option<&'a str>,
-    pub chess_username: Option<&'a str>
+    pub large_image: Option<&'a str>
 }
 
 #[derive(Deserialize)]
@@ -458,8 +455,7 @@ pub struct GameInfo<'a> {
     pub url: Option<&'a str>,
     pub args: Option<Vec<&'a str>>,
     pub cursor_size: Option<usize>,
-    pub res: Option<Extent2dU>,
-    pub discord: Option<DiscordActivityInfoView<'a>>
+    pub res: Option<Extent2dU>
 }
 
 #[derive(Deserialize)]

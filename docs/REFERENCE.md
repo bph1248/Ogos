@@ -64,11 +64,6 @@ Settings used in conjunction with `ogos --game <name>`, where `<name>` is an arb
 - `args`: A list of args to pass to the game.
 - `cursor_size`: The cursor size to set on on launch.
 - `res`: The desktop resolution to set on launch.
-- `discord`: Settings used to begin a Rich Presence activity on launch.
-    - `app_id`: The app ID used to connect to Discord (see [Discord](#discord)).
-    - `activity`: The type of activity.
-    - `details, state`: Some information about your activity.
-    - `large_image`: The name of an art asset to display.
 
 #### Media browser
 
@@ -271,19 +266,7 @@ Shift behavior can be customized with constraints. When the properties of a wind
             // Optional
             cursor_size: <uint>,
             // Optional
-            res: (<uint>, <uint>),
-            // Optional
-            discord: (
-                client_id: "<id>",
-                activity: <competing, listening, playing, watching>,
-                details: "<details>",
-                // Optional
-                state: "<state>",
-                // Optional
-                large_image: "<name>",
-                // Optional
-                chess_username: "<username>"
-            )
+            res: (<uint>, <uint>)
         ),
         ..
     },

@@ -1,6 +1,5 @@
 use crate::{
     cli::*,
-    gui,
     pipe_client::*,
     pipe_server,
     win32::*
@@ -9,17 +8,14 @@ use ogos_common::*;
 use ogos_config as config;
 use config::*;
 use ogos_core::*;
-use ogos_discord as discord;
 use ogos_display::*;
 use ogos_err::*;
 
 use concat_string::*;
-use discord_rich_presence::*;
 use log::*;
 use sysinfo::*;
 use std::{
     process::*,
-    sync::mpsc,
     thread,
     time::*
 };
@@ -35,7 +31,6 @@ use windows::Win32::{
 enum Setting {
     ActiveGame,
     CursorSize(usize),
-    Discord(DiscordIpcClient),
     DisplayMode(DisplayMode),
     ScreenExtent(Extent2dU)
 }
@@ -63,8 +58,6 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
         let config = config::get().read()?;
         let games_config = config.games.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Games::NAME })?;
         let game_info = games_config.0.get(name).ok_or_else(|| ErrVar::UnknownGame { name: name.into() })?;
-        let discord_info = game_info.discord.clone();
-        let discord_display_kind = config.discord.display_kind;
 
         pipe_msg(pipe_server::Msg::ActiveGame(Some(game_info.proc.into())))?;
         revert_to.push(Setting::ActiveGame);
@@ -245,47 +238,6 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
             });
         }
 
-        match discord_info {
-            Some(discord_info) => {
-                let mut ipc_client = DiscordIpcClient::new(discord_info.app_id);
-
-                info!("{}: calling discord and waiting for gui to terminate...", module_path!());
-                match name {
-                    "Chess" => {
-                        thread::scope(|s| -> Res<()> {
-                            let (discord_sx, rx) = mpsc::channel::<discord::Msg>();
-
-                            let large_image = discord_info.large_image;
-                            let chess_username = discord_info.chess_username.ok_or(ErrVar::MissingUsername)?;
-                            discord::spawn_scoped_chess(s, &mut ipc_client, large_image, chess_username, rx);
-
-                            gui::begin(gui::Kind::Discord { name: name.into(), info: discord_info })?;
-
-                            discord_sx.send(discord::Msg::Close)?;
-
-                            Ok(())
-                        })?;
-                    },
-                    _ => {
-                        discord::begin(&mut ipc_client, &discord_info, discord_display_kind)?;
-
-                        gui::begin(gui::Kind::Discord { name: name.into(), info: discord_info })?;
-                    }
-                }
-
-                revert_to.push(Setting::Discord(ipc_client));
-            },
-            _ => {
-                info!("{}: waiting for process to terminate...", module_path!());
-
-                let proc_hnd = OpenProcess(PROCESS_SYNCHRONIZE, false, pid.as_u32())?;
-                WaitForSingleObject(proc_hnd, INFINITE).win32_core_ok()?;
-
-                info!("{}: process no longer exists", module_path!());
-                CloseHandle(proc_hnd)?;
-            }
-        }
-
         Ok(())
     })();
 
@@ -295,10 +247,6 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                 Setting::ActiveGame => pipe_msg(pipe_server::Msg::ActiveGame(None))?,
                 Setting::CursorSize(size) => {
                     set_cursor_size(size)?;
-                },
-                Setting::Discord(mut ipc_client) => {
-                    ipc_client.clear_activity()?;
-                    ipc_client.close()?;
                 },
                 Setting::DisplayMode(display_mode) => {
                     set_display_mode(SetDisplayModeOp::Set(display_mode))?;

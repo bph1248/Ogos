@@ -354,7 +354,7 @@ fn begin(system: System) -> Res<()> {
     }
 
     if cli.media_browser {
-        gui::begin(gui::Kind::MediaBrowser).unwrap_or_else(|err| error!("{}: failed to launch media browser: {}", module_path!(), err));
+        gui::begin().unwrap_or_else(|err| error!("{}: failed to launch media browser: {}", module_path!(), err));
     }
 
     // Long-lived tasks

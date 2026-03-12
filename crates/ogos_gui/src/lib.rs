@@ -82,37 +82,6 @@ fn to_discord_asset_name(s: impl AsRef<str>) -> String {
         .collect()
 }
 
-struct Discord {
-    name: String,
-    info: DiscordActivityInfoView<'static>
-}
-impl Discord {
-    fn new(_cctx: &eframe::CreationContext<'_>, name: String, info: DiscordActivityInfoView<'static>) -> Self {
-        Self {
-            name,
-            info
-        }
-    }
-}
-impl eframe::App for Discord {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_pixels_per_point(1.0);
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::new([false, true]).show(ui, |ui| {
-                ui.heading(&self.name);
-
-                ui.separator();
-
-                let text_edit = egui::TextEdit::singleline(&mut self.info.details).desired_width(f32::INFINITY);
-                let details = ui.label("Details");
-
-                ui.add(text_edit).labelled_by(details.id);
-            });
-        });
-    }
-}
-
 fn sinc(x: f64) -> f64 {
     if x.abs() < 1e-6 {
         1.0
@@ -1679,8 +1648,7 @@ impl<'a> MediaBrowser<'a> {
             large_image: match self.discord_watching {
                 Watching::TV => Some(to_discord_asset_name(dir_name)),
                 _ => Some(to_discord_asset_name(dir_entry_info.stem.as_str()))
-            },
-            chess_username: None
+            }
         }
     }
 
@@ -1749,18 +1717,17 @@ impl<'a> MediaBrowser<'a> {
     }
 }
 
-pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
+pub fn begin() -> Res<(), { loc_var!(Gui) }> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_maximize_button(false);
-    if let Kind::MediaBrowser = kind {
-        let config = config::get().read()?;
 
-        if let Some(size) = config.media_browser.as_ref().and_then(|mb| mb.window_inner_size) {
-            #[allow(clippy::cast_precision_loss)]
-            let (width, height) = (size.width as f32, size.height as f32);
+    let config = config::get().read()?;
 
-            viewport = viewport.with_inner_size([width, height]);
-        }
+    if let Some(size) = config.media_browser.as_ref().and_then(|mb| mb.window_inner_size) {
+        #[allow(clippy::cast_precision_loss)]
+        let (width, height) = (size.width as f32, size.height as f32);
+
+        viewport = viewport.with_inner_size([width, height]);
     }
 
     let native_options = eframe::NativeOptions {
@@ -1814,10 +1781,7 @@ pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
 
             cctx.egui_ctx.set_style(style);
 
-            Ok(match kind {
-                Kind::Discord { name, info } => Box::new(Discord::new(cctx, name, info)),
-                Kind::MediaBrowser => Box::new(MediaBrowser::new(&cctx.egui_ctx)?)
-            })
+            Ok(Box::new(MediaBrowser::new(&cctx.egui_ctx)?))
         })
     )?;
 
