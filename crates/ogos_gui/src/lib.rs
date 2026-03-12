@@ -171,8 +171,8 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
             .transpose()?;
 
             match file_kind {
-                FileKind::Vid => video::launch_mpv(path.as_path(), maintain_sample_rate.into(), use_glsl_shaders)?,
-                _ => opener::open(path.as_path())?
+                FileKind::Vid => video::launch_mpv(&path, maintain_sample_rate.into(), use_glsl_shaders)?,
+                _ => opener::open(&path)?
             }
 
             if let Some(mut ipc_client) = ipc_client {
@@ -1467,7 +1467,7 @@ impl<'a> MediaBrowser<'a> {
                     (_tag_button_clicked @ true, _entry_is_tagged @ true) => {
                         set.remove(&self.grid_entry_i);
 
-                        let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or_default();
+                        let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
                         if tag_is_active {
                             match set.is_empty() {
                                 true => self.active_tag = None,
@@ -1572,20 +1572,7 @@ impl<'a> MediaBrowser<'a> {
 
         ui.ctx().input(|state| {
             if state.pointer.button_released(egui::PointerButton::Extra1) || state.key_pressed(egui::Key::Escape) {
-                if self.details_levels.is_empty() {
-                    self.view_kind = ViewKind::Grid;
-
-                    return
-                }
-
-                self.details_levels.pop();
-                match self.details_levels.is_empty() {
-                    true => replace_dir_entries(&mut self.details_dir_entries, &self.grid_entries[self.details_grid_entry_i].path),
-                    false => {
-                        let dir = self.details_levels.last().cloned().unwrap();
-                        replace_dir_entries(&mut self.details_dir_entries, &dir);
-                    }
-                }
+                self.pop_dir();
             }
         });
     }
@@ -1601,38 +1588,72 @@ impl<'a> MediaBrowser<'a> {
                         .map(|info| ui.button(info.stem.as_str()))
                 );
 
-                for (i, resp) in self.details_button_resps.iter().enumerate() {
-                    if resp.hovered() {
-                        self.details_hovered_dir_entry_i = i;
-                    }
+                #[derive(Default)]
+                struct Deferred {
+                    hovered_i: Option<usize>,
+                    push_dir: Option<PathBuf>
+                }
 
-                    if resp.clicked() {
-                        match self.details_dir_entries[i].file_kind {
-                            FileKind::Dir => {
-                                let dir = self.details_dir_entries[i].path.clone();
-                                replace_dir_entries(&mut self.details_dir_entries, &dir);
+                let Deferred { hovered_i, push_dir } = self.details_button_resps.iter()
+                    .zip(&self.details_dir_entries)
+                    .enumerate()
+                    .fold(Deferred::default(), |mut deferred, (i, (resp, dir_entry_info))| {
+                        if resp.hovered() {
+                            deferred.hovered_i = Some(i);
+                        }
 
-                                self.details_levels.push(dir);
-                            },
-                            _ => {
-                                let discord_info = self.discord_enabled.then_some(self.make_discord_info(i));
+                        if resp.clicked() {
+                            match dir_entry_info.file_kind {
+                                FileKind::Dir => deferred.push_dir = Some(dir_entry_info.path.clone()),
+                                _ => {
+                                    let discord_info = self.discord_enabled.then_some(self.make_discord_info(dir_entry_info));
 
-                                open_media(
-                                    self.details_dir_entries[i].path.clone(),
-                                    self.details_dir_entries[i].file_kind,
-                                    self.maintain_sample_rate,
-                                    self.use_glsl_shaders,
-                                    discord_info,
-                                    self.discord_display_kind
-                                );
+                                    open_media(
+                                        dir_entry_info.path.clone(),
+                                        dir_entry_info.file_kind,
+                                        self.maintain_sample_rate,
+                                        self.use_glsl_shaders,
+                                        discord_info,
+                                        self.discord_display_kind
+                                    );
+                                }
                             }
                         }
-                    }
-                }
+
+                        deferred
+                    });
+
+                if let Some(i) = hovered_i { self.details_hovered_dir_entry_i = i }
+                if let Some(dir) = push_dir { self.push_dir(dir) }
             });
     }
 
-    fn make_discord_info(&self, i: usize) -> config::DiscordActivityInfo {
+    fn push_dir(&mut self, dir: PathBuf) {
+        replace_dir_entries(&mut self.details_dir_entries, &dir);
+
+        self.details_hovered_dir_entry_i = 0;
+        self.details_levels.push(dir);
+    }
+
+    fn pop_dir(&mut self) {
+        self.details_hovered_dir_entry_i = 0;
+
+        if self.details_levels.is_empty() {
+            self.view_kind = ViewKind::Grid;
+
+            return
+        }
+
+        self.details_levels.pop();
+        if self.details_levels.is_empty() {
+            replace_dir_entries(&mut self.details_dir_entries, &self.grid_entries[self.details_grid_entry_i].path);
+        } else {
+            let dir = self.details_levels.last().unwrap();
+            replace_dir_entries(&mut self.details_dir_entries, dir);
+        }
+    }
+
+    fn make_discord_info(&self, dir_entry_info: &DirEntryInfo) -> config::DiscordActivityInfo {
         let dir_name = &self.grid_entries[self.details_grid_entry_i].stem;
 
         config::DiscordActivityInfo {
@@ -1645,19 +1666,19 @@ impl<'a> MediaBrowser<'a> {
             details: match self.discord_details.is_empty() {
                 true => match self.discord_watching {
                     Watching::TV => dir_name.to_string(),
-                    _ => self.details_dir_entries[i].stem.clone()
+                    _ => dir_entry_info.stem.clone()
                 },
                 false => self.discord_details.clone()
             },
             state: self.discord_watching.eq(&Watching::TV).then(|| {
                 match self.discord_state.is_empty() {
-                    true => self.details_dir_entries[i].stem.clone(),
+                    true => dir_entry_info.stem.clone(),
                     false => self.discord_state.clone()
                 }
             }),
             large_image: match self.discord_watching {
                 Watching::TV => Some(to_discord_asset_name(dir_name)),
-                _ => Some(to_discord_asset_name(self.details_dir_entries[i].stem.as_str()))
+                _ => Some(to_discord_asset_name(dir_entry_info.stem.as_str()))
             },
             chess_username: None
         }
@@ -1710,9 +1731,11 @@ impl<'a> MediaBrowser<'a> {
         grid.show(ui, |ui| {
             ui.label(details_label_galley);
 
+            let dir_entry_stem = self.details_dir_entries[self.details_hovered_dir_entry_i].stem.as_str();
+
             let details_hint_text = match self.discord_watching {
                 Watching::TV => self.grid_entries[self.details_grid_entry_i].stem.as_ref(),
-                _ => self.details_dir_entries[self.details_hovered_dir_entry_i].stem.as_str()
+                _ => dir_entry_stem
             };
             let details_hint_galley = egui::WidgetText::from(details_hint_text)
                 .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
@@ -1727,8 +1750,7 @@ impl<'a> MediaBrowser<'a> {
             if self.discord_watching == Watching::TV {
                 ui.label("State");
 
-                let state_hint_text = self.details_dir_entries[self.details_hovered_dir_entry_i].stem.as_str();
-                let state_hint_galley = egui::WidgetText::from(state_hint_text)
+                let state_hint_galley = egui::WidgetText::from(dir_entry_stem)
                     .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
                 let state_text_edit = egui::TextEdit::singleline(&mut self.discord_state)
                     .hint_text(state_hint_galley)
