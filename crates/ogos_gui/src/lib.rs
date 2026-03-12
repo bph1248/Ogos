@@ -1722,14 +1722,9 @@ impl<'a> MediaBrowser<'a> {
 
         ui.shrink_width_to_current();
 
-        let details_label_galley = egui::WidgetText::from("Details")
-            .into_galley(ui, None, f32::INFINITY, egui::FontSelection::Default);
-        let details_text_edit_width = ui.available_width() - details_label_galley.rect.width();
-
-        let margin = egui::Margin::symmetric(4, 2);
         let grid = egui::Grid::new("grid").num_columns(2);
         grid.show(ui, |ui| {
-            ui.label(details_label_galley);
+            ui.label("Details");
 
             let dir_entry_stem = self.details_dir_entries[self.details_hovered_dir_entry_i].stem.as_str();
 
@@ -1737,11 +1732,7 @@ impl<'a> MediaBrowser<'a> {
                 Watching::TV => self.grid_entries[self.details_grid_entry_i].stem.as_ref(),
                 _ => dir_entry_stem
             };
-            let details_hint_galley = egui::WidgetText::from(details_hint_text)
-                .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
-            let details_text_edit = egui::TextEdit::singleline(&mut self.discord_details)
-                .desired_width(details_text_edit_width)
-                .hint_text(details_hint_galley);
+            let details_text_edit = egui::TextEdit::singleline(&mut self.discord_details).hint_text(details_hint_text);
 
             ui.add(details_text_edit);
 
@@ -1750,11 +1741,7 @@ impl<'a> MediaBrowser<'a> {
             if self.discord_watching == Watching::TV {
                 ui.label("State");
 
-                let state_hint_galley = egui::WidgetText::from(dir_entry_stem)
-                    .into_galley(ui, Some(egui::TextWrapMode::Truncate), ui.available_width() - margin.sum().x, egui::FontSelection::Default);
-                let state_text_edit = egui::TextEdit::singleline(&mut self.discord_state)
-                    .hint_text(state_hint_galley)
-                    .desired_width(details_text_edit_width);
+                let state_text_edit = egui::TextEdit::singleline(&mut self.discord_state).hint_text(dir_entry_stem);
 
                 ui.add(state_text_edit);
             }
