@@ -523,6 +523,12 @@ struct Cache {
     entries: HashMap<PathBuf, CacheEntryInfo>
 }
 
+#[derive(Default)]
+struct DeferredTagButtonMenu {
+    is_open: bool,
+    tag_op: Option<(Rc<str>, TagOp)>
+}
+
 struct FerryImageInfo {
     image_file_name: Arc<str>,
     expected_hash: Option<Arc<str>>,
@@ -615,6 +621,11 @@ enum BaseImageKind {
 enum Orientation {
     Wide,
     Tall
+}
+
+enum TagOp {
+    Rename,
+    Remove
 }
 
 #[derive(Default)]
@@ -1036,35 +1047,45 @@ impl<'a> MediaBrowser<'a> {
 
                         ui.separator();
 
-                        let (tag_rename_menu_open, tag_to_rename) = self.filter_win_tag_buttons(ui);
+                        let DeferredTagButtonMenu { is_open: tag_button_menu_open, tag_op } = self.filter_win_tag_buttons(ui);
+                        if let Some((tag, op)) = tag_op.as_ref() {
+                            let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
 
-                        if let Some(tag_to_rename) = tag_to_rename {
-                            let tag_to_rename_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == &tag_to_rename).unwrap_or(false);
+                            match op {
+                                TagOp::Rename => {
+                                    let set = self.tags.remove(tag).unwrap();
+                                    let tag: Rc<str> = Rc::from(self.tag_rename_edit.as_str());
 
-                            let set = self.tags.remove(&tag_to_rename).unwrap();
-                            let tag: Rc<str> = Rc::from(self.tag_rename_edit.as_str());
+                                    if tag_is_active {
+                                        self.active_tag = Some(tag.clone());
+                                    }
+                                    self.tags.insert(tag, set);
 
-                            if tag_to_rename_is_active {
-                                self.active_tag = Some(tag.clone());
+                                    self.tag_rename_edit.clear();
+                                },
+                                TagOp::Remove => {
+                                    self.tags.remove(tag);
+
+                                    if tag_is_active {
+                                        self.active_tag = None;
+                                    }
+                                }
                             }
-                            self.tags.insert(tag, set);
-
-                            self.tag_rename_edit.clear();
                         }
 
                         ui.take_available_space();
 
-                        tag_rename_menu_open
+                        tag_button_menu_open
                     })
                 })
         });
 
-        let tag_rename_menu_open = filter_win_resp.as_ref()
+        let tag_button_menu_open = filter_win_resp.as_ref()
             .and_then(|resp| resp.inner.as_ref())
             .map(|resp| resp.inner)
             .unwrap_or(false);
 
-        if !tag_rename_menu_open {
+        if !tag_button_menu_open {
             let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
             match hover_pos {
                 Some(hover_pos) => {
@@ -1110,7 +1131,7 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn filter_win_tag_buttons(&mut self, ui: &mut egui::Ui) -> (bool, Option<Rc<str>>) {
+    fn filter_win_tag_buttons(&mut self, ui: &mut egui::Ui) -> DeferredTagButtonMenu {
         let all_button_resp = ui.button("All");
 
         if all_button_resp.clicked() {
@@ -1120,11 +1141,11 @@ impl<'a> MediaBrowser<'a> {
             all_button_resp.highlight();
         }
 
-        self.tags.iter().fold((false, None::<Rc<str>>), |(mut tag_rename_menu_open, mut tag_to_rename), (tag, set)| {
+        self.tags.iter().fold(DeferredTagButtonMenu::default(), |mut deferred, (tag, set)| {
             if !set.is_empty() {
                 let tag_button_resp = ui.button(tag.as_ref());
 
-                let tag_rename_menu = egui::Popup::context_menu(&tag_button_resp)
+                let tag_button_menu = egui::Popup::context_menu(&tag_button_resp)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show(|ui| {
                         let tag_rename_edit_resp = egui::TextEdit::singleline(&mut self.tag_rename_edit)
@@ -1136,17 +1157,24 @@ impl<'a> MediaBrowser<'a> {
 
                         if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
                             if !self.tag_rename_edit.is_empty() {
-                                tag_to_rename = Some(tag.clone());
+                                deferred.tag_op = Some((tag.clone(), TagOp::Rename));
 
                                 ui.close();
                             } else {
                                 tag_rename_edit_resp.request_focus();
                             }
                         }
+
+                        let tag_remove_button_resp = ui.button("Remove");
+                        if tag_remove_button_resp.clicked() {
+                            deferred.tag_op = Some((tag.clone(), TagOp::Remove));
+
+                            ui.close();
+                        }
                     });
 
-                tag_rename_menu_open = tag_rename_menu.is_some();
-                if let Some(tag_rename_menu) = tag_rename_menu && tag_rename_menu.response.should_close() {
+                deferred.is_open = tag_button_menu.is_some();
+                if let Some(tag_button_menu) = tag_button_menu && tag_button_menu.response.should_close() {
                     self.filter_win_stamp = Some(now!());
                 }
 
@@ -1161,7 +1189,7 @@ impl<'a> MediaBrowser<'a> {
                 }
             }
 
-            (tag_rename_menu_open, tag_to_rename)
+            deferred
         })
     }
 
