@@ -31,7 +31,6 @@ ogos_err = { path = "crates/ogos_err" }
 ogos_mki = { path = "crates/ogos_mki" }
 ogos_video = { path = "crates/ogos_video" }
 once_cell = "1.19.0"
-opener = "0.8.3"
 qmk-via-api = { version = "0.5", default-features = false }
 rayon = "1.11.0"
 resize = { version = "0.8.8", default-features = false, features = ["std"] }

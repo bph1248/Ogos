@@ -27,6 +27,7 @@ use std::{
     io::Read,
     ops::*,
     path::*,
+    process::*,
     rc::*,
     sync::*,
     thread,
@@ -34,10 +35,16 @@ use std::{
 };
 use tap::TapOptional;
 use tokio::sync::oneshot::{self, error::*};
-use windows::Win32::{
-    Foundation::*,
-    Graphics::Gdi::*,
-    UI::WindowsAndMessaging::*
+use windows::{
+    core::PWSTR,
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::*,
+        UI::{
+            Shell::*,
+            WindowsAndMessaging::*
+        }
+    }
 };
 
 const ASPECT_RATIO_3_2: f32 = 1.5;
@@ -127,6 +134,22 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
     })
 }
 
+fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
+    let ext = path.get_file_ext()?;
+    let ext = concat_string!(".", ext);
+    let ext = ext.as_str().to_win_str();
+
+    let mut buffer = [0_u16; MAX_PATH as usize];
+    let path_str = PWSTR(buffer.as_mut_ptr());
+    let mut path_len = buffer.len() as u32;
+
+    AssocQueryStringW(ASSOCF_INIT_DEFAULTTOSTAR, ASSOCSTR_EXECUTABLE, *ext, None, Some(path_str), &mut path_len,).ok()?;
+
+    let path_str = String::from_utf16(&buffer[..path_len as usize - 1])?;
+
+    Ok(PathBuf::from(path_str))
+} }
+
 fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind) {
     thread::spawn(move || {
         (|| -> Res<()> {
@@ -141,7 +164,14 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
 
             match file_kind {
                 FileKind::Vid => video::launch_mpv(&path, maintain_sample_rate.into(), use_glsl_shaders)?,
-                _ => opener::open(&path)?
+                _ => {
+                    let handler = get_default_handler(&path)?;
+
+                    let mut command = Command::new(handler);
+                    command.arg(path);
+
+                    output_command(&mut command)?;
+                }
             }
 
             if let Some(mut ipc_client) = ipc_client {

@@ -24,7 +24,6 @@ ogos_core = { workspace = true }
 ogos_discord = { workspace = true }
 ogos_err = { workspace = true }
 ogos_video = { workspace = true }
-opener = { workspace = true }
 raw-window-handle = "0.6.2"
 rayon = { workspace = true }
 resize = { workspace = true }
