@@ -3,6 +3,7 @@
 - [Config overview](#config-overview)
 - [Config layout](#config-layout)
 - [Keys & buttons](#keys--buttons)
+- [Macros](#macros)
 - [Tasks](#tasks)
 
 # Config overview
@@ -201,7 +202,10 @@ Shift behavior can be customized with constraints. When the properties of a wind
         // Optional
         maps: {
             "<exe>": {
-                <key, button>: <key, button>,
+                <
+                    <<key, button>: <key, button>>,
+                    <macro>
+                >,
                 ..
             },
             ..
@@ -425,6 +429,10 @@ middle_button, mb,
 back_button, xb1, bb,
 forward_button, xb2, fb
 ```
+
+# Macros
+
+`click: { <wheel_up, wheel_down>: <key, button>, dur: <uint> }`: Simulate key/button presses by moving the scroll wheel. `dur` is the number of milliseconds to wait before sending a 'key release' event.
 
 # Tasks
 
