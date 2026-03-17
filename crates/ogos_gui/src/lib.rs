@@ -677,10 +677,10 @@ struct MediaBrowser<'a> {
     tag_button_menu: TagButtonMenuInfo,
     sort_name_edit: String,
     tag_add_edit: String,
-    open_filter_win: bool,
+    open_tag_win: bool,
     tag_rename_edit: String,
-    filter_win_stamp: Option<Instant>,
-    filter_win_cursor_checked: bool,
+    tag_win_stamp: Option<Instant>,
+    tag_win_cursor_checked: bool,
     details_grid_entry_i: usize,
     details_dir_entries: Vec<DirEntryInfo>,
     details_button_resps: Vec<egui::Response>,
@@ -1018,10 +1018,10 @@ impl<'a> MediaBrowser<'a> {
             tag_button_menu: default!(),
             sort_name_edit: default!(),
             tag_add_edit: default!(),
-            open_filter_win: default!(),
+            open_tag_win: default!(),
             tag_rename_edit: default!(),
-            filter_win_stamp: default!(),
-            filter_win_cursor_checked: default!(),
+            tag_win_stamp: default!(),
+            tag_win_cursor_checked: default!(),
             details_grid_entry_i: default!(),
             details_dir_entries: Vec::with_capacity(DETAILS_ENTRY_COUNT),
             details_button_resps: Vec::with_capacity(DETAILS_ENTRY_COUNT),
@@ -1054,23 +1054,23 @@ impl<'a> MediaBrowser<'a> {
     fn central_panel(&mut self, ui: &mut egui::Ui) {
         match self.view_kind {
             ViewKind::Grid => {
-                self.filter_win(ui);
+                self.tag_win(ui);
                 self.grid_view(ui);
             },
             ViewKind::Details => self.details_view(ui)
         }
     }
 
-    fn filter_win(&mut self, ui: &mut egui::Ui) {
+    fn tag_win(&mut self, ui: &mut egui::Ui) {
         let max_rect = ui.max_rect();
-        let filter_win_rect = egui::Rect::from_min_size(
+        let tag_win_rect = egui::Rect::from_min_size(
             max_rect.min,
             [250.0, (max_rect.height() - FRAME_MARGIN).max(0.0)].into()
         );
 
-        let filter_win_resp = self.open_filter_win.and_then(|| {
-            egui::Window::new("filter_win")
-                .fixed_rect(filter_win_rect)
+        let tag_win_resp = self.open_tag_win.and_then(|| {
+            egui::Window::new("tag_win")
+                .fixed_rect(tag_win_rect)
                 .title_bar(false)
                 .fade_in(true)
                 .fade_out(true)
@@ -1116,20 +1116,20 @@ impl<'a> MediaBrowser<'a> {
             let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
             match hover_pos {
                 Some(hover_pos) => {
-                    self.filter_win_cursor_checked = false;
+                    self.tag_win_cursor_checked = false;
 
-                    if let Some(resp) = filter_win_resp.as_ref() {
+                    if let Some(resp) = tag_win_resp.as_ref() {
                         match resp.response.contains_pointer() {
-                            true => self.filter_win_stamp = Some(now!()),
+                            true => self.tag_win_stamp = Some(now!()),
                             false => if hover_pos.x > resp.response.rect.right() {
-                                self.filter_win_stamp = None;
-                                self.open_filter_win = false;
+                                self.tag_win_stamp = None;
+                                self.open_tag_win = false;
                             }
                         }
                     }
                 }
                 None => {
-                    if !self.filter_win_cursor_checked {
+                    if !self.tag_win_cursor_checked {
                         let mut cursor_pos = POINT::default();
                         unsafe { if GetCursorPos(&mut cursor_pos).is_err() {
                             return
@@ -1141,19 +1141,19 @@ impl<'a> MediaBrowser<'a> {
                             let cursor_catch_rect = egui::Rect::everything_left_of(inner_rect.left());
 
                             if cursor_catch_rect.contains(cursor_pos) {
-                                self.filter_win_stamp = Some(now!());
-                                self.open_filter_win = true;
+                                self.tag_win_stamp = Some(now!());
+                                self.open_tag_win = true;
                             }
 
-                            self.filter_win_cursor_checked = true;
+                            self.tag_win_cursor_checked = true;
                         }
                     }
                 }
             }
 
-            if let Some(filter_win_stamp) = self.filter_win_stamp && filter_win_stamp.elapsed() > Duration::from_secs(3) {
-                self.filter_win_stamp = None;
-                self.open_filter_win = false;
+            if let Some(tag_win_stamp) = self.tag_win_stamp && tag_win_stamp.elapsed() > Duration::from_secs(3) {
+                self.tag_win_stamp = None;
+                self.open_tag_win = false;
             }
         }
     }
@@ -1204,7 +1204,7 @@ impl<'a> MediaBrowser<'a> {
 
                 deferred.is_open = tag_button_menu.is_some();
                 if let Some(tag_button_menu) = tag_button_menu && tag_button_menu.response.should_close() {
-                    self.filter_win_stamp = Some(now!());
+                    self.tag_win_stamp = Some(now!());
                 }
 
                 if tag_button_resp.clicked() {
