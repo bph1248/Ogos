@@ -250,9 +250,20 @@ fn stroke_rect_painter(painter: egui::Painter, rect: egui::Rect) {
     painter.rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
 }
 
-fn update_active_view(active_view: &mut Vec<usize>, set: &BTreeSet<usize>) {
-    active_view.clear();
-    active_view.extend(set.iter().cloned());
+fn populate_filtered_view(view: &mut Vec<usize>, set: &BTreeSet<usize>) {
+    view.clear();
+    view.extend(set.iter().cloned());
+}
+
+fn sort_filtered_view(view: &mut [usize], grid_entries: &[GridEntryInfo]) {
+    view.sort_unstable_by(|a, b| {
+        let entry_a = &grid_entries[*a];
+        let entry_b = &grid_entries[*b];
+        let name_a = entry_a.sort_name.as_deref().unwrap_or(entry_a.stem.as_ref());
+        let name_b = entry_b.sort_name.as_deref().unwrap_or(entry_b.stem.as_ref());
+
+        name_a.cmp(name_b)
+    });
 }
 
 fn ferry_cached_image(path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> ResVar<()> {
@@ -505,6 +516,7 @@ type AspectRatioV = f32;
 struct CacheEntryInfo {
     #[serde(rename = "image")]
     image_file_name_i: Option<usize>,
+    sort_name: Option<Rc<str>>,
     hash: Option<Arc<str>>,
     #[serde(default)]
     tags: Vec<usize>
@@ -521,12 +533,6 @@ struct Cache {
     #[serde(default)]
     tags: Vec<Rc<str>>,
     entries: HashMap<PathBuf, CacheEntryInfo>
-}
-
-#[derive(Default)]
-struct DeferredTagButtonMenu {
-    is_open: bool,
-    tag_op: Option<(Rc<str>, TagOp)>
 }
 
 struct FerryImageInfo {
@@ -555,6 +561,7 @@ struct FerryImagesInfo<'a> {
 struct GridEntryInfo {
     path: PathBuf,
     stem: Rc<str>,
+    sort_name: Option<Rc<str>>,
     file_kind: FileKind,
     image_file_name_i: Option<usize>,
     hash: Option<Arc<str>>
@@ -589,17 +596,15 @@ impl ImageStates {
     }
 }
 
-struct MenuPointerState {
-    pointer_contained: bool,
-    entry_clicked: bool
-}
-
-#[derive(Default)]
-struct PointerContained(bool);
-
 struct ResizeImage {
     dst_path: PathBuf,
     dst_size: egui::Vec2
+}
+
+#[derive(Default)]
+struct TagButtonMenuInfo {
+    is_open: bool,
+    tag_op: Option<(Rc<str>, TagOp)>
 }
 
 #[derive(Default)]
@@ -667,8 +672,10 @@ struct MediaBrowser<'a> {
     grid_scroll_offset: f32,
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
     active_tag: Option<Rc<str>>,
-    active_view: Vec<usize>, // Indices into grid_entries
-    removed_entry_from_active_view: bool,
+    filtered_view: Vec<usize>, // Indices into grid_entries
+    removed_entry_from_filtered_view: bool,
+    tag_button_menu: TagButtonMenuInfo,
+    sort_name_edit: String,
     tag_add_edit: String,
     open_filter_win: bool,
     tag_rename_edit: String,
@@ -763,6 +770,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     info.path,
                     CacheEntryInfo {
                         image_file_name_i: info.image_file_name_i,
+                        sort_name: info.sort_name,
                         hash: info.image_file_name_i.map(|_| info.hash).unwrap_or_default(),
                         tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
                     }
@@ -845,7 +853,7 @@ impl<'a> MediaBrowser<'a> {
         let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
         let details_cell_size = egui::vec2(details_cell_width, details_cell_width * ASPECT_RATIO_3_2);
 
-        let mut grid_entries = media_dirs.iter()
+        let grid_entries = media_dirs.iter()
             .map(|dir| Path::new(dir).read_dir())
             .filter_map(|read_dir| match read_dir {
                 Ok(read_dir) => Some(read_dir),
@@ -882,9 +890,10 @@ impl<'a> MediaBrowser<'a> {
                     };
 
                     let cache_entry_info = cache.entries.get_mut(&path);
-                    let image_file_name_i = cache_entry_info.as_ref()
-                        .and_then(|cache_entry_info| {
-                            cache_entry_info.image_file_name_i
+                    let grid_entry_info = match cache_entry_info {
+                        Some(info) => {
+                            let sort_name = info.sort_name.clone();
+                            let image_file_name_i = info.image_file_name_i
                                 .and_then(|image_file_name_i| cache.images.get_index(image_file_name_i))
                                 .and_then(|image_file_name| {
                                     images.get_full_mut(image_file_name.as_ref())
@@ -895,13 +904,21 @@ impl<'a> MediaBrowser<'a> {
                                     image_states.ref_count += 1;
 
                                     image_file_name_i
-                                })
-                        })
-                        .or_else(|| try_get_image_file_name_i(&mut images));
+                                });
+                            let hash = info.hash.clone();
 
-                    let hash = cache_entry_info.and_then(|info| info.hash.clone());
+                            GridEntryInfo { path, stem, sort_name, file_kind, image_file_name_i, hash }
+                        },
+                        None => {
+                            let sort_name = None;
+                            let image_file_name_i = try_get_image_file_name_i(&mut images);
+                            let hash = None;
 
-                    Ok(Some(GridEntryInfo { path, stem, file_kind, image_file_name_i, hash }))
+                            GridEntryInfo { path, stem, sort_name, file_kind, image_file_name_i, hash }
+                        }
+                    };
+
+                    Ok(Some(grid_entry_info))
                 })
                 .unwrap_or_else(|err| {
                     error!("{}: failed to read dir entry: {}", module_path!(), err);
@@ -910,7 +927,10 @@ impl<'a> MediaBrowser<'a> {
                 })
             })
             .collect::<Vec<_>>();
-        grid_entries.sort_by(|a, b| a.stem.cmp(&b.stem));
+
+        let mut filtered_view = Vec::with_capacity(grid_entries.len());
+        filtered_view.extend(0..grid_entries.len());
+        sort_filtered_view(&mut filtered_view, &grid_entries);
 
         let discord_app_ids = config.discord.app_ids.clone();
         let discord_display_kind = config.discord.display_kind;
@@ -993,8 +1013,10 @@ impl<'a> MediaBrowser<'a> {
             grid_scroll_offset: default!(),
             tags,
             active_tag: default!(),
-            active_view: default!(),
-            removed_entry_from_active_view: default!(),
+            filtered_view,
+            removed_entry_from_filtered_view: default!(),
+            tag_button_menu: default!(),
+            sort_name_edit: default!(),
             tag_add_edit: default!(),
             open_filter_win: default!(),
             tag_rename_edit: default!(),
@@ -1016,6 +1038,17 @@ impl<'a> MediaBrowser<'a> {
             discord_state: default!(),
             discord_display_kind
         })
+    }
+
+    fn reset_filtered_view(&mut self) {
+        self.filtered_view.clear();
+        self.filtered_view.extend(0..self.grid_entries.len());
+
+        self.sort_filtered_view();
+    }
+
+    fn sort_filtered_view(&mut self) {
+        sort_filtered_view(&mut self.filtered_view, &self.grid_entries);
     }
 
     fn central_panel(&mut self, ui: &mut egui::Ui) {
@@ -1047,8 +1080,9 @@ impl<'a> MediaBrowser<'a> {
 
                         ui.separator();
 
-                        let DeferredTagButtonMenu { is_open: tag_button_menu_open, tag_op } = self.filter_win_tag_buttons(ui);
-                        if let Some((tag, op)) = tag_op.as_ref() {
+                        self.tag_win_buttons(ui);
+
+                        if let Some((tag, op)) = self.tag_button_menu.tag_op.as_ref() {
                             let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
 
                             match op {
@@ -1074,18 +1108,11 @@ impl<'a> MediaBrowser<'a> {
                         }
 
                         ui.take_available_space();
-
-                        tag_button_menu_open
                     })
                 })
         });
 
-        let tag_button_menu_open = filter_win_resp.as_ref()
-            .and_then(|resp| resp.inner.as_ref())
-            .map(|resp| resp.inner)
-            .unwrap_or(false);
-
-        if !tag_button_menu_open {
+        if !self.tag_button_menu.is_open {
             let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
             match hover_pos {
                 Some(hover_pos) => {
@@ -1131,17 +1158,19 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn filter_win_tag_buttons(&mut self, ui: &mut egui::Ui) -> DeferredTagButtonMenu {
+    fn tag_win_buttons(&mut self, ui: &mut egui::Ui) {
         let all_button_resp = ui.button("All");
 
         if all_button_resp.clicked() {
+            self.reset_filtered_view();
+
             self.active_tag = None;
         }
         if self.active_tag.is_none() {
             all_button_resp.highlight();
         }
 
-        self.tags.iter().fold(DeferredTagButtonMenu::default(), |mut deferred, (tag, set)| {
+        self.tag_button_menu = self.tags.iter().fold(TagButtonMenuInfo::default(), |mut deferred, (tag, set)| {
             if !set.is_empty() {
                 let tag_button_resp = ui.button(tag.as_ref());
 
@@ -1179,7 +1208,7 @@ impl<'a> MediaBrowser<'a> {
                 }
 
                 if tag_button_resp.clicked() {
-                    update_active_view(&mut self.active_view, set);
+                    populate_filtered_view(&mut self.filtered_view, set);
 
                     self.active_tag = Some(tag.clone());
                     self.grid_selected_cell_i = None;
@@ -1190,17 +1219,14 @@ impl<'a> MediaBrowser<'a> {
             }
 
             deferred
-        })
+        });
     }
 
     fn grid_view(&mut self, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
-            let max_cell_count = match self.active_tag.as_ref() {
-                Some(_) => self.active_view.len(),
-                None => self.grid_entries.len()
-            };
+            let max_cell_count = self.filtered_view.len();
             let cell_space_x = self.grid_cell_size.x + GRID_IMAGE_SPACING.x;
             let row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(cell_space_x).ceil() as usize; // ui.available_width() - (cell_space_x * n - GRID_IMAGE_SPACING.x) <= cell_space_x
             let row_cell_count = row_cell_count.clamp(1, max_cell_count);
@@ -1229,6 +1255,8 @@ impl<'a> MediaBrowser<'a> {
 
                     ui.ctx().input(|state| {
                         if state.pointer.button_released(egui::PointerButton::Extra1) {
+                            self.reset_filtered_view();
+
                             self.active_tag = None;
                         }
                     });
@@ -1255,10 +1283,10 @@ impl<'a> MediaBrowser<'a> {
                         });
 
                         // Cell entry might have its tag removed while view is active and table is still being updated
-                        match self.removed_entry_from_active_view {
+                        match self.removed_entry_from_filtered_view {
                             true => {
                                 max_cell_count -= 1;
-                                self.removed_entry_from_active_view = false;
+                                self.removed_entry_from_filtered_view = false;
                             },
                             false => self.grid_cell_i += 1
                         }
@@ -1268,7 +1296,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn grid_cell(&mut self, ui: &mut egui::Ui) {
-        self.grid_entry_i = self.active_tag.as_ref().map(|_| self.active_view[self.grid_cell_i]).unwrap_or(self.grid_cell_i);
+        self.grid_entry_i = self.filtered_view[self.grid_cell_i];
         let grid_entry_info = &self.grid_entries[self.grid_entry_i];
         let mut image_info = grid_entry_info.image_file_name_i.and_then(|image_file_name_i| self.images.get_index_mut(image_file_name_i));
 
@@ -1303,15 +1331,8 @@ impl<'a> MediaBrowser<'a> {
             Some(cell_i) => if cell_i == self.grid_cell_i { // Cell was secondary clicked
                 stroke_rect(ui, cell_resp.rect);
 
-                match cell_context_menu_resp {
-                    Some(resp) => { // Context menu is open
-                        if resp.inner.entry_clicked ||
-                            !resp.inner.pointer_contained && ui.input(|state| state.pointer.primary_clicked()) // Clicked outside the menu
-                        {
-                            egui::Popup::close_all(ui.ctx());
-                        }
-                    },
-                    None => self.grid_selected_cell_i = None // Context menu was closed - deselect cell
+                if cell_context_menu_resp.is_none() {
+                    self.grid_selected_cell_i = None // Context menu was closed - deselect cell
                 }
             },
             // No context menu
@@ -1321,9 +1342,14 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn grid_cell_context_menu(&mut self, cell_ui: &mut egui::Ui, cell_resp: &egui::Response) -> Option<egui::InnerResponse<MenuPointerState>> {
+    fn grid_cell_context_menu(&mut self, cell_ui: &mut egui::Ui, cell_resp: &egui::Response) -> Option<egui::InnerResponse<()>> {
+        let close_behaviour = match cell_resp.clicked_elsewhere() {
+            true => egui::PopupCloseBehavior::CloseOnClickOutside,
+            false => egui::PopupCloseBehavior::IgnoreClicks
+        };
+
         egui::Popup::context_menu(cell_resp)
-            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks) // Close manually to avoid close/show flash on right click cell while menu is open
+            .close_behavior(close_behaviour)
             .show(|ui| {
                 if ui.button("Image").clicked() {
                     ui.close();
@@ -1338,17 +1364,14 @@ impl<'a> MediaBrowser<'a> {
                         });
                     }
                 }
-                let tags_menu_resp = self.grid_cell_tags_menu(ui, self.grid_cell_i);
+
+                self.grid_cell_sort_menu(ui);
+                self.grid_cell_tags_menu(ui);
 
                 let painter = ui.painter().clone().with_layer_id(cell_ui.layer_id());
                 stroke_rect_painter(painter, cell_resp.rect);
 
                 self.grid_selected_cell_i = Some(self.grid_cell_i);
-
-                MenuPointerState {
-                    pointer_contained: ui.ui_contains_pointer() || tags_menu_resp.inner.unwrap_or_default().0,
-                    entry_clicked: tags_menu_resp.response.clicked() || tags_menu_resp.response.secondary_clicked()
-                }
             })
     }
 
@@ -1464,7 +1487,44 @@ impl<'a> MediaBrowser<'a> {
         Ok(())
     }
 
-    fn grid_cell_tags_menu(&mut self, ui: &mut egui::Ui, cell_i: usize) -> egui::InnerResponse<Option<PointerContained>> {
+    fn grid_cell_sort_menu(&mut self, ui: &mut egui::Ui) {
+        self.grid_entry_i = self.filtered_view[self.grid_cell_i];
+        let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
+
+        let mut sort_filtered_view = false;
+        ui.menu_button("Sort name", |ui| {
+            let sort_name_edit_resp = egui::TextEdit::singleline(&mut self.sort_name_edit)
+                .hint_text(grid_entry_info.sort_name.as_deref().unwrap_or("Add"))
+                .show(ui)
+                .response;
+
+            if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
+                if !self.sort_name_edit.is_empty() {
+                    grid_entry_info.sort_name = Some(Rc::from(self.sort_name_edit.as_str()));
+
+                    self.sort_name_edit.clear();
+                    sort_filtered_view = true;
+                }
+
+                sort_name_edit_resp.request_focus();
+            }
+
+            if grid_entry_info.sort_name.is_some() && ui.button("Remove").clicked() {
+                grid_entry_info.sort_name = None;
+
+                self.sort_name_edit.clear();
+                sort_filtered_view = true;
+            }
+        });
+
+        if sort_filtered_view {
+            self.sort_filtered_view();
+
+            ui.close();
+        }
+    }
+
+    fn grid_cell_tags_menu(&mut self, ui: &mut egui::Ui) -> egui::InnerResponse<Option<()>> {
         ui.menu_button("Tags", |ui| {
             // Add tag
             let tag_add_edit_resp = egui::TextEdit::singleline(&mut self.tag_add_edit)
@@ -1475,8 +1535,8 @@ impl<'a> MediaBrowser<'a> {
             if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
                 if !self.tag_add_edit.is_empty() {
                     self.tags.entry(Rc::from(self.tag_add_edit.as_str()))
-                        .and_modify(|set| _ = set.insert(cell_i))
-                        .or_insert([cell_i].into_iter().collect());
+                        .and_modify(|set| _ = set.insert(self.grid_cell_i))
+                        .or_insert([self.grid_cell_i].into_iter().collect());
 
                     self.tag_add_edit.clear();
                 }
@@ -1499,9 +1559,9 @@ impl<'a> MediaBrowser<'a> {
                             match set.is_empty() {
                                 true => self.active_tag = None,
                                 false => {
-                                    update_active_view(&mut self.active_view, set);
+                                    populate_filtered_view(&mut self.filtered_view, set);
 
-                                    self.removed_entry_from_active_view = true;
+                                    self.removed_entry_from_filtered_view = true;
                                 }
                             }
 
@@ -1513,8 +1573,6 @@ impl<'a> MediaBrowser<'a> {
                     _ => ()
                 }
             } }
-
-            PointerContained(ui.ui_contains_pointer())
         })
     }
 
@@ -1711,8 +1769,13 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn details_context_menu(&mut self, total_alloc_resp: &egui::Response) {
+        let close_behaviour = match total_alloc_resp.clicked() {
+            true => egui::PopupCloseBehavior::CloseOnClickOutside,
+            false => egui::PopupCloseBehavior::IgnoreClicks
+        };
+
         egui::Popup::context_menu(total_alloc_resp)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .close_behavior(close_behaviour)
             .show(|ui| {
                 ui.add_enabled_ui(!self.details_dir_entries.is_empty(), |ui| {
                     ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
