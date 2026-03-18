@@ -960,6 +960,12 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Ti
         }
     }
 
+    if let Some(tb) = ts.tb {
+        tb.taskbar_hwnd.show_na(false).unwrap_or_else(|err| {
+            error!("{}: failed to show taskbar: {}", module_path!(), err);
+        });
+    }
+
     info!("{}: closed", module_path!());
 
     Ok(())

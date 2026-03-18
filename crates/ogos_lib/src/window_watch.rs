@@ -207,15 +207,9 @@ unsafe extern "system" fn window_shift_proc(_: HWINEVENTHOOK, event: u32, hwnd: 
 
 unsafe extern "system" fn hitbox_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
     match msg {
-        WM_CLOSE => {
-            info!("{}: closing hitbox", module_path!());
-
-            DefWindowProcW(hwnd, msg, wparam, lparam)
-        },
+        WM_CLOSE => DefWindowProcW(hwnd, msg, wparam, lparam),
         WM_CREATE => LRESULT(0),
         WM_DESTROY => {
-            info!("{}: destroying hitbox", module_path!());
-
             PostQuitMessage(0);
 
             LRESULT(0)

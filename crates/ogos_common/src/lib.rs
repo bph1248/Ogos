@@ -42,7 +42,7 @@ use windows::{
 
 use std::result::Result;
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Tid(pub u32);
 impl From<u32> for Tid {
     fn from(value: u32) -> Self {

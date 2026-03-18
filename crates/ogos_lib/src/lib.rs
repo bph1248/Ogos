@@ -36,6 +36,7 @@ pub(crate) mod window_foreground;
 pub(crate) mod window_shift;
 pub(crate) mod window_watch;
 
+use bitflags::*;
 use cli::*;
 use ogos_audio::*;
 use ogos_common::*;
@@ -87,6 +88,15 @@ use windows::{
 const OGOS_TRAY_CLASS_NAME: PCWSTR = w!("OgosTray");
 
 static ON_TASKBAR_RECREATE_INFO: OnceCell<OnTaskbarRereateInfo> = OnceCell::new(); // Use sync:: as Windows may call wnd_proc from another thread
+static SHUTDOWN_INFO: OnceCell<Mutex<ShutdownInfo>> = OnceCell::new();
+
+bitflags! {
+    struct EndSessionFlags: isize {
+        const CLOSEAPP = ENDSESSION_CLOSEAPP as isize;
+        const CRITICAL = ENDSESSION_CRITICAL as isize;
+        const LOGOFF   = ENDSESSION_LOGOFF as isize;
+    }
+}
 
 #[derive(Debug)]
 struct OnTaskbarRereateInfo {
@@ -96,6 +106,13 @@ struct OnTaskbarRereateInfo {
 unsafe impl Send for OnTaskbarRereateInfo {}
 unsafe impl Sync for OnTaskbarRereateInfo {}
 
+#[derive(Debug)]
+struct ShutdownInfo {
+    to_close: Vec<LongLivedTask>,
+    thread_hnds: Vec<JoinHandle<()>>
+}
+
+#[derive(Debug)]
 #[subenum(CanReloadConfig)]
 pub(crate) enum LongLivedTask {
     ConfigWatch(HANDLE),
@@ -105,23 +122,37 @@ pub(crate) enum LongLivedTask {
     #[subenum(CanReloadConfig)]
     WindowWatch(Tid)
 }
+unsafe impl Send for LongLivedTask {}
+unsafe impl Sync for LongLivedTask {}
 
 unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
     match msg {
-        WM_CLOSE => {
-            info!("{}: closing tray notify icon", module_path!());
-
-            DefWindowProcW(hwnd, msg, wparam, lparam)
-        },
+        WM_CLOSE => DefWindowProcW(hwnd, msg, wparam, lparam),
         WM_CREATE => LRESULT(0),
         WM_DESTROY => {
-            info!("{}: destroying tray notify icon", module_path!());
-
             PostQuitMessage(0);
 
             LRESULT(0)
         },
+        WM_ENDSESSION => {
+            if wparam.0 != 0 { // Session is actually ending
+                let end_session_reason = EndSessionFlags::from_bits_retain(lparam.0);
+
+                if end_session_reason.contains(EndSessionFlags::CLOSEAPP) {
+                    info!("{}: end session: system has requested shutdown due to service/updates", module_path!());
+                } else if end_session_reason.contains(EndSessionFlags::CRITICAL) {
+                    info!("{}: end session: system is forcing shutdown", module_path!());
+                } else if end_session_reason.contains(EndSessionFlags::LOGOFF) {
+                    info!("{}: end session: user is logging off", module_path!());
+                }
+
+                shutdown();
+            }
+
+            LRESULT(0)
+        },
         WM_NCCREATE => LRESULT(1),
+        WM_QUERYENDSESSION => LRESULT(1), // Acquiesce
         WM_OGOS_TRAY => {
             (|| -> Res<()> {
                 if lparam.0 as u32 == WM_RBUTTONUP {
@@ -142,7 +173,10 @@ unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WP
 
                     match selected.0 as usize {
                         RELOAD_CONFIG => (),
-                        QUIT => PostQuitMessage(0),
+                        QUIT => {
+                            shutdown();
+                            PostQuitMessage(0);
+                        },
                         _ => ()
                     }
                 }
@@ -254,8 +288,12 @@ fn receive_ready(to_close: &mut Vec<LongLivedTask>, rx: mpsc::Receiver<ReadyMsg>
     window_watch_tid
 }
 
-fn shutdown(mut to_close: Vec<LongLivedTask>) { unsafe {
-    while let Some(long_lived_task) = to_close.pop() {
+fn shutdown() { unsafe {
+    info!("{}: shutdown", module_path!());
+
+    let mut info = SHUTDOWN_INFO.get_unchecked().lock().unwrap();
+
+    while let Some(long_lived_task) = info.to_close.pop() {
         (|| -> Res<()> {
             match long_lived_task {
                 LongLivedTask::ConfigWatch(event_close) => SetEvent(event_close)?,
@@ -269,6 +307,11 @@ fn shutdown(mut to_close: Vec<LongLivedTask>) { unsafe {
         .unwrap_or_else(|err| {
             error!("{}: failed to close long-lived task: {}", module_path!(), err);
         });
+    }
+
+    let thread_hnds = std::mem::take(&mut info.thread_hnds);
+    for hnd in thread_hnds {
+        _ = hnd.join();
     }
 } }
 
@@ -382,10 +425,15 @@ fn begin(system: System) -> Res<()> {
         };
         ON_TASKBAR_RECREATE_INFO.set(on_taskbar_recreate_info).unwrap();
 
-
+        let mut shutdown_info = ShutdownInfo {
+            to_close: Vec::new(),
+            thread_hnds: Vec::new()
+        };
         let (ready_sx, ready_rx) = mpsc::channel::<ReadyMsg>();
 
         let init_long_lived_tasks = || -> Res<()> {
+            let ShutdownInfo { to_close, thread_hnds } = &mut shutdown_info;
+
             let mut can_reload_config = Vec::new();
             let long_lived_channels = get_long_lived_channels(cli.binds || cli.taskbar, cli.window_shift);
 
@@ -413,7 +461,7 @@ fn begin(system: System) -> Res<()> {
                 thread_hnds.push(pipe_server::spawn(ready_sx, window_foreground_sx));
             }
 
-            let hook_mgr_tid = receive_ready(&mut to_close, ready_rx);
+            let hook_mgr_tid = receive_ready(to_close, ready_rx);
 
             match long_lived_channels.enabled {
                 EnabledChannels::WINDOW_FOREGROUND => {
@@ -448,6 +496,8 @@ fn begin(system: System) -> Res<()> {
             };
             add_tray_notify_icon(exe_module, OGOS_TRAY_CLASS_NAME, Some(wnd_class))?;
 
+            SHUTDOWN_INFO.set(Mutex::new(shutdown_info)).unwrap();
+
             Ok(())
         };
 
@@ -458,13 +508,6 @@ fn begin(system: System) -> Res<()> {
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
             }
             Err(err) => error!("{}: failure initializing long-lived tasks: {}", module_path!(), err)
-        }
-
-        info!("{}: init shutdown", module_path!());
-        shutdown(to_close);
-
-        for hnd in thread_hnds {
-            _ = hnd.join();
         }
     } }
 

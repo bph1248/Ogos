@@ -4,7 +4,6 @@ use clap::*;
 use const_format::*;
 use std::{
     env,
-    ffi::*,
     path::*
 };
 
@@ -85,25 +84,18 @@ pub(crate) enum CliPathKind {
 }
 
 pub(crate) fn parse_cli() -> Res<(Cli, CliPathKind)> {
-    let mut args_os = env::args_os();
+    let mut args = env::args();
 
-    if args_os.len() > 1 {
-        let probably_current_exe_path = args_os.next().unwrap();
-        let maybe_arg_file_path = args_os.next().unwrap();
+    if args.len() > 1 {
+        let probably_current_exe_path = args.next().unwrap();
+        let maybe_arg_file_path = args.next().unwrap();
 
-        if Path::new(&maybe_arg_file_path).extension()
-            .filter(|ext| {
-                *ext == "ogos"
-            })
-            .is_some()
-        {
-            let arg_file_path = maybe_arg_file_path; // No longer a maybe
-            let prefixed_arg_file_path = OsString::from( // Let the expander know this is an arg file
-                format!("{}{}", argfile::PREFIX, arg_file_path.display())
-            );
+        if let Some(ext) = Path::new(&maybe_arg_file_path).extension() && ext == "ogos" {
+            let arg_file_path = maybe_arg_file_path;
+            let prefixed_arg_file_path = format!("{}{}", argfile::PREFIX, arg_file_path); // Let the expander know this is an arg file
             let head = [probably_current_exe_path, arg_file_path, prefixed_arg_file_path];
-            let unexpanded_args = head.iter().cloned().chain(args_os); // Chain remaining os args onto head
-            let expanded_args = argfile::expand_args_from(unexpanded_args, argfile::parse_fromfile, argfile::PREFIX).unwrap();
+            let unexpanded_args = head.iter().cloned().chain(args); // Chain remaining args onto head
+            let expanded_args = argfile::expand_args_from(unexpanded_args.map(|arg| arg.into()), argfile::parse_fromfile, argfile::PREFIX).unwrap();
 
             let cli = Cli::try_parse_from(expanded_args)?;
 
