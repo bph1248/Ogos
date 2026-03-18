@@ -21,6 +21,7 @@ hidapi = { version = "*", default-features = false, features = ["windows-native"
 log = { workspace = true }
 log-panics = "2.1.0"
 netcorehost = { workspace = true }
+once_cell = { workspace = true }
 ogos_audio = { workspace = true }
 ogos_common = { workspace = true }
 ogos_config = { workspace = true }

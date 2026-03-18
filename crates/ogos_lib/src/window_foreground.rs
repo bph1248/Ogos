@@ -412,8 +412,6 @@ fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWND) -> R
                 };
                 let rx = request_win_event_hooks(ts.hook_mgr_tid, request)?;
 
-                add_tray_notify_icon(false)?;
-
                 tb.taskbar_hwnd = taskbar_hwnd;
                 tb.taskbar_tpids = taskbar_tpids;
                 tb.taskbar_hooks = Some(rx);

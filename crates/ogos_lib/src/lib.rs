@@ -56,28 +56,45 @@ use netcorehost::{
     hostfxr::*,
     pdcstring::PdCString
 };
+use once_cell::sync::*;
 use pipe_client::*;
-use windows::Win32::{
-    Foundation::*,
-    System::{
-        Console::*,
-        LibraryLoader::*,
-        Threading::*
-    },
-    UI::{
-        Shell::*,
-        WindowsAndMessaging::*
-    }
-};
 use std::{
     convert::*,
     env,
     fs::{self, *},
     path::*,
-    sync::{mpsc, *}
+    sync::{mpsc, *},
+    thread::*
 };
 use subenum::*;
 use sysinfo::*;
+use windows::{
+    core::{w, PCWSTR},
+    Win32::{
+        Foundation::*,
+        System::{
+            Console::*,
+            LibraryLoader::*,
+            Threading::*
+        },
+        UI::{
+            Shell::*,
+            WindowsAndMessaging::*
+        }
+    }
+};
+
+const OGOS_TRAY_CLASS_NAME: PCWSTR = w!("OgosTray");
+
+static ON_TASKBAR_RECREATE_INFO: OnceCell<OnTaskbarRereateInfo> = OnceCell::new(); // Use sync:: as Windows may call wnd_proc from another thread
+
+#[derive(Debug)]
+struct OnTaskbarRereateInfo {
+    exe_module: HINSTANCE,
+    wm_taskbar_created: u32
+}
+unsafe impl Send for OnTaskbarRereateInfo {}
+unsafe impl Sync for OnTaskbarRereateInfo {}
 
 #[subenum(CanReloadConfig)]
 pub(crate) enum LongLivedTask {
@@ -138,28 +155,28 @@ unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WP
 
             LRESULT(0)
         },
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam)
+        _ => {
+            let info = ON_TASKBAR_RECREATE_INFO.get_unchecked();
+            if msg == info.wm_taskbar_created {
+                add_tray_notify_icon(info.exe_module, OGOS_TRAY_CLASS_NAME, None).unwrap_or_else(|err| {
+                    error!("{}: failed to recreate tray notify icon: {}", module_path!(), err);
+                });
+            }
+
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
     }
 } }
 
-pub(crate) fn add_tray_notify_icon(register_class: bool) -> Res1<()> { unsafe {
-    let tray_class_name = "OgosTray".to_win_str();
-    let exe_module = GetModuleHandleW(None)?;
-    if register_class {
-        let wnd_class = WNDCLASSEXW {
-            cbSize: size_of::<WNDCLASSEXW>() as u32,
-            lpfnWndProc: Some(tray_notify_icon_proc),
-            hInstance: exe_module.into(),
-            lpszClassName: *tray_class_name,
-            ..default!()
-        };
+pub(crate) fn add_tray_notify_icon(exe_module: HINSTANCE, class_name: PCWSTR, register_class: Option<WNDCLASSEXW>) -> Res1<()> { unsafe {
+    if let Some(wnd_class) = register_class {
         RegisterClassExW(&wnd_class).win32_core_ok()?;
     }
 
     let hidden_tray_hwnd = CreateWindowExW(
         default!(),
-        *tray_class_name,
-        *tray_class_name,
+        class_name,
+        class_name,
         WS_OVERLAPPED,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
@@ -167,7 +184,7 @@ pub(crate) fn add_tray_notify_icon(register_class: bool) -> Res1<()> { unsafe {
         CW_USEDEFAULT,
         None,
         None,
-        Some(exe_module.into()),
+        Some(exe_module),
         None
     )?;
 
@@ -359,8 +376,12 @@ fn begin(system: System) -> Res<()> {
 
     // Long-lived tasks
     if cli.binds || cli.taskbar || cli.window_shift { unsafe {
-        let mut thread_hnds = Vec::new();
-        let mut to_close = Vec::new();
+        let on_taskbar_recreate_info = OnTaskbarRereateInfo {
+            exe_module: GetModuleHandleW(None)?.into(),
+            wm_taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated"))
+        };
+        ON_TASKBAR_RECREATE_INFO.set(on_taskbar_recreate_info).unwrap();
+
 
         let (ready_sx, ready_rx) = mpsc::channel::<ReadyMsg>();
 
@@ -417,7 +438,15 @@ fn begin(system: System) -> Res<()> {
                 to_close.push(LongLivedTask::ConfigWatch(event_close));
             }
 
-            add_tray_notify_icon(true)?;
+            let exe_module: HINSTANCE = GetModuleHandleW(None)?.into();
+            let wnd_class = WNDCLASSEXW {
+                cbSize: size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(tray_notify_icon_proc),
+                hInstance: exe_module,
+                lpszClassName: OGOS_TRAY_CLASS_NAME,
+                ..default!()
+            };
+            add_tray_notify_icon(exe_module, OGOS_TRAY_CLASS_NAME, Some(wnd_class))?;
 
             Ok(())
         };
