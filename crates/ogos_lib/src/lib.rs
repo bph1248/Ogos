@@ -65,7 +65,8 @@ use std::{
     fs::{self, *},
     path::*,
     sync::{mpsc, *},
-    thread::*
+    thread::*,
+    time::*
 };
 use subenum::*;
 use sysinfo::*;
@@ -315,15 +316,7 @@ fn shutdown() { unsafe {
     }
 } }
 
-fn begin(system: System) -> Res<()> {
-    // Parse Cli
-    let (cli, cli_path_kind) = parse_cli()?;
-
-    // Help
-    if cli.help {
-        Err(ErrVar::Clap(clap::error::Error::new(clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand)))?;
-    }
-
+fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
     // Audio
     if let Some(name) = cli.set_endpoint.as_ref() {
         set_endpoint(name.as_str()).unwrap_or_else(|err| {
@@ -379,6 +372,8 @@ fn begin(system: System) -> Res<()> {
 
     // Games
     if let Some(name) = cli.launch_game.as_ref() {
+        let system = System::new();
+
         games::launch(name, &cli, system).unwrap_or_else(|err| {
             error!("{}: failure launching game: {}: {}", module_path!(), name, err);
         });
@@ -516,21 +511,34 @@ fn begin(system: System) -> Res<()> {
     Ok(())
 }
 
-fn init() -> Res<System> {
+fn init() -> Res<(Cli, CliPathKind)> {
     let current_exe_path = env::current_exe()?;
-
-    let current_exe_file_name = current_exe_path.get_file_name()?;
     let current_exe_dir = current_exe_path.get_dir()?;
-
     CURRENT_EXE_DIR.set(current_exe_dir.into()).map_err(|_| ErrVar::FailedSetOnceCell)?;
 
-    // Name log file based on the number of instances of Ogos already running
-    let mut system = System::new();
-    let current_process_count = get_process_count(current_exe_file_name, &mut system);
+    // Parse Cli
+    let (cli, cli_path_kind) = parse_cli()?;
 
-    let log_file_name = format!("ogos_{}.log", current_process_count);
+    // Help
+    if cli.help {
+        Err(ErrVar::Clap(clap::error::Error::new(clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand)))?;
+    }
+
+    // Create Log file
+    let prefix = if cli.media_browser  {
+        "gui"
+    } else if cli.binds || cli.taskbar || cli.window_shift {
+        "long-lived"
+    } else {
+        "blip"
+    };
+    let stamp = chrono::Local::now().format("%d_%m_%Y_%H-%M-%S");
+
     let log_dir = current_exe_path.with_file_name("logs");
+    let log_file_name = format!("{}_{}.log", prefix, stamp);
+    let log_file_link_name = format!("{}_current.log", prefix);
     let log_path = log_dir.join(log_file_name);
+    let log_link_path = log_dir.join(log_file_link_name);
 
     {
         use simplelog::*;
@@ -540,7 +548,7 @@ fn init() -> Res<System> {
             .create(true)
             .write(true)
             .truncate(true)
-            .open(log_path)?;
+            .open(&log_path)?;
 
         let logger_config = ConfigBuilder::new()
             .add_filter_ignore_str("eframe")
@@ -559,6 +567,44 @@ fn init() -> Res<System> {
             ]
         )?;
     }
+
+    // Relink current log file
+    if log_link_path.try_exists().unwrap_or(false) {
+        fs::remove_file(&log_link_path)?;
+    }
+    fs::hard_link(log_path, log_link_path)?;
+
+    // Delete old log files
+    let read_dir = log_dir.read_dir()?;
+    std::thread::spawn(move || {
+        let mut log_dir_entries = read_dir.filter_map(|dir_entry| {
+            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
+                let path = dir_entry.path();
+                let file_name = path.get_file_name()?;
+                let ext = path.get_file_ext()?;
+
+                match file_name.starts_with(prefix) && ext.eq_ignore_ascii_case("log") {
+                    true => Ok(Some(dir_entry)),
+                    false => Ok(None)
+                }
+            })
+            .unwrap_or_else(|err| {
+                error!("{}: failed to read log file: {}", module_path!(), err);
+
+                None
+            })
+        })
+        .collect::<Vec<_>>();
+
+        log_dir_entries.sort_by_key(|entry| entry.metadata().and_then(|meta| meta.modified()).unwrap_or(SystemTime::UNIX_EPOCH));
+
+        let delete_count = log_dir_entries.len().saturating_sub(6);
+        for old in log_dir_entries.iter().take(delete_count) {
+            let path = old.path();
+
+            fs::remove_file(&path).unwrap_or_else(|err| error!("{}: failed to delete log file: {}, {}", module_path!(), path.display(), err));
+        }
+    });
 
     // Send panic messages to log
     log_panics::init();
@@ -597,39 +643,31 @@ fn init() -> Res<System> {
         }
     }
 
-    Ok(system)
+    Ok((cli, cli_path_kind))
 }
 
 pub fn entry() -> Res<()> { unsafe {
-    let system = match init() {
-        Ok(system) => system,
+    let (cli, cli_path_kind) = match init() {
+        Ok(cli_info) => cli_info,
         Err(err) => {
+            if let ErrVar::Clap(inner) = err.var.as_ref() && inner.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
+                let long_help = cli::Cli::command().render_long_help();
+
+                AttachConsole(ATTACH_PARENT_PROCESS).unwrap_or_else(|err| {
+                    error!("{}: failed to attach console: {}", module_path!(), err);
+                });
+                println!("{}", long_help);
+
+                return Ok(())
+            }
+
             display_message_box(&format!("{}: failed to init: {}", module_path!(), err))?;
 
             return Err(err)
         }
     };
 
-    if let Err(err) = begin(system) &&
-        let ErrVar::Clap(inner) = err.var.as_ref()
-    {
-        if inner.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
-            let long_help = cli::Cli::command().render_long_help();
-
-            info!("{}", long_help);
-
-            AttachConsole(ATTACH_PARENT_PROCESS).unwrap_or_else(|err| {
-                error!("{}: failed to attach console: {}", module_path!(), err);
-            });
-            println!("{}", long_help);
-
-            return Ok(())
-        }
-
-        error!("{}: {}", module_path!(), err);
-
-        Err(err)?;
-    }
+    begin(cli, cli_path_kind)?;
 
     Ok(())
 } }
