@@ -14,6 +14,7 @@ use ogos_core::*;
 use ogos_err::*;
 
 use log::*;
+use mime_guess::*;
 use nvapi_sys_new as nvapi_530;
 use nvapi_530::*;
 use paste::*;
@@ -320,18 +321,13 @@ pub fn confirm_or_find_app<P>(name: &'static str, path: Option<P>) -> ResVar<Pat
 }
 
 pub fn get_file_kind(ext: &str) -> FileKind {
-    match ext {
-        "jpg" |
-        "jpeg" |
-        "png" |
-        "webp" => FileKind::Image,
-        "m2ts" |
-        "mkv" |
-        "mp4" |
-        "mts" |
-        "ts" |
-        "webm" => FileKind::Vid,
-        _ => FileKind::Other
+    let guess = mime_guess::from_ext(ext).first();
+
+    match guess.as_ref().map(|mime| mime.type_()) {
+        Some(mime::IMAGE) => FileKind::Image,
+        Some(mime::VIDEO) => FileKind::Vid,
+        Some(_) => FileKind::Other,
+        None => FileKind::Unknown
     }
 }
 

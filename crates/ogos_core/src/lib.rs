@@ -142,7 +142,8 @@ pub enum FileKind {
     Dir,
     Image,
     Vid,
-    Other
+    Other,
+    Unknown
 }
 
 pub trait AsDisplay {

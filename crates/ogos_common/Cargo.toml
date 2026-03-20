@@ -12,6 +12,7 @@ crate-type = ["lib"]
 const_format = { workspace = true }
 log = { workspace = true }
 nvapi_sys_new = { workspace = true }
+mime_guess = "2.0.5"
 ogos_core = { workspace = true }
 ogos_err = { workspace = true }
 ogos_mki = { workspace = true }
