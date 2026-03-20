@@ -478,13 +478,13 @@ fn begin(system: System) -> Res<()> {
             }
 
             // Config watch
-            let event_close = CreateEventW(None, true, false, None)?;
-            if let Some(hook_mgr_tid) = hook_mgr_tid {
-                can_reload_config.push(CanReloadConfig::WindowWatch(hook_mgr_tid));
+            // let event_close = CreateEventW(None, true, false, None)?;
+            // if let Some(hook_mgr_tid) = hook_mgr_tid {
+            //     can_reload_config.push(CanReloadConfig::WindowWatch(hook_mgr_tid));
 
-                thread_hnds.push(config_watch::spawn(can_reload_config, event_close.0 as usize));
-                to_close.push(LongLivedTask::ConfigWatch(event_close));
-            }
+            //     thread_hnds.push(config_watch::spawn(can_reload_config, event_close.0 as usize));
+            //     to_close.push(LongLivedTask::ConfigWatch(event_close));
+            // }
 
             let exe_module: HINSTANCE = GetModuleHandleW(None)?.into();
             let wnd_class = WNDCLASSEXW {
