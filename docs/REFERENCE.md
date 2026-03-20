@@ -125,9 +125,11 @@ Settings used in conjunction with `ogos --taskbar`.
     - `jump_list_offset_px`: The number of pixels by which to offset the position of the hitbox, such that it creates a space between itself and any newly created jmplist.
     - `cursor_snap_offset_pc`: A percentage of the height of the screen (top down), used to calculate the vertical position to which the cursor will snap when it collides with the hitbox.
 
+The hitbox is disabled if the foreground window is full screen.
+
 #### Window shift
 
-Settings used in conjunction with `ogos --window-shift`. Elevated privileges are recommended to be able to shift windows belonging to processes of higher integrity. Shift is temporarily disabled if `left_button` or `left_ctrl` is held.
+Settings used in conjunction with `ogos --window-shift`. Elevated privileges are recommended to be able to shift windows belonging to processes of higher integrity.
 
 - `enable_immersive_dark_mode`: Enable dark mode for window title bars that otherwise don't support it.
 - `interval_s`: The shift interval in seconds.
@@ -150,6 +152,8 @@ Shift behavior can be customized with constraints. When the properties of a wind
     - `op`: The operation used in matching `text`.
         - `equals`: `text` must equal the window property.
         - `contains`: `text` may be a substring of the window property.
+
+Shift is disabled if the foreground window is full screen or `left_button`/`left_ctrl` is held.
 
 # Config layout
 

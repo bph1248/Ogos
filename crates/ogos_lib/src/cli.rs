@@ -7,10 +7,27 @@ use std::{
     path::*
 };
 
+const ALIAS: &str = "alias";
+const BINDS: &str = "binds";
+const CLAMP: &str = "clamp";
+const CONFLICTS_WITH: &str = "conflicts with";
+const CURSOR: &str = "cursor";
+const DEVICE: &str = "device";
 const ENDPOINT: &str = "endpoint";
 const EQ: &str = "eq";
 const GAME: &str = "game";
+const LONG_LIVED: [&str; 3] = [BINDS, TASKBAR, WINDOW_SHIFT];
+const SK: &str = "sk";
 const STATE: &str = "state";
+const TASKBAR: &str = "taskbar";
+const WINDOW_SHIFT: &str = "window-shift";
+
+const ALIAS_CLAMP: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CLAMP);
+const ALIAS_CURSOR: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CURSOR);
+const ALIAS_SK: &str = formatcp!("{a}: --{b}", a = ALIAS, b = SK);
+const CONFLICTS_WITH_LONG_LIVED: &str = formatcp!("{a}: <{b}, {c}, {d}>", a = CONFLICTS_WITH, b = BINDS, c = TASKBAR, d = WINDOW_SHIFT);
+const POSSIBLE_VALUES_CLAMP: &str = "possible values: <on, off>";
+const REQUIRES_GAME: &str = formatcp!("requires: --{a}", a = GAME);
 
 #[derive(Clone, ValueEnum)]
 pub(crate) enum NovideoSrgbOp {
@@ -20,15 +37,15 @@ pub(crate) enum NovideoSrgbOp {
 #[derive(Args)]
 #[group(requires = GAME, multiple = true)]
 pub(crate) struct Gaming {
-    #[arg(long = "cursor-size", visible_alias = "cursor", help = concatcp!("Set the cursor size on game launch. Requires --", GAME, ". Reverts on exit."))]
+    #[arg(long = "cursor-size", alias = CURSOR, help = formatcp!("Set the cursor size on game launch. Reverts on exit. [{a}, {b}]", a = ALIAS_CURSOR, b = REQUIRES_GAME))]
     pub(crate) set_cursor_size: bool,
-    #[arg(long = "hdr", help = concatcp!("Switch to HDR mode on game launch. Requires --", GAME, ". Reverts on exit."))]
+    #[arg(long = "hdr", help = formatcp!("Switch to HDR mode on game launch. Reverts on exit. [{a}]", a = REQUIRES_GAME))]
     pub(crate) set_display_mode_hdr: bool,
-    #[arg(long = "res", help = concatcp!("Set the desktop resolution on game launch. Requires --", GAME, ". Reverts on exit."))]
+    #[arg(long = "res", help = formatcp!("Set the desktop resolution on game launch. Reverts on exit. [{a}]", a = REQUIRES_GAME))]
     pub(crate) set_res: bool,
-    #[arg(long, help = concatcp!("Affinitize a game process to run on every other hardware thread (i.e. soft-disable SMT/Hyperthreading). Requires --", GAME, "."))]
+    #[arg(long, help = formatcp!("Affinitize a game process to run on every other hardware thread (i.e. soft-disable SMT/Hyperthreading). [{a}]", a = REQUIRES_GAME))]
     pub(crate) stagger: bool,
-    #[arg(long = "special-k", visible_alias = "sk", help = concatcp!("Launch a game via SKIF (Special K Injection Frontend). Requires --", GAME, "."))]
+    #[arg(long = "special-k", alias = SK, help = formatcp!("Launch a game via SKIF (Special K Injection Frontend). [{a}, {b}]", a = ALIAS_SK, b = REQUIRES_GAME))]
     pub(crate) use_special_k: bool
 }
 
@@ -39,29 +56,27 @@ pub(crate) struct Cli {
     pub(crate) help: bool,
 
     #[arg(help =
-        "Parse an arg file or launch a video with mpv.\n\
-        \n\
-        Arg files follow Python's fromfile format and use the .ogos extension.
-        \n\
-        Valid video file extensions are m2ts, mkv, mp4, mts, ts, and webm. On launch, set display mode, default audio endpoint sample rate, and tone mapping parameters to match video metadata."
+        "Parse additional arguments from an arg file or launch a video file with mpv.\n\
+        Arg files use the .ogos extension and list arguments one per line.\n\
+        Video files are inferred from their extension. On launch, set display mode, default audio endpoint sample rate, and tone mapping parameters to match video metadata."
     )]
     pub(crate) path: Option<String>,
 
-    #[arg(long, help = "Launch the media browser.")]
+    #[arg(long, conflicts_with_all = LONG_LIVED, help = formatcp!("Launch the media browser. [{a}]", a = CONFLICTS_WITH_LONG_LIVED))]
     pub(crate) media_browser: bool,
 
     #[arg(long, help = "Temporarily prevent setting the default audio endpoint sample rate to match video metadata.")]
     pub(crate) maintain_sample_rate: bool,
-    #[arg(long = ENDPOINT, name = "device", help = concatcp!("Set the default audio endpoint device, where <device> is listed in System > Sound > Output."))]
+    #[arg(long = ENDPOINT, name = DEVICE, help = formatcp!("Set the default audio endpoint device, where <{a}> is listed in System > Sound > Output.", a = DEVICE))]
     pub(crate) set_endpoint: Option<String>,
-    #[arg(long = EQ, name = EQ, help = concatcp!("Overwrite the master Equalizer APO config file, where <", EQ, "> is a config-defined custom config path."))]
+    #[arg(long = EQ, name = EQ, help = formatcp!("Overwrite the master Equalizer APO config file, where <{a}> is a config-defined custom config path.", a = EQ))]
     pub(crate) set_eq: Option<String>,
     #[arg(long, help = "Enable/disable HDR mode and set color bit depth, dither state, and novideo_srgb state.")]
     pub(crate) toggle_display_mode: bool,
-    #[arg(long, name = STATE, visible_alias = "clamp", hide_possible_values = true, help = concatcp!("Set novideo_srgb's color space clamp, where <", STATE, "> is either on or off."))]
+    #[arg(long, name = STATE, alias = CLAMP, hide_possible_values = true, help = formatcp!("Set novideo_srgb's color space clamp. [{a}, {b}]", a = ALIAS_CLAMP, b = POSSIBLE_VALUES_CLAMP))]
     pub(crate) novideo_srgb: Option<NovideoSrgbOp>,
 
-    #[arg(long = GAME, name = GAME, help = concatcp!("Launch a game, where <", GAME, "> is a config-defined set of launch parameters and additional settings."))]
+    #[arg(long = GAME, name = GAME, help = formatcp!("Launch a game, where <{a}> is a config-defined set of launch parameters and settings.", a = GAME))]
     pub(crate) launch_game: Option<String>,
     #[command(flatten)]
     pub(crate) gaming: Gaming,
@@ -70,11 +85,10 @@ pub(crate) struct Cli {
     pub(crate) binds: bool,
 
     #[arg(long, help =
-        "Manage taskbar visibility by monitoring cursor collisions against an invisible window or 'hitbox'.\n\
-        The hitbox is disabled if the foreground window is full screen."
+        "Manage taskbar visibility by monitoring cursor collisions against an invisible window or 'hitbox'."
     )]
     pub(crate) taskbar: bool,
-    #[arg(long, help = "Periodically 'pixel-shift' windows about the desktop. Shifting is disabled if the foreground window is full screen, or the left mouse button is held down.")]
+    #[arg(long, help = "Periodically 'pixel-shift' windows about the desktop.")]
     pub(crate) window_shift: bool
 }
 
