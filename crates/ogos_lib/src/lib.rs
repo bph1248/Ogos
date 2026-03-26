@@ -86,6 +86,7 @@ use windows::{
     }
 };
 
+const ICON_ID: usize = 1;
 const OGOS_TRAY_CLASS_NAME: PCWSTR = w!("OgosTray");
 
 static ON_TASKBAR_RECREATE_INFO: OnceCell<OnTaskbarRereateInfo> = OnceCell::new(); // Use sync:: as Windows may call wnd_proc from another thread
@@ -223,14 +224,14 @@ pub(crate) fn add_tray_notify_icon(exe_module: HINSTANCE, class_name: PCWSTR, re
         None
     )?;
 
-    let icon_hnd = LoadIconW(None, IDI_APPLICATION)?;
+    let icon_hnd = LoadImageW(Some(exe_module), PCWSTR(ICON_ID as *const u16), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED)?;
     let notify_icon_data = NOTIFYICONDATAW {
         cbSize: size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hidden_tray_hwnd,
         uID: 1,
         uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
         uCallbackMessage: WM_OGOS_TRAY,
-        hIcon: icon_hnd,
+        hIcon: HICON(icon_hnd.0),
         szTip: "Ogos".to_wide_128(),
         ..default!()
     };

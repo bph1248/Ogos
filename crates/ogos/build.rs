@@ -33,9 +33,6 @@ fn main() {
             </dependency>
         </assembly>
     "#);
-
-    if let Err(err) = win_res.compile() {
-        eprintln!("failed to compile manifest: {}", err);
-        std::process::exit(1);
-    }
+    win_res.set_icon("../../assets/icon.ico");
+    win_res.compile().unwrap();
 }

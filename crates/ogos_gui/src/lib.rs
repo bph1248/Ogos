@@ -1839,8 +1839,10 @@ impl<'a> MediaBrowser<'a> {
 }
 
 pub fn begin() -> Res<(), { loc_var!(Gui) }> {
+    let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png"))?;
     let mut viewport = egui::ViewportBuilder::default()
-        .with_maximize_button(false);
+        .with_maximize_button(false)
+        .with_icon(icon_data);
 
     let config = config::get().read()?;
 
