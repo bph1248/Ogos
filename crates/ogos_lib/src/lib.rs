@@ -75,7 +75,6 @@ use windows::{
     Win32::{
         Foundation::*,
         System::{
-            Console::*,
             LibraryLoader::*,
             Threading::*
         },
@@ -241,6 +240,12 @@ pub(crate) fn add_tray_notify_icon(exe_module: HINSTANCE, class_name: PCWSTR, re
     Ok(())
 } }
 
+fn error_alert(msg: String) {
+    error!("{}", &msg);
+
+    _ = gui::begin(gui::Kind::Info { msg });
+}
+
 fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf> {
     let confirm_deps = |path: &Path| -> ResVar<()>{
         path.with_file_name("EDIDParser.dll").confirm()?;
@@ -321,54 +326,72 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
     // Audio
     if let Some(name) = cli.set_endpoint.as_ref() {
         set_endpoint(name.as_str()).unwrap_or_else(|err| {
-            error!("{}: failed to set endpoint: {}: {}", module_path!(), name, err);
+            let ErrLoc { var, x, .. } = &err;
+
+            match var.as_ref() {
+                ErrVar::UnknownEndpoint => error_alert(format!("{}: {var}: {name}, {x}", module_path!())),
+                ErrVar::FailedSpawnCommand { inner, cmd } => error_alert(format!("{}: failed to spawn app for endpoint: {}, cmd: {}: {}", module_path!(), name, cmd, inner)),
+                _ => error_alert(format!("{}: failed to set endpoint: {}: {}", module_path!(), name, err))
+            }
         });
     }
 
     if let Some(name) = cli.set_eq.as_ref() {
         set_eq(name).unwrap_or_else(|err| {
-            error!("{}: failed to set eq: {}: {}", module_path!(), name, err);
+            let ErrLoc { var, x, .. } = &err;
+
+            match var.as_ref() {
+                ErrVar::UnknownEqApoConfigName => error_alert(format!("{}: {var}: {name}, {x}", module_path!())),
+                _ => error_alert(format!("{}: failed to set eq: {}: {}", module_path!(), name, err))
+            }
         });
     }
 
     // Display
     if cli.toggle_display_mode {
         _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
-            error!("{}: failed to toggle display mode: {}", module_path!(), err);
+            error_alert(format!("{}: failed to toggle display mode: {}", module_path!(), err));
         });
     }
 
     if let Some(op) = cli.novideo_srgb.as_ref() {
-        let display_path = get_first_display_path()?;
-        let display_mode = get_display_mode(display_path)?;
+        (|| -> Res<_> {
+            let display_path = get_first_display_path()?;
+            let display_mode = get_display_mode(display_path)?;
 
-        if display_mode == DisplayMode::Sdr {
-            let config = config::get().read()?;
-            let NovideoSrgbInfo {
-                primaries_source,
-                color_space_target,
-                gamma,
-                enable_optimization,
-                ..
-            } = config.display_modes.as_ref()
-                .and_then(|display_modes| display_modes.sdr.novideo_srgb.clone())
-                .ok_or(ErrVar::MissingConfigKey { name: NovideoSrgbInfo::NAME })?;
+            if display_mode == DisplayMode::Sdr {
+                let config = config::get().read()?;
+                let NovideoSrgbInfo {
+                    primaries_source,
+                    color_space_target,
+                    gamma,
+                    enable_optimization,
+                    ..
+                } = config.display_modes.as_ref()
+                    .and_then(|display_modes| display_modes.sdr.novideo_srgb.clone())
+                    .ok_or(ErrVar::MissingConfigKey { name: NovideoSrgbInfo::NAME })?;
 
-            let enable_clamp = match op {
-                NovideoSrgbOp::On => true,
-                NovideoSrgbOp::Off => false
-            };
-            let info = NovideoSrgbInfo {
-                enable_clamp,
-                primaries_source,
-                color_space_target,
-                gamma,
-                enable_optimization
-            };
-            control_novideo_srgb(&info)?;
-        } else {
-            Err(ErrVar::InvalidDisplayMode)?;
-        }
+                let enable_clamp = match op {
+                    NovideoSrgbOp::On => true,
+                    NovideoSrgbOp::Off => false
+                };
+                let info = NovideoSrgbInfo {
+                    enable_clamp,
+                    primaries_source,
+                    color_space_target,
+                    gamma,
+                    enable_optimization
+                };
+                control_novideo_srgb(&info)?;
+            } else {
+                Err(ErrVar::InvalidDisplayMode)?;
+            }
+
+            Ok(())
+        })()
+        .unwrap_or_else(|err| {
+            error_alert(format!("{}: failed to set novideo_srgb clamp: {}", module_path!(), err));
+        });
     }
 
     // Games
@@ -376,14 +399,14 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
         let system = System::new();
 
         games::launch(name, &cli, system).unwrap_or_else(|err| {
-            error!("{}: failure launching game: {}: {}", module_path!(), name, err);
+            error_alert(format!("{}: failure launching game: {}: {}", module_path!(), name, err));
         });
     }
 
     // Media
     if cli.maintain_sample_rate {
         video::create_maintain_sample_rate_guard().unwrap_or_else(|err| {
-            error!("{}: failed to create maintain-sample-rate guard: {}", module_path!(), err);
+            error_alert(format!("{}: failed to create maintain-sample-rate guard: {}", module_path!(), err));
         });
     }
 
@@ -405,12 +428,14 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
             Ok(())
         })()
         .unwrap_or_else(|err| {
-            error!("{}: failed to handle path: {}: {}", module_path!(), path_str, err);
+            error_alert(format!("{}: failed to handle path: {}: {}", module_path!(), path_str, err));
         });
     }
 
     if cli.media_browser {
-        gui::begin().unwrap_or_else(|err| error!("{}: failed to launch media browser: {}", module_path!(), err));
+        gui::begin(gui::Kind::MediaBrowser).unwrap_or_else(|err| {
+            error_alert(format!("{}: failed to launch media browser: {}", module_path!(), err));
+        });
     }
 
     // Long-lived tasks
@@ -503,7 +528,7 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
             }
-            Err(err) => error!("{}: failure initializing long-lived tasks: {}", module_path!(), err)
+            Err(err) => error_alert(format!("{}: failure initializing long-lived tasks: {}", module_path!(), err))
         }
     } }
 
@@ -647,22 +672,18 @@ fn init() -> Res<(Cli, CliPathKind)> {
     Ok((cli, cli_path_kind))
 }
 
-pub fn entry() -> Res<()> { unsafe {
+pub fn entry() -> Res<()> {
     let (cli, cli_path_kind) = match init() {
         Ok(cli_info) => cli_info,
         Err(err) => {
             if let ErrVar::Clap(inner) = err.var.as_ref() && inner.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
                 let long_help = cli::Cli::command().render_long_help();
+                let long_help = long_help.to_string();
 
-                AttachConsole(ATTACH_PARENT_PROCESS).unwrap_or_else(|err| {
-                    error!("{}: failed to attach console: {}", module_path!(), err);
-                });
-                println!("{}", long_help);
+                gui::begin(gui::Kind::Info { msg: long_help })?;
 
                 return Ok(())
             }
-
-            display_message_box(&format!("{}: failed to init: {}", module_path!(), err))?;
 
             return Err(err)
         }
@@ -671,4 +692,4 @@ pub fn entry() -> Res<()> { unsafe {
     begin(cli, cli_path_kind)?;
 
     Ok(())
-} }
+}

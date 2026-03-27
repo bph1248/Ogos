@@ -351,15 +351,6 @@ impl ConstString for u32 {
     );
 }
 
-pub(crate) fn display_message_box(msg: &str) -> ResVar<()> { unsafe {
-    let caption = w!("Ogos");
-    let msg = msg.to_win_str();
-
-    MessageBoxW(None, *msg, caption, MB_OK).0.win32_core_ok()?;
-
-    Ok(())
-} }
-
 pub(crate) fn set_cursor_size(size: usize) -> windows::core::Result<()> { unsafe {
     const SPIF_NONE: SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS = SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0); // Don't update user profile or broadcast WM_SETTINGCHANGE
     SystemParametersInfoW(SYSTEM_PARAMETERS_INFO_ACTION(0x2029), 0, Some(size as *mut _), SPIF_NONE)?;

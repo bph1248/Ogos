@@ -64,7 +64,7 @@ struct DirEntryInfo {
 }
 
 pub enum Kind {
-    Discord { name: String, info: DiscordActivityInfoView<'static> },
+    Info { msg: String },
     MediaBrowser
 }
 
@@ -652,6 +652,98 @@ impl AsOrientation for f32 {
     }
 }
 
+fn fix_background_brush(hnd: Win32WindowHandle) {
+    fn make_colorref(r: u8, g: u8, b: u8) -> COLORREF {
+        COLORREF(u32::from(r) | u32::from(g) << 8 | u32::from(b) << 16)
+    }
+
+    let hwnd = HWND(hnd.hwnd.get() as *mut c_void);
+    (|| -> Res<()> {
+        unsafe {
+            let new_brush = CreateSolidBrush(make_colorref(27, 27, 27));
+            let set = SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, new_brush.0 as isize);
+
+            if set == 0 {
+                let maybe_err = GetLastError();
+
+                let check = GetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND).win32_core_ok()?;
+                if check != new_brush.0 as usize {
+                    maybe_err.ok()?;
+                }
+            }
+        }
+
+        Ok(())
+    })()
+    .unwrap_or_else(|err| {
+        error!("{}: failed to set background brush: {}", module_path!(), err);
+    });
+}
+
+struct Info {
+    msg: String,
+    checked_background_brush: bool,
+    resized_viewport: bool
+}
+impl eframe::App for Info {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if !self.checked_background_brush && let win_hnd = frame.window_handle().unwrap() && let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
+            fix_background_brush(hnd);
+
+            self.checked_background_brush = true;
+        }
+
+        if !self.resized_viewport {
+            let screen_size = ctx.input(|i| i.viewport().monitor_size).unwrap();
+            let init_win_size = screen_size.div(2.0).yx();
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(init_win_size));
+
+            let content_size = egui::CentralPanel::default()
+                .show(ctx, |ui: &mut egui::Ui| {
+                    ui.set_max_width(init_win_size.x);
+
+                    Self::central_panel(self, ui)
+                })
+                .inner;
+
+            let win_margins = ctx.style().spacing.window_margin.sum();
+            let final_win_size = (content_size + win_margins + egui::vec2(5.0, 5.0))
+                .min(init_win_size);
+
+            let win_pos = egui::pos2(
+                (screen_size.x - final_win_size.x) / 2.0,
+                (screen_size.y - final_win_size.y) / 2.0
+            );
+
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(final_win_size));
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(win_pos));
+
+            self.resized_viewport = true;
+
+            return
+        }
+
+        egui::CentralPanel::default()
+            .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
+    }
+}
+impl Info {
+    fn new(msg: String) -> Self {
+        Self {
+            msg,
+            checked_background_brush: false,
+            resized_viewport: false
+        }
+    }
+
+    fn central_panel(&mut self, ui: &mut egui::Ui) -> egui::Vec2 {
+        egui::ScrollArea::new([false, true])
+            .auto_shrink(false)
+            .show(ui, |ui| ui.label(&self.msg))
+            .content_size
+    }
+}
+
 struct MediaBrowser<'a> {
     thread_pool: Arc<rayon::ThreadPool>,
     image_dirs: &'static ImageDirs,
@@ -699,32 +791,8 @@ struct MediaBrowser<'a> {
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if !self.checked_background_brush && let win_hnd = frame.window_handle().unwrap() && let raw_window_handle::RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
-            fn make_colorref(r: u8, g: u8, b: u8) -> COLORREF {
-                COLORREF(u32::from(r) | u32::from(g) << 8 | u32::from(b) << 16)
-            }
-
-            let hwnd = HWND(hnd.hwnd.get() as *mut c_void);
-            (|| -> Res<()> {
-                unsafe {
-                    let new_brush = CreateSolidBrush(make_colorref(27, 27, 27));
-                    let set = SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, new_brush.0 as isize);
-
-                    if set == 0 {
-                        let maybe_err = GetLastError();
-
-                        let check = GetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND).win32_core_ok()?;
-                        if check != new_brush.0 as usize {
-                            maybe_err.ok()?;
-                        }
-                    }
-                }
-
-                Ok(())
-            })()
-            .unwrap_or_else(|err| {
-                error!("{}: failed to set background brush: {}", module_path!(), err);
-            });
+        if !self.checked_background_brush && let win_hnd = frame.window_handle().unwrap() && let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
+            fix_background_brush(hnd);
 
             self.checked_background_brush = true;
         }
@@ -1838,44 +1906,45 @@ impl<'a> MediaBrowser<'a> {
     }
 }
 
-pub fn begin() -> Res<(), { loc_var!(Gui) }> {
+pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
     let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png"))?;
     let mut viewport = egui::ViewportBuilder::default()
-        .with_maximize_button(false)
         .with_icon(icon_data);
 
-    let config = config::get().read()?;
+    if let Kind::MediaBrowser = kind {
+        let config = config::get().read()?;
 
-    if let Some(size) = config.media_browser.as_ref().and_then(|mb| mb.window_inner_size) {
-        #[allow(clippy::cast_precision_loss)]
-        let (width, height) = (size.width as f32, size.height as f32);
+        if let Some(size) = config.media_browser.as_ref().and_then(|mb| mb.window_inner_size) {
+            #[allow(clippy::cast_precision_loss)]
+            let (width, height) = (size.width as f32, size.height as f32);
 
-        viewport = viewport.with_inner_size([width, height]);
+            viewport = viewport.with_inner_size([width, height]);
+        }
     }
 
+    let dx12_backend_options = wgpu::Dx12BackendOptions {
+        presentation_system: wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual,
+        ..default!()
+    };
+    let wgpu_setup = egui_wgpu::WgpuSetup::CreateNew(egui_wgpu::WgpuSetupCreateNew {
+        instance_descriptor: wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::DX12,
+            backend_options: wgpu::BackendOptions {
+                dx12: dx12_backend_options,
+                ..default!()
+            },
+            ..default!()
+        },
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        ..default!()
+    });
     let native_options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: Some(1),
-            wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(
-                egui_wgpu::WgpuSetupCreateNew {
-                    instance_descriptor: wgpu::InstanceDescriptor {
-                        backends: wgpu::Backends::DX12,
-                        backend_options: wgpu::BackendOptions {
-                            dx12: wgpu::Dx12BackendOptions {
-                                presentation_system: wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual,
-                                ..default!()
-                            },
-                            ..default!()
-                        },
-                        ..default!()
-                    },
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    ..default!()
-                }
-            ),
+            wgpu_setup,
             ..default!()
         },
         centered: true,
@@ -1887,24 +1956,31 @@ pub fn begin() -> Res<(), { loc_var!(Gui) }> {
         native_options,
         Box::new(|cctx| {
             cctx.egui_ctx.set_pixels_per_point(1.0);
+            cctx.egui_ctx.style_mut(|style| {
+                let factor = 1.5;
 
-            let mut style = (*cctx.egui_ctx.style()).clone();
-            let factor = 1.5;
+                style.spacing.interact_size = (style.spacing.interact_size * factor).round();
+                style.spacing.button_padding = (style.spacing.button_padding * factor).round();
+                style.spacing.item_spacing = (style.spacing.item_spacing * factor).round();
+                style.spacing.icon_spacing = (style.spacing.icon_spacing * factor).round();
+                style.spacing.icon_width = (style.spacing.icon_width * factor).round();
+                style.spacing.icon_width_inner = (style.spacing.icon_width_inner * factor).round();
 
-            style.spacing.interact_size = (style.spacing.interact_size * factor).round();
-            style.spacing.button_padding = (style.spacing.button_padding * factor).round();
-            style.spacing.item_spacing = (style.spacing.item_spacing * factor).round();
-            style.spacing.icon_spacing = (style.spacing.icon_spacing * factor).round();
-            style.spacing.icon_width = (style.spacing.icon_width * factor).round();
-            style.spacing.icon_width_inner = (style.spacing.icon_width_inner * factor).round();
+                for (_, font_id) in style.text_styles.iter_mut() {
+                    font_id.size = (font_id.size * factor).round();
+                }
+            });
 
-            for (_, font_id) in style.text_styles.iter_mut() {
-                font_id.size = (font_id.size * factor).round();
-            }
+            let app: Box<dyn eframe::App> = match kind {
+                Kind::Info { msg } => {
+                    cctx.egui_ctx.style_mut(|style| style.wrap_mode = Some(egui::TextWrapMode::Wrap));
 
-            cctx.egui_ctx.set_style(style);
+                    Box::new(Info::new(msg))
+                },
+                Kind::MediaBrowser => Box::new(MediaBrowser::new(&cctx.egui_ctx)?)
+            };
 
-            Ok(Box::new(MediaBrowser::new(&cctx.egui_ctx)?))
+            Ok(app)
         })
     )?;
 
