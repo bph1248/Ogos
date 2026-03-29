@@ -250,15 +250,16 @@ fn stroke_rect_painter(painter: egui::Painter, rect: egui::Rect) {
     painter.rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
 }
 
-fn populate_filtered_view(view: &mut Vec<usize>, set: &BTreeSet<usize>) {
+fn populate_grid_view(view: &mut Vec<usize>, entries: &[GridEntryInfo], set: &BTreeSet<usize>) {
     view.clear();
     view.extend(set.iter().cloned());
+    sort_grid_view(view, entries);
 }
 
-fn sort_filtered_view(view: &mut [usize], grid_entries: &[GridEntryInfo]) {
+fn sort_grid_view(view: &mut [usize], entries: &[GridEntryInfo]) {
     view.sort_unstable_by(|a, b| {
-        let entry_a = &grid_entries[*a];
-        let entry_b = &grid_entries[*b];
+        let entry_a = &entries[*a];
+        let entry_b = &entries[*b];
         let name_a = entry_a.sort_name.as_deref().unwrap_or(entry_a.stem.as_ref());
         let name_b = entry_b.sort_name.as_deref().unwrap_or(entry_b.stem.as_ref());
 
@@ -602,7 +603,7 @@ struct ResizeImage {
 }
 
 #[derive(Default)]
-struct TagButtonMenuInfo {
+struct TagWinButtonMenuInfo {
     is_open: bool,
     tag_op: Option<(Rc<str>, TagOp)>
 }
@@ -762,15 +763,15 @@ struct MediaBrowser<'a> {
     grid_cell_i: usize,
     grid_selected_cell_i: Option<usize>,
     grid_scroll_offset: f32,
-    tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
-    active_tag: Option<Rc<str>>,
-    filtered_view: Vec<usize>, // Indices into grid_entries
-    removed_entry_from_filtered_view: bool,
-    tag_button_menu: TagButtonMenuInfo,
+    grid_view: Vec<usize>, // Indices into grid_entries
+    removed_entry_from_grid_view: bool,
     sort_name_edit: String,
     tag_add_edit: String,
+    tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
+    active_tag: Option<Rc<str>>,
     open_tag_win: bool,
-    tag_rename_edit: String,
+    tag_win_button_menu: TagWinButtonMenuInfo,
+    tag_win_rename_edit: String,
     tag_win_stamp: Option<Instant>,
     tag_win_cursor_checked: bool,
     details_grid_entry_i: usize,
@@ -996,9 +997,9 @@ impl<'a> MediaBrowser<'a> {
             })
             .collect::<Vec<_>>();
 
-        let mut filtered_view = Vec::with_capacity(grid_entries.len());
-        filtered_view.extend(0..grid_entries.len());
-        sort_filtered_view(&mut filtered_view, &grid_entries);
+        let mut grid_view = Vec::with_capacity(grid_entries.len());
+        grid_view.extend(0..grid_entries.len());
+        sort_grid_view(&mut grid_view, &grid_entries);
 
         let discord_app_ids = config.discord.app_ids.clone();
         let discord_display_kind = config.discord.display_kind;
@@ -1079,15 +1080,15 @@ impl<'a> MediaBrowser<'a> {
             grid_cell_i: default!(),
             grid_selected_cell_i: default!(),
             grid_scroll_offset: default!(),
-            tags,
-            active_tag: default!(),
-            filtered_view,
-            removed_entry_from_filtered_view: default!(),
-            tag_button_menu: default!(),
+            grid_view,
+            removed_entry_from_grid_view: default!(),
             sort_name_edit: default!(),
             tag_add_edit: default!(),
+            tags,
+            active_tag: default!(),
             open_tag_win: default!(),
-            tag_rename_edit: default!(),
+            tag_win_button_menu: default!(),
+            tag_win_rename_edit: default!(),
             tag_win_stamp: default!(),
             tag_win_cursor_checked: default!(),
             details_grid_entry_i: default!(),
@@ -1108,15 +1109,15 @@ impl<'a> MediaBrowser<'a> {
         })
     }
 
-    fn reset_filtered_view(&mut self) {
-        self.filtered_view.clear();
-        self.filtered_view.extend(0..self.grid_entries.len());
+    fn reset_grid_view(&mut self) {
+        self.grid_view.clear();
+        self.grid_view.extend(0..self.grid_entries.len());
 
-        self.sort_filtered_view();
+        self.sort_grid_view();
     }
 
-    fn sort_filtered_view(&mut self) {
-        sort_filtered_view(&mut self.filtered_view, &self.grid_entries);
+    fn sort_grid_view(&mut self) {
+        sort_grid_view(&mut self.grid_view, &self.grid_entries);
     }
 
     fn central_panel(&mut self, ui: &mut egui::Ui) {
@@ -1136,8 +1137,8 @@ impl<'a> MediaBrowser<'a> {
             [250.0, (max_rect.height() - FRAME_MARGIN).max(0.0)].into()
         );
 
-        let tag_win_resp = self.open_tag_win.and_then(|| {
-            egui::Window::new("tag_win")
+        let tag_win = self.open_tag_win.and_then(|| {
+            egui::Window::new("view_win")
                 .fixed_rect(tag_win_rect)
                 .title_bar(false)
                 .fade_in(true)
@@ -1150,20 +1151,20 @@ impl<'a> MediaBrowser<'a> {
 
                         self.tag_win_buttons(ui);
 
-                        if let Some((tag, op)) = self.tag_button_menu.tag_op.as_ref() {
+                        if let Some((tag, op)) = self.tag_win_button_menu.tag_op.as_ref() {
                             let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
 
                             match op {
                                 TagOp::Rename => {
                                     let set = self.tags.remove(tag).unwrap();
-                                    let tag: Rc<str> = Rc::from(self.tag_rename_edit.as_str());
+                                    let tag: Rc<str> = Rc::from(self.tag_win_rename_edit.as_str());
 
                                     if tag_is_active {
                                         self.active_tag = Some(tag.clone());
                                     }
                                     self.tags.insert(tag, set);
 
-                                    self.tag_rename_edit.clear();
+                                    self.tag_win_rename_edit.clear();
                                 },
                                 TagOp::Remove => {
                                     self.tags.remove(tag);
@@ -1180,16 +1181,16 @@ impl<'a> MediaBrowser<'a> {
                 })
         });
 
-        if !self.tag_button_menu.is_open {
+        if !self.tag_win_button_menu.is_open {
             let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
             match hover_pos {
                 Some(hover_pos) => {
                     self.tag_win_cursor_checked = false;
 
-                    if let Some(resp) = tag_win_resp.as_ref() {
-                        match resp.response.contains_pointer() {
+                    if let Some(tag_win) = tag_win.as_ref() {
+                        match tag_win.response.contains_pointer() {
                             true => self.tag_win_stamp = Some(now!()),
-                            false => if hover_pos.x > resp.response.rect.right() {
+                            false => if hover_pos.x > tag_win.response.rect.right() {
                                 self.tag_win_stamp = None;
                                 self.open_tag_win = false;
                             }
@@ -1230,7 +1231,7 @@ impl<'a> MediaBrowser<'a> {
         let all_button_resp = ui.button("All");
 
         if all_button_resp.clicked() {
-            self.reset_filtered_view();
+            self.reset_grid_view();
 
             self.active_tag = None;
         }
@@ -1238,14 +1239,14 @@ impl<'a> MediaBrowser<'a> {
             all_button_resp.highlight();
         }
 
-        self.tag_button_menu = self.tags.iter().fold(TagButtonMenuInfo::default(), |mut deferred, (tag, set)| {
+        self.tag_win_button_menu = self.tags.iter().fold(TagWinButtonMenuInfo::default(), |mut deferred, (tag, set)| {
             if !set.is_empty() {
                 let tag_button_resp = ui.button(tag.as_ref());
 
                 let tag_button_menu = egui::Popup::context_menu(&tag_button_resp)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show(|ui| {
-                        let tag_rename_edit_resp = egui::TextEdit::singleline(&mut self.tag_rename_edit)
+                        let tag_rename_edit_resp = egui::TextEdit::singleline(&mut self.tag_win_rename_edit)
                             .hint_text("Rename")
                             .show(ui)
                             .response;
@@ -1253,7 +1254,7 @@ impl<'a> MediaBrowser<'a> {
                         tag_rename_edit_resp.request_focus();
 
                         if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
-                            if !self.tag_rename_edit.is_empty() {
+                            if !self.tag_win_rename_edit.is_empty() {
                                 deferred.tag_op = Some((tag.clone(), TagOp::Rename));
 
                                 ui.close();
@@ -1276,7 +1277,7 @@ impl<'a> MediaBrowser<'a> {
                 }
 
                 if tag_button_resp.clicked() {
-                    populate_filtered_view(&mut self.filtered_view, set);
+                    populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
                     self.active_tag = Some(tag.clone());
                     self.grid_selected_cell_i = None;
@@ -1294,7 +1295,7 @@ impl<'a> MediaBrowser<'a> {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
-            let max_cell_count = self.filtered_view.len();
+            let max_cell_count = self.grid_view.len();
             let cell_space_x = self.grid_cell_size.x + GRID_IMAGE_SPACING.x;
             let row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(cell_space_x).ceil() as usize; // ui.available_width() - (cell_space_x * n - GRID_IMAGE_SPACING.x) <= cell_space_x
             let row_cell_count = row_cell_count.clamp(1, max_cell_count);
@@ -1323,7 +1324,7 @@ impl<'a> MediaBrowser<'a> {
 
                     ui.ctx().input(|state| {
                         if state.pointer.button_released(egui::PointerButton::Extra1) {
-                            self.reset_filtered_view();
+                            self.reset_grid_view();
 
                             self.active_tag = None;
                         }
@@ -1351,10 +1352,10 @@ impl<'a> MediaBrowser<'a> {
                         });
 
                         // Cell entry might have its tag removed while view is active and table is still being updated
-                        match self.removed_entry_from_filtered_view {
+                        match self.removed_entry_from_grid_view {
                             true => {
                                 max_cell_count -= 1;
-                                self.removed_entry_from_filtered_view = false;
+                                self.removed_entry_from_grid_view = false;
                             },
                             false => self.grid_cell_i += 1
                         }
@@ -1364,7 +1365,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn grid_cell(&mut self, ui: &mut egui::Ui) {
-        self.grid_entry_i = self.filtered_view[self.grid_cell_i];
+        self.grid_entry_i = self.grid_view[self.grid_cell_i];
         let grid_entry_info = &self.grid_entries[self.grid_entry_i];
         let mut image_info = grid_entry_info.image_file_name_i.and_then(|image_file_name_i| self.images.get_index_mut(image_file_name_i));
 
@@ -1556,10 +1557,10 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn grid_cell_sort_menu(&mut self, ui: &mut egui::Ui) {
-        self.grid_entry_i = self.filtered_view[self.grid_cell_i];
+        self.grid_entry_i = self.grid_view[self.grid_cell_i];
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
 
-        let mut sort_filtered_view = false;
+        let mut sort_grid_view = false;
         ui.menu_button("Sort name", |ui| {
             let sort_name_edit_resp = egui::TextEdit::singleline(&mut self.sort_name_edit)
                 .hint_text(grid_entry_info.sort_name.as_deref().unwrap_or("Add"))
@@ -1571,7 +1572,7 @@ impl<'a> MediaBrowser<'a> {
                     grid_entry_info.sort_name = Some(Rc::from(self.sort_name_edit.as_str()));
 
                     self.sort_name_edit.clear();
-                    sort_filtered_view = true;
+                    sort_grid_view = true;
                 }
 
                 sort_name_edit_resp.request_focus();
@@ -1581,12 +1582,12 @@ impl<'a> MediaBrowser<'a> {
                 grid_entry_info.sort_name = None;
 
                 self.sort_name_edit.clear();
-                sort_filtered_view = true;
+                sort_grid_view = true;
             }
         });
 
-        if sort_filtered_view {
-            self.sort_filtered_view();
+        if sort_grid_view {
+            self.sort_grid_view();
 
             ui.close();
         }
@@ -1627,9 +1628,9 @@ impl<'a> MediaBrowser<'a> {
                             match set.is_empty() {
                                 true => self.active_tag = None,
                                 false => {
-                                    populate_filtered_view(&mut self.filtered_view, set);
+                                    populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
-                                    self.removed_entry_from_filtered_view = true;
+                                    self.removed_entry_from_grid_view = true;
                                 }
                             }
 

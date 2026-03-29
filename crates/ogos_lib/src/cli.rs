@@ -25,7 +25,7 @@ const WINDOW_SHIFT: &str = "window-shift";
 const ALIAS_CLAMP: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CLAMP);
 const ALIAS_CURSOR: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CURSOR);
 const ALIAS_SK: &str = formatcp!("{a}: --{b}", a = ALIAS, b = SK);
-const CONFLICTS_WITH_LONG_LIVED: &str = formatcp!("{a}: <{b}, {c}, {d}>", a = CONFLICTS_WITH, b = BINDS, c = TASKBAR, d = WINDOW_SHIFT);
+const CONFLICTS_WITH_LONG_LIVED: &str = formatcp!("{a}: <--{b}, --{c}, --{d}>", a = CONFLICTS_WITH, b = BINDS, c = TASKBAR, d = WINDOW_SHIFT);
 const POSSIBLE_VALUES_CLAMP: &str = "possible values: <on, off>";
 const REQUIRES_GAME: &str = formatcp!("requires: --{a}", a = GAME);
 
@@ -56,7 +56,7 @@ pub(crate) struct Cli {
     pub(crate) help: bool,
 
     #[arg(help =
-        "Parse additional arguments from an arg file or launch a video file with mpv.\n\
+        "Parse an arg file for additional arguments or launch a video file with mpv.\n\
         Arg files use the .ogos extension and list arguments one per line.\n\
         Video files are inferred from their extension. On launch, set display mode, default audio endpoint sample rate, and tone mapping parameters to match video metadata."
     )]

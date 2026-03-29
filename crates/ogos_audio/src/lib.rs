@@ -153,7 +153,7 @@ pub fn set_eq(name: &str) -> Res<()> {
         .and_then(|audio_config| audio_config.eq_apo.as_ref())
         .ok_or(ErrVar::MissingConfigKey { name: config::EqApo::NAME })?;
 
-    let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or(ErrVar::UnknownEq)?;
+    let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or(ErrVar::UnknownEqApoConfigName)?;
 
     fs::copy(custom_config_path, eq_apo.master_config_path)?;
 

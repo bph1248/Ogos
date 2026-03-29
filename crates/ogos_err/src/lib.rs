@@ -206,7 +206,7 @@ pub enum ErrVar {
     PoisonedLock,
     ReloadConfig,
     UnknownEndpoint,
-    UnknownEq,
+    UnknownEqApoConfigName,
     UnknownGame { name: String },
     UnsuccessfulExitCode { code: Option<i32>, cmd: String },
 
@@ -300,7 +300,7 @@ impl Display for ErrVar {
             PoisonedLock => write!(f, "poisoned lock"),
             ReloadConfig => write!(f, "reload config"),
             UnknownEndpoint => write!(f, "unknown endpoint"),
-            UnknownEq => write!(f, "unknown eq"),
+            UnknownEqApoConfigName => write!(f, "unknown eq apo config name"),
             UnknownGame { name } => write!(f, "unknown game: {}", name),
             UnsuccessfulExitCode { code, cmd } => write!(f, "unsuccessful exit code: {:?}, command: {}", code, cmd),
             Win32InvalidHandle => write!(f, "invalid win32 handle"),

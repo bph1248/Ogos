@@ -309,7 +309,7 @@ pub fn confirm_or_find_app<P>(name: &'static str, path: Option<P>) -> ResVar<Pat
                 ErrVar::MissingFile { path } => {
                     error!("{}: invalid app path: {} - searching for {}", module_path!(), path.display(), name);
 
-                    find_app(name).inspect(|path| info!("{}: found app: {}", module_path!(), path.display()))
+                    find_app(name).inspect(|path| info!("{}: found app path: {}", module_path!(), path.display()))
                 },
                 _ => Err(err)
             }
