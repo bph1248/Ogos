@@ -15,6 +15,7 @@ use std::{
     collections::*,
     fmt,
     fs,
+    ops::*,
     sync::*,
     time::*
 };
@@ -552,8 +553,17 @@ struct ClickMap(
 
 #[derive(Clone, Copy)]
 pub enum InputEventMap {
+    // PressMirror { from: MouseWheel(Wheel), .. } won't make it past config
     PressMirror { from: InputEvent, to: InputEvent },
     WheelClick { from: InputEvent, to: InputEvent, dur: Duration }
+}
+impl InputEventMap {
+    pub fn requires_mouse_hook(&self) -> bool {
+        matches!(self,
+            InputEventMap::PressMirror { from: InputEvent::MouseButton(_), .. } |
+            InputEventMap::WheelClick { .. }
+        )
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -562,6 +572,13 @@ pub struct InputEventMaps(
     #[serde(deserialize_with = "deserialize_input_event_maps")]
     pub Vec<InputEventMap>
 );
+impl Deref for InputEventMaps {
+    type Target = Vec<InputEventMap>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -45,6 +45,24 @@ struct Binds<'a> {
     bound: Vec<InputEventMap>,
     input_hooks_disabled: bool
 }
+impl<'a> Binds<'a> {
+    fn has_maps(&self, exe: &str) -> HasMaps {
+        match self.maps.as_ref().and_then(|maps| maps.get(exe)) {
+            Some(input_event_maps) => {
+                input_event_maps.iter().find_map(|input_event_map| {
+                    if input_event_map.requires_mouse_hook() {
+                        return Some(HasMaps::InclMouse)
+                    }
+
+                    None
+                })
+                .unwrap_or(HasMaps::Keyboard)
+            },
+            None => HasMaps::None
+        }
+    }
+}
+
 impl<'a> Drop for Binds<'a> {
     fn drop(&mut self) {
         unbind_maps(self);
@@ -159,7 +177,20 @@ struct WinInfo {
     tpids: Tpids,
     exe: String,
     may_hook_loc_change: bool,
-    has_maps: bool
+    has_maps: HasMaps
+}
+
+#[derive(Default, PartialEq)]
+enum HasMaps {
+    #[default]
+    None,
+    Keyboard,
+    InclMouse
+}
+impl HasMaps {
+    fn as_bool(&self) -> bool {
+        !matches!(self, Self::None)
+    }
 }
 
 #[derive(Default, PartialEq)]
@@ -545,7 +576,9 @@ fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: HWND) -
 fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&str>) {
     match active_game {
         Some(exe) if exe == win_info.exe.as_str() => { // Game is foreground
-            if binds.qmk.is_some() || !win_info.has_maps {
+            if !win_info.has_maps.as_bool() || // No maps, no need for input hooks
+                win_info.has_maps != HasMaps::InclMouse && binds.qmk.is_some() // No mouse maps/hook, and no need for keyboard hook - QMK can take over
+            {
                 mki::clear();
                 mki::uninstall_hooks();
 
@@ -562,11 +595,11 @@ fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&s
                 },
                 false => unbind_maps(binds) // Some other app was foreground
             }
-
-            if win_info.has_maps {
-                bind_maps(binds, win_info.exe.as_str());
-            }
         }
+    }
+
+    if win_info.has_maps.as_bool() {
+        bind_maps(binds, win_info.exe.as_str());
     }
 }
 
@@ -627,7 +660,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
             // Everything else
             let exe = hwnd.get_exe()?;
             let has_maps = ts.binds.as_ref()
-                .map(|binds| has_maps(binds, exe.as_str()))
+                .map(|binds| binds.has_maps(exe.as_str()))
                 .unwrap_or_default();
 
             let win_info = WinInfo {
@@ -700,12 +733,6 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
     Ok(())
 }
 
-fn has_maps(binds: &Binds, exe: &str) -> bool {
-    binds.maps.as_ref()
-        .map(|maps| maps.contains_key(exe))
-        .unwrap_or_default()
-}
-
 fn unbind_maps(binds: &mut Binds) {
     for map in binds.bound.drain(..) {
         match map {
@@ -726,7 +753,7 @@ fn bind_maps(binds: &mut Binds, exe: &str) {
         .get(exe)
         .unwrap();
 
-    for map in maps.0.iter().copied() {
+    for map in maps.iter().copied() {
         let press_mirror_action = |to: InputEvent| -> Action {
             Action {
                 callback: Box::new(move |_, state| {
@@ -890,7 +917,7 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Ti
                         unbind_maps(&mut binds);
 
                         for (_, win_info) in ts.win_infos.iter_mut() {
-                            win_info.has_maps = has_maps(&binds, win_info.exe.as_ref());
+                            win_info.has_maps = binds.has_maps(&win_info.exe);
                         }
 
                         ts.binds = Some(binds);
