@@ -145,7 +145,6 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                     cmd.args(args);
                 }
             }
-
         }
 
         spawn_command(&mut cmd)?;
@@ -237,6 +236,9 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
                 });
             });
         }
+
+        let proc_hnd = OpenProcess(PROCESS_SYNCHRONIZE, false, pid.as_u32())?;
+        WaitForSingleObject(proc_hnd, u32::MAX).win32_core_ok()?;
 
         Ok(())
     })();
