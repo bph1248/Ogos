@@ -25,7 +25,7 @@ macro_rules! impl_BindVar {
             $($variant,)+
         }
         impl BindVar {
-            pub(crate) fn as_str(&self) -> &str {
+            pub(crate) fn as_str(&self) -> &'static str {
                 match self {
                     $(Self::$variant => map_ascii_case!(Case::Snake, stringify!($variant)),)+
                 }
@@ -292,6 +292,14 @@ impl BindVar {
         }
 
         Err(ErrVar::FailedKeyFrom { from: self.as_str().into() })
+    }
+
+    pub fn try_as_hotkey_prefix(&self) -> ResVar<Key> {
+        if let Ok(InputEvent::Keyboard(key)) = self.try_as_input_event() && key.is_modifier() {
+            return Ok(key)
+        }
+
+        Err(ErrVar::InvalidHotkeyPrefix { key: self.as_str() })
     }
 }
 impl TryFrom<&str> for BindVar {

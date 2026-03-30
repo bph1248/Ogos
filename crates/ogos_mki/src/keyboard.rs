@@ -105,6 +105,24 @@ pub enum Key {
     KeypadPlus,
     KeypadDot
 }
+impl Key {
+    pub fn is_modifier(&self) -> bool {
+        matches!(self,
+            Key::LeftShift |
+            Key::LeftCtrl |
+            Key::LeftWin |
+            Key::LeftAlt |
+            Key::Space |
+            Key::Backspace |
+            Key::Enter |
+            Key::RightShift |
+            Key::RightCtrl |
+            Key::RightWin |
+            Key::RightAlt
+        )
+    }
+}
+
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let code: i32 = (*self).into();

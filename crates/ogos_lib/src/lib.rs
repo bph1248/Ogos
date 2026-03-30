@@ -673,8 +673,8 @@ fn init() -> Res<(Cli, CliPathKind)> {
 }
 
 pub fn entry() -> Res<()> {
-    let (cli, cli_path_kind) = match init() {
-        Ok(cli_info) => cli_info,
+    match init() {
+        Ok((cli, cli_path_kind)) => begin(cli, cli_path_kind),
         Err(err) => {
             if let ErrVar::Clap(inner) = err.var.as_ref() && inner.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
                 let long_help = cli::Cli::command().render_long_help();
@@ -685,11 +685,9 @@ pub fn entry() -> Res<()> {
                 return Ok(())
             }
 
-            return Err(err)
+            error_alert(format!("{}: failed to init: {}", module_path!(), err));
+
+            Err(err)
         }
-    };
-
-    begin(cli, cli_path_kind)?;
-
-    Ok(())
+    }
 }

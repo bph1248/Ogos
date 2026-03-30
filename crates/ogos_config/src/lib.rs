@@ -42,7 +42,7 @@ fn deserialize_key<'de, D>(deserializer: D) -> Result<Key, D::Error> where
     BindVar::deserialize(deserializer)?.try_as_key().map_err(D::Error::custom)
 }
 
-fn deserialize_keys<'de, D>(deserializer: D) -> Result<Vec<Key>, D::Error> where
+fn deserialize_hotkey_prefix<'de, D>(deserializer: D) -> Result<Vec<Key>, D::Error> where
     D: Deserializer<'de>
 {
     struct KeysVisitor;
@@ -57,11 +57,14 @@ fn deserialize_keys<'de, D>(deserializer: D) -> Result<Vec<Key>, D::Error> where
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> where
             A: SeqAccess<'de>
         {
-            let mut keys = Vec::with_capacity(seq.size_hint().unwrap_or_default());
-
+            let mut keys = Vec::new();
             while let Some(key) = seq.next_element::<BindVar>()? {
-                keys.push(key.try_as_key().map_err(A::Error::custom)?);
+                keys.push(key.try_as_hotkey_prefix().map_err(A::Error::custom)?);
             };
+
+            if keys.is_empty() {
+                Err(A::Error::custom(ErrVar::MissingHotkeyPrefix))?;
+            }
 
             Ok(keys)
         }
@@ -573,7 +576,7 @@ pub enum Task {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hotkeys {
-    #[serde(deserialize_with = "deserialize_keys")]
+    #[serde(deserialize_with = "deserialize_hotkey_prefix")]
     pub prefix: Vec<Key>,
     #[serde(deserialize_with = "deserialize_tasks", rename = "triggers")]
     pub tasks: HashMap<Key, Task>
