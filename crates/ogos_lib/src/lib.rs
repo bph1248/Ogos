@@ -262,21 +262,21 @@ fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf> {
 }
 
 fn get_long_lived_channels(enable_window_foreground: bool, enable_window_shift: bool) -> LongLivedChannels {
-    let mut llc = LongLivedChannels::default();
+    let mut long_lived_channels = LongLivedChannels::default();
 
     if enable_window_foreground {
-        let channels = mpsc::channel::<window_foreground::Msg>();
+        let channel = mpsc::channel::<window_foreground::Msg>();
 
-        llc.with_window_foreground(channels);
+        long_lived_channels.with_window_foreground(channel);
     }
 
     if enable_window_shift {
-        let channels = mpsc::channel::<window_shift::Msg>();
+        let channel = mpsc::channel::<window_shift::Msg>();
 
-        llc.with_window_shift(channels);
+        long_lived_channels.with_window_shift(channel);
     }
 
-    llc
+    long_lived_channels
 }
 
 fn receive_ready(to_close: &mut Vec<LongLivedTask>, rx: mpsc::Receiver<ReadyMsg>) -> Option<Tid> {

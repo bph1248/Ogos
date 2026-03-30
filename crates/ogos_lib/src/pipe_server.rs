@@ -11,6 +11,7 @@ use std::{
     thread::{self, *}
 };
 use strum::*;
+use tokio::sync::*;
 use windows::{
     core::*,
     Win32::{
@@ -126,14 +127,15 @@ fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<windo
         let msg = bincode::deserialize::<Msg>(&buf)?;
         info!("{}: recvd: {}", module_path!(), msg);
 
-        let ack = bincode::serialize(&Msg::Ack)?;
-        WriteFile(pipe_hnd, Some(&ack), None, None)?;
-
         match msg {
             Msg::ActiveGame(_) => if let Some(sx) = window_foreground_sx.as_ref() {
-                sx.send(window_foreground::Msg::Pipe(msg)).unwrap_or_else(|err| {
-                    error!("{}: failed to pipe active game: {}", module_path!(), err);
-                });
+                let (ack_sx, ack_rx) = oneshot::channel::<()>();
+
+                sx.send(window_foreground::Msg::Pipe((msg, ack_sx))).unwrap();
+                ack_rx.blocking_recv().unwrap();
+
+                let pipe_ack = bincode::serialize(&Msg::Ack)?;
+                WriteFile(pipe_hnd, Some(&pipe_ack), None, None)?;
             },
             Msg::Close => {
                 DisconnectNamedPipe(pipe_hnd)?;

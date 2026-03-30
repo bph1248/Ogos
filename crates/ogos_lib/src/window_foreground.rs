@@ -18,8 +18,7 @@ use std::{
     mem,
     sync::{
         atomic::*,
-        mpsc::*,
-        *
+        mpsc::*
     },
     thread::{self, *},
     time::*
@@ -173,7 +172,7 @@ pub(crate) enum HitboxState {
 #[derive(Display, IntoStaticStr)]
 pub(crate) enum Msg {
     Broadcast(BroadcastMsg),
-    Pipe(pipe_server::Msg),
+    Pipe((pipe_server::Msg, oneshot::Sender<()>)),
     Taskbar(Box<Taskbar>),
     WinEventHookAllForeground { hwnd: usize },
     WinEventHookAllOtherForegroundDestroy { hook: usize, hwnd: usize },
@@ -543,6 +542,34 @@ fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: HWND) -
     Ok(())
 } }
 
+fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&str>) {
+    match active_game {
+        Some(exe) if exe == win_info.exe.as_str() => { // Game is foreground
+            if binds.qmk.is_some() || !win_info.has_maps {
+                mki::clear();
+                mki::uninstall_hooks();
+
+                binds.input_hooks_disabled = true;
+            }
+        },
+        _ => { // Game is not foreground (active or not)
+            match binds.input_hooks_disabled {
+                true => { // Game was foreground
+                    mki::install_hooks();
+                    binds::reconfigure_static_binds();
+
+                    binds.input_hooks_disabled = false;
+                },
+                false => unbind_maps(binds) // Some other app was foreground
+            }
+
+            if win_info.has_maps {
+                bind_maps(binds, win_info.exe.as_str());
+            }
+        }
+    }
+}
+
 fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res2<()> {
     // Garner info
     let win_info = match ts.win_infos.get(&hwnd.as_usize()) {
@@ -650,31 +677,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
 
                 // Binds
                 if let Some(binds) = ts.binds.as_mut() {
-                    match ts.active_game.as_ref() {
-                        Some(exe) if exe == win_info.exe.as_str() => { // Game is foreground
-                            if binds.qmk.is_some() || !win_info.has_maps {
-                                mki::clear();
-                                mki::uninstall_hooks();
-
-                                binds.input_hooks_disabled = true;
-                            }
-                        },
-                        _ => { // Game is not foreground (active or not)
-                            match binds.input_hooks_disabled {
-                                true => { // Game was foreground
-                                    mki::install_hooks();
-                                    binds::reconfigure_static_binds();
-
-                                    binds.input_hooks_disabled = false;
-                                },
-                                false => unbind_maps(binds) // Some other app was foreground
-                            }
-
-                            if win_info.has_maps {
-                                bind_maps(binds, win_info.exe.as_str());
-                            }
-                        }
-                    }
+                    can_i_have_a_go(binds, win_info, ts.active_game.as_deref());
                 }
             },
             false => {
@@ -894,8 +897,10 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Ti
                     })?;
                 }
             },
-            Msg::Pipe(pipe_msg) => if let pipe_server::Msg::ActiveGame(exe) = pipe_msg {
+            Msg::Pipe((msg, ack_sx)) => if let pipe_server::Msg::ActiveGame(exe) = msg {
                 ts.active_game = exe;
+
+                ack_sx.send(()).unwrap();
             },
             Msg::WmMouseMove(lparam, stamp) => {
                 if let Err(mut err) = handle_wm_mouse_move(ts.tb.as_mut().unwrap(), lparam, stamp) {
