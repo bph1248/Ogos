@@ -760,13 +760,15 @@ struct MediaBrowser<'a> {
     grid_entries: Vec<GridEntryInfo>,
     grid_entry_i: usize,
     grid_cell_size: egui::Vec2,
-    grid_cell_i: usize,
-    grid_selected_cell_i: Option<usize>,
     grid_scroll_offset: f32,
-    grid_view: Vec<usize>, // Indices into grid_entries
+    /// Indices into [`grid_entries`]
+    grid_view: Vec<usize>,
+    grid_view_i: usize,
+    grid_view_selected_i: Option<usize>,
     removed_entry_from_grid_view: bool,
     sort_name_edit: String,
     tag_add_edit: String,
+    /// Sets of indices into [`grid_entries`]
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
     active_tag: Option<Rc<str>>,
     open_tag_win: bool,
@@ -1077,10 +1079,10 @@ impl<'a> MediaBrowser<'a> {
             grid_entries,
             grid_entry_i: default!(),
             grid_cell_size,
-            grid_cell_i: default!(),
-            grid_selected_cell_i: default!(),
             grid_scroll_offset: default!(),
             grid_view,
+            grid_view_i: default!(),
+            grid_view_selected_i: default!(),
             removed_entry_from_grid_view: default!(),
             sort_name_edit: default!(),
             tag_add_edit: default!(),
@@ -1280,7 +1282,7 @@ impl<'a> MediaBrowser<'a> {
                     populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
                     self.active_tag = Some(tag.clone());
-                    self.grid_selected_cell_i = None;
+                    self.grid_view_selected_i = None;
                 }
                 if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
                     tag_button_resp.highlight();
@@ -1342,9 +1344,9 @@ impl<'a> MediaBrowser<'a> {
             .columns(egui_extras::Column::initial(self.grid_cell_size.x).at_most(self.grid_cell_size.x), row_cell_count)
             .body(|body| {
                 body.rows(self.grid_cell_size.y, row_count, |mut row| {
-                    self.grid_cell_i = (row_start + row.index()) * row_cell_count + row.col_index();
+                    self.grid_view_i = (row_start + row.index()) * row_cell_count;
 
-                    while row.col_index() < row_cell_count && self.grid_cell_i < max_cell_count {
+                    while row.col_index() < row_cell_count && self.grid_view_i < max_cell_count {
                         row.col(|ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 self.grid_cell(ui);
@@ -1357,7 +1359,7 @@ impl<'a> MediaBrowser<'a> {
                                 max_cell_count -= 1;
                                 self.removed_entry_from_grid_view = false;
                             },
-                            false => self.grid_cell_i += 1
+                            false => self.grid_view_i += 1
                         }
                     }
                 });
@@ -1365,7 +1367,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn grid_cell(&mut self, ui: &mut egui::Ui) {
-        self.grid_entry_i = self.grid_view[self.grid_cell_i];
+        self.grid_entry_i = self.grid_view[self.grid_view_i];
         let grid_entry_info = &self.grid_entries[self.grid_entry_i];
         let mut image_info = grid_entry_info.image_file_name_i.and_then(|image_file_name_i| self.images.get_index_mut(image_file_name_i));
 
@@ -1396,12 +1398,12 @@ impl<'a> MediaBrowser<'a> {
 
         let cell_context_menu_resp = self.grid_cell_context_menu(ui, &cell_resp);
 
-        match self.grid_selected_cell_i {
-            Some(cell_i) => if cell_i == self.grid_cell_i { // Cell was secondary clicked
+        match self.grid_view_selected_i {
+            Some(grid_selected_cell_i) => if grid_selected_cell_i == self.grid_view_i { // Cell was secondary clicked
                 stroke_rect(ui, cell_resp.rect);
 
                 if cell_context_menu_resp.is_none() {
-                    self.grid_selected_cell_i = None // Context menu was closed - deselect cell
+                    self.grid_view_selected_i = None // Context menu was closed - deselect cell
                 }
             },
             // No context menu
@@ -1440,7 +1442,7 @@ impl<'a> MediaBrowser<'a> {
                 let painter = ui.painter().clone().with_layer_id(cell_ui.layer_id());
                 stroke_rect_painter(painter, cell_resp.rect);
 
-                self.grid_selected_cell_i = Some(self.grid_cell_i);
+                self.grid_view_selected_i = Some(self.grid_view_i);
             })
     }
 
@@ -1557,7 +1559,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn grid_cell_sort_menu(&mut self, ui: &mut egui::Ui) {
-        self.grid_entry_i = self.grid_view[self.grid_cell_i];
+        self.grid_entry_i = self.grid_view[self.grid_view_i];
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
 
         let mut sort_grid_view = false;
@@ -1604,8 +1606,8 @@ impl<'a> MediaBrowser<'a> {
             if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
                 if !self.tag_add_edit.is_empty() {
                     self.tags.entry(Rc::from(self.tag_add_edit.as_str()))
-                        .and_modify(|set| _ = set.insert(self.grid_cell_i))
-                        .or_insert([self.grid_cell_i].into_iter().collect());
+                        .and_modify(|set| _ = set.insert(self.grid_entry_i))
+                        .or_insert([self.grid_entry_i].into_iter().collect());
 
                     self.tag_add_edit.clear();
                 }
