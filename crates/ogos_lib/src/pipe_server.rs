@@ -117,6 +117,13 @@ fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<windo
     send_ready.send(ReadyMsg::PipeServer)?;
     drop(send_ready);
 
+    let ack = || -> Res1<_> {
+        let pipe_ack = bincode::serialize(&Msg::Ack)?;
+        WriteFile(pipe_hnd, Some(&pipe_ack), None, None)?;
+
+        Ok(())
+    };
+
     loop {
         ConnectNamedPipe(pipe_hnd, None)?;
         info!("{}: connected: {}", module_path!(), PIPE_NAME);
@@ -134,10 +141,11 @@ fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<windo
                 sx.send(window_foreground::Msg::Pipe((msg, ack_sx))).unwrap();
                 ack_rx.blocking_recv().unwrap();
 
-                let pipe_ack = bincode::serialize(&Msg::Ack)?;
-                WriteFile(pipe_hnd, Some(&pipe_ack), None, None)?;
+                ack()?;
             },
             Msg::Close => {
+                ack()?;
+
                 DisconnectNamedPipe(pipe_hnd)?;
 
                 break
