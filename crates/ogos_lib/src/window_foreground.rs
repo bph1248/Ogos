@@ -112,13 +112,17 @@ pub(crate) struct LongLivedChannels {
     pub(crate) rxs: Receivers
 }
 impl LongLivedChannels {
-    pub(crate) fn with_window_foreground(&mut self, channel: (Sender<Msg>, Receiver<Msg>)) {
+    pub(crate) fn with_window_foreground(&mut self) {
+        let channel = mpsc::channel::<window_foreground::Msg>();
+
         self.enabled |= EnabledChannels::WINDOW_FOREGROUND;
         self.sxs.window_foreground = Some(channel.0);
         self.rxs.window_foreground = Some(channel.1);
     }
 
-    pub(crate) fn with_window_shift(&mut self, channel: (Sender<window_shift::Msg>, Receiver<window_shift::Msg>)) {
+    pub(crate) fn with_window_shift(&mut self) {
+        let channel = mpsc::channel::<window_shift::Msg>();
+
         self.enabled |= EnabledChannels::WINDOW_SHIFT;
         self.sxs.window_shift = Some(channel.0);
         self.rxs.window_shift = Some(channel.1);

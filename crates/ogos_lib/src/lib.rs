@@ -265,19 +265,87 @@ fn get_long_lived_channels(enable_window_foreground: bool, enable_window_shift: 
     let mut long_lived_channels = LongLivedChannels::default();
 
     if enable_window_foreground {
-        let channel = mpsc::channel::<window_foreground::Msg>();
-
-        long_lived_channels.with_window_foreground(channel);
+        long_lived_channels.with_window_foreground();
     }
 
     if enable_window_shift {
-        let channel = mpsc::channel::<window_shift::Msg>();
-
-        long_lived_channels.with_window_shift(channel);
+        long_lived_channels.with_window_shift();
     }
 
     long_lived_channels
 }
+
+fn init_long_lived_tasks(cli: &Cli) -> Res<()> { unsafe {
+    let mut shutdown_info = ShutdownInfo {
+        to_close: Vec::new(),
+        thread_hnds: Vec::new()
+    };
+    let ShutdownInfo { to_close, thread_hnds } = &mut shutdown_info;
+
+    // let mut can_reload_config = Vec::new();
+    let (ready_sx, ready_rx) = mpsc::channel::<ReadyMsg>();
+    let mut long_lived_channels = get_long_lived_channels(cli.binds || cli.taskbar, cli.window_shift);
+
+    // Binds / pipe server / window watch
+    let mut window_foreground_comps = WindowForegroundComponents::empty();
+    if cli.binds {
+        window_foreground_comps |= WindowForegroundComponents::DYNAMIC_BINDS;
+
+        binds::configure_static_binds()?;
+
+        thread_hnds.push(pipe_server::spawn(ready_sx.clone(), long_lived_channels.sxs.window_foreground.clone()));
+    }
+    if cli.taskbar {
+        window_foreground_comps |= WindowForegroundComponents::TASKBAR;
+    }
+    thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx));
+
+    // Window foreground/shift
+    let hook_mgr_tid = receive_ready(to_close, ready_rx);
+    bitflags_match!(long_lived_channels.enabled, {
+        EnabledChannels::WINDOW_FOREGROUND => {
+            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
+        },
+        EnabledChannels::WINDOW_SHIFT => {
+            thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
+        },
+        EnabledChannels::all() => {
+            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
+            thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
+        },
+        _ => ()
+    });
+
+    // Config watch
+    // let event_close = CreateEventW(None, true, false, None)?;
+    // if let Some(hook_mgr_tid) = hook_mgr_tid {
+    //     can_reload_config.push(CanReloadConfig::WindowWatch(hook_mgr_tid));
+
+    //     thread_hnds.push(config_watch::spawn(can_reload_config, event_close.0 as usize));
+    //     to_close.push(LongLivedTask::ConfigWatch(event_close));
+    // }
+
+    SHUTDOWN_INFO.set(Mutex::new(shutdown_info)).unwrap();
+
+    // Tray
+    let on_taskbar_recreate_info = OnTaskbarRereateInfo {
+        exe_module: GetModuleHandleW(None)?.into(),
+        wm_taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated"))
+    };
+    ON_TASKBAR_RECREATE_INFO.set(on_taskbar_recreate_info).unwrap();
+
+    let exe_module: HINSTANCE = GetModuleHandleW(None)?.into();
+    let wnd_class = WNDCLASSEXW {
+        cbSize: size_of::<WNDCLASSEXW>() as u32,
+        lpfnWndProc: Some(tray_notify_icon_proc),
+        hInstance: exe_module,
+        lpszClassName: OGOS_TRAY_CLASS_NAME,
+        ..default!()
+    };
+    add_tray_notify_icon(exe_module, OGOS_TRAY_CLASS_NAME, Some(wnd_class))?;
+
+    Ok(())
+} }
 
 fn receive_ready(to_close: &mut Vec<LongLivedTask>, rx: mpsc::Receiver<ReadyMsg>) -> Option<Tid> {
     let mut window_watch_tid = None;
@@ -440,90 +508,7 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
 
     // Long-lived tasks
     if cli.binds || cli.taskbar || cli.window_shift { unsafe {
-        let on_taskbar_recreate_info = OnTaskbarRereateInfo {
-            exe_module: GetModuleHandleW(None)?.into(),
-            wm_taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated"))
-        };
-        ON_TASKBAR_RECREATE_INFO.set(on_taskbar_recreate_info).unwrap();
-
-        let mut shutdown_info = ShutdownInfo {
-            to_close: Vec::new(),
-            thread_hnds: Vec::new()
-        };
-        let (ready_sx, ready_rx) = mpsc::channel::<ReadyMsg>();
-
-        let init_long_lived_tasks = || -> Res<()> {
-            let ShutdownInfo { to_close, thread_hnds } = &mut shutdown_info;
-
-            let mut can_reload_config = Vec::new();
-            let long_lived_channels = get_long_lived_channels(cli.binds || cli.taskbar, cli.window_shift);
-
-            // Window watch
-            let mut window_foreground_comps = WindowForegroundComponents::empty();
-            let window_foreground_sx = match cli.binds {
-                true => {
-                    window_foreground_comps |= WindowForegroundComponents::DYNAMIC_BINDS;
-
-                    long_lived_channels.sxs.window_foreground.clone()
-                },
-                false => None
-            };
-            if cli.taskbar { window_foreground_comps |= WindowForegroundComponents::TASKBAR; }
-            thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx.clone()));
-
-            // Binds
-            if cli.binds {
-                can_reload_config.push(CanReloadConfig::StaticBinds);
-
-                binds::configure_static_binds().unwrap_or_else(|err| {
-                    error!("{}: failed to configure static binds: {}", module_path!(), err);
-                });
-
-                thread_hnds.push(pipe_server::spawn(ready_sx, window_foreground_sx));
-            }
-
-            let hook_mgr_tid = receive_ready(to_close, ready_rx);
-
-            match long_lived_channels.enabled {
-                EnabledChannels::WINDOW_FOREGROUND => {
-                    thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
-                },
-                EnabledChannels::WINDOW_SHIFT => {
-                    thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
-                },
-                _ if long_lived_channels.enabled == EnabledChannels::WINDOW_FOREGROUND | EnabledChannels::WINDOW_SHIFT => {
-                    thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
-                    thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
-                },
-                _ => ()
-            }
-
-            // Config watch
-            // let event_close = CreateEventW(None, true, false, None)?;
-            // if let Some(hook_mgr_tid) = hook_mgr_tid {
-            //     can_reload_config.push(CanReloadConfig::WindowWatch(hook_mgr_tid));
-
-            //     thread_hnds.push(config_watch::spawn(can_reload_config, event_close.0 as usize));
-            //     to_close.push(LongLivedTask::ConfigWatch(event_close));
-            // }
-
-            let exe_module: HINSTANCE = GetModuleHandleW(None)?.into();
-            let wnd_class = WNDCLASSEXW {
-                cbSize: size_of::<WNDCLASSEXW>() as u32,
-                lpfnWndProc: Some(tray_notify_icon_proc),
-                hInstance: exe_module,
-                lpszClassName: OGOS_TRAY_CLASS_NAME,
-                ..default!()
-            };
-            add_tray_notify_icon(exe_module, OGOS_TRAY_CLASS_NAME, Some(wnd_class))?;
-
-            SHUTDOWN_INFO.set(Mutex::new(shutdown_info)).unwrap();
-
-            Ok(())
-        };
-
-        // Message loop
-        match init_long_lived_tasks() {
+        match init_long_lived_tasks(&cli) {
             Ok(_) => {
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
