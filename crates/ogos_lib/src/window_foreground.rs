@@ -861,7 +861,7 @@ pub(crate) fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2d) -> S
     }
 }
 
-fn init_binds<'a>() -> Res1<Binds<'a>> {
+fn init_binds<'a>(error_alert_sx: &Sender<String>) -> Res1<Binds<'a>> {
     (|| -> Res1<_> {
         const QMK_VID: u16 = 0x3434;
         const QMK_PID: u16 = 0x0140;
@@ -874,7 +874,12 @@ fn init_binds<'a>() -> Res1<Binds<'a>> {
         let qmk = qmk_config.map(|qmk_config| {
             binds::QmkRuntime::new(QMK_VID, QMK_PID, USAGE_PAGE, qmk_config)
         })
-        .transpose()?;
+        .transpose()
+        .unwrap_or_else(|err| {
+            error_alert_sx.send(err.to_string()).unwrap();
+
+            None
+        });
 
         Ok(Binds {
             qmk,
@@ -883,7 +888,13 @@ fn init_binds<'a>() -> Res1<Binds<'a>> {
             input_hooks_disabled: default!()
         })
     })()
-    .map_err(|err| err.msg("failed to init binds"))
+    .map_err(|err| {
+        let err = err.msg("failed to init binds");
+
+        error_alert_sx.send(err.to_string()).unwrap();
+
+        err
+    })
 }
 
 fn init_taskbar(rx: &Receiver<Msg>) -> Res1<Taskbar> {
@@ -898,12 +909,12 @@ fn init_taskbar(rx: &Receiver<Msg>) -> Res1<Taskbar> {
     }
 }
 
-fn begin(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Tid) -> Res<()> { unsafe {
+fn begin(enable: WindowForegroundComponents, error_alert_sx: Sender<String>, rx: Receiver<Msg>, hook_mgr_tid: Tid) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let mut ts = ThreadState {
         hook_mgr_tid: hook_mgr_tid.0,
-        binds: enable.contains(WindowForegroundComponents::DYNAMIC_BINDS).then_some(init_binds()?),
+        binds: enable.contains(WindowForegroundComponents::DYNAMIC_BINDS).then_some(init_binds(&error_alert_sx)?),
         tb: enable.contains(WindowForegroundComponents::TASKBAR).then_some(init_taskbar(&rx)?),
         ..default!()
     };
@@ -917,7 +928,7 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Ti
             },
             Msg::Broadcast(BroadcastMsg::WmReloadConfig) => {
                 if ts.binds.is_some() {
-                    init_binds().map(|mut binds| {
+                    init_binds(&error_alert_sx).map(|mut binds| {
                         unbind_maps(&mut binds);
 
                         for (_, win_info) in ts.win_infos.iter_mut() {
@@ -1007,9 +1018,9 @@ fn begin(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Ti
     Ok(())
 } }
 
-pub(crate) fn spawn(enable: WindowForegroundComponents, rx: Receiver<Msg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
+pub(crate) fn spawn(enable: WindowForegroundComponents, sx: Sender<String>, rx: Receiver<Msg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
     thread::spawn(move || {
-        begin(enable, rx, hook_mgr_tid).unwrap_or_else(|err| {
+        begin(enable, sx, rx, hook_mgr_tid).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);
         });
     })

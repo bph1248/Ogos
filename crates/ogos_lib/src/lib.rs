@@ -140,21 +140,36 @@ fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf> {
     Ok(path)
 }
 
-fn get_long_lived_channels(enable_window_foreground: bool, enable_window_shift: bool) -> LongLivedChannels {
+fn get_long_lived_channels(cli: &Cli) -> LongLivedChannels {
     let mut long_lived_channels = LongLivedChannels::default();
 
-    if enable_window_foreground {
+    if cli.binds || cli.taskbar {
         long_lived_channels.with_window_foreground();
     }
 
-    if enable_window_shift {
+    if cli.window_shift {
         long_lived_channels.with_window_shift();
     }
 
     long_lived_channels
 }
 
-fn init_long_lived_tasks(cli: &Cli) -> Res<Vec<JoinHandle<()>>> {
+fn get_window_foreground_components(cli: &Cli) -> WindowForegroundComponents {
+    let mut window_foreground_comps = WindowForegroundComponents::empty();
+
+    if cli.binds {
+        window_foreground_comps |= WindowForegroundComponents::DYNAMIC_BINDS;
+    }
+    if cli.taskbar {
+        window_foreground_comps |= WindowForegroundComponents::TASKBAR;
+    }
+
+    window_foreground_comps
+}
+
+type ErrorAlertRx = Option<mpsc::Receiver<String>>;
+type JoinHandles = Vec<JoinHandle<()>>;
+fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorAlertRx, JoinHandles)> {
     let mut shutdown_info = ShutdownInfo {
         to_close: Vec::new()
     };
@@ -162,33 +177,33 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<Vec<JoinHandle<()>>> {
 
     // let mut can_reload_config = Vec::new();
     let (ready_sx, ready_rx) = mpsc::channel::<ReadyMsg>();
-    let long_lived_channels = get_long_lived_channels(cli.binds || cli.taskbar, cli.window_shift);
+    let long_lived_channels = get_long_lived_channels(cli);
+    let window_foreground_comps = get_window_foreground_components(cli);
 
     // Binds / pipe server / window watch
-    let mut window_foreground_comps = WindowForegroundComponents::empty();
-    if cli.binds {
-        window_foreground_comps |= WindowForegroundComponents::DYNAMIC_BINDS;
+    let (error_alert_sx, error_alert_rx) = window_foreground_comps.contains(WindowForegroundComponents::DYNAMIC_BINDS)
+        .then(|| -> Res<_> {
+            binds::configure_static_binds()?;
 
-        binds::configure_static_binds()?;
+            thread_hnds.push(pipe_server::spawn(ready_sx.clone(), long_lived_channels.sxs.window_foreground.clone()));
 
-        thread_hnds.push(pipe_server::spawn(ready_sx.clone(), long_lived_channels.sxs.window_foreground.clone()));
-    }
-    if cli.taskbar {
-        window_foreground_comps |= WindowForegroundComponents::TASKBAR;
-    }
+            Ok(mpsc::channel::<String>())
+        })
+        .transpose()?
+        .unzip();
     thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx));
 
     // Window foreground/shift
     let hook_mgr_tid = receive_ready(&mut shutdown_info.to_close, ready_rx);
     bitflags_match!(long_lived_channels.enabled, {
         EnabledChannels::WINDOW_FOREGROUND => {
-            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
+            thread_hnds.push(window_foreground::spawn(window_foreground_comps, error_alert_sx.unwrap(), long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
         },
         EnabledChannels::WINDOW_SHIFT => {
             thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
         },
         EnabledChannels::all() => {
-            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
+            thread_hnds.push(window_foreground::spawn(window_foreground_comps, error_alert_sx.unwrap(), long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
             thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
         },
         _ => ()
@@ -208,7 +223,7 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<Vec<JoinHandle<()>>> {
     // Tray
     thread_hnds.push(tray::spawn());
 
-    Ok(thread_hnds)
+    Ok((error_alert_rx, thread_hnds))
 }
 
 fn receive_ready(to_close: &mut Vec<LongLivedTask>, rx: mpsc::Receiver<ReadyMsg>) -> Option<Tid> {
@@ -346,7 +361,13 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
     // Long-lived tasks
     if cli.binds || cli.taskbar || cli.window_shift {
         match init_long_lived_tasks(&cli) {
-            Ok(thread_hnds) => {
+            Ok((error_alert_rx, thread_hnds)) => {
+                if let Some(error_alert_rx) = error_alert_rx {
+                    for msg in error_alert_rx.iter() {
+                        error_alert(msg);
+                    }
+                }
+
                 for hnd in thread_hnds {
                     _ = hnd.join();
                 }
