@@ -7,6 +7,7 @@ use ogos_err::*;
 use ogos_video as video;
 
 use concat_string::*;
+use crossbeam::sync::*;
 use discord_rich_presence::*;
 use eframe::{
     egui,
@@ -385,8 +386,6 @@ fn ferry_images(info: FerryImagesInfo) {
         ctx,
         thread_pool,
         hash_sx,
-        queue_sx,
-        queue_rx,
         image_dirs,
         base_image_kind,
         grid_cell_size,
@@ -400,6 +399,7 @@ fn ferry_images(info: FerryImagesInfo) {
         error!("{}: failed to ferry image: {}", module_path!(), err);
     };
 
+    let (queue_sx, queue_rx) = mpsc::channel();
     for info in ferry_image_infos {
         let FerryImageInfo {
             image_file_name,
@@ -407,6 +407,7 @@ fn ferry_images(info: FerryImagesInfo) {
             grid_entry_i,
             grid_image_state_sx,
             details_image_state_sx,
+            wait_group
         } = info;
 
         let ctx = ctx.clone();
@@ -450,6 +451,8 @@ fn ferry_images(info: FerryImagesInfo) {
                         }
                     }
                 }
+
+                drop(wait_group);
 
                 ctx.request_repaint();
 
@@ -541,15 +544,14 @@ struct FerryImageInfo {
     expected_hash: Option<Arc<str>>,
     grid_entry_i: usize,
     grid_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>
+    details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
+    wait_group: Option<WaitGroup>
 }
 
 struct FerryImagesInfo<'a> {
     ctx: &'a egui::Context,
     thread_pool: &'a Arc<ThreadPool>,
     hash_sx: &'a mpsc::Sender<HashInfo>,
-    queue_sx: mpsc::Sender<QueueImageInfo>,
-    queue_rx: mpsc::Receiver<QueueImageInfo>,
     image_dirs: &'static ImageDirs,
     base_image_kind: BaseImageKind,
     grid_cell_size: egui::Vec2,
@@ -755,11 +757,12 @@ struct MediaBrowser<'a> {
     cache: Cache,
     cached_images_to_remove: Vec<Rc<str>>,
     frame: egui::Frame,
-    checked_background_brush: bool,
+    is_first_frame: bool,
     view_kind: ViewKind,
     grid_entries: Vec<GridEntryInfo>,
     grid_entry_i: usize,
     grid_cell_size: egui::Vec2,
+    grid_cell_space: egui::Vec2,
     grid_scroll_offset: f32,
     /// Indices into [`grid_entries`]
     grid_view: Vec<usize>,
@@ -794,10 +797,78 @@ struct MediaBrowser<'a> {
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if !self.checked_background_brush && let win_hnd = frame.window_handle().unwrap() && let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
-            fix_background_brush(hnd);
+        if self.is_first_frame {
+            // Calc number of cells initially visible - don't render til images are loaded
+            let content_rect = ctx.content_rect();
+            // content_rect.width() - (self.grid_cell_size.x * available_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
+            let available_row_cell_count = (content_rect.width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
+            let available_col_cell_count = (content_rect.height() - self.grid_cell_size.y).div(self.grid_cell_space.y).ceil() as usize;
+            let init_cell_count = (available_row_cell_count * available_col_cell_count).clamp(1, self.grid_view.len());
+            let wait_group = WaitGroup::new();
 
-            self.checked_background_brush = true;
+            let ferry_image_infos = self.grid_view.iter()
+                .filter_map(|&entry_i| {
+                    let grid_entry_info = &self.grid_entries[entry_i];
+
+                    // Fill tags
+                    if let Some(CacheEntryInfo { tags: tag_is, .. }) = self.cache.entries.get_mut(&grid_entry_info.path) {
+                        for tag_i in tag_is {
+                            let tag = &self.cache.tags[*tag_i];
+                            let set = self.tags.get_mut(tag);
+
+                            if let Some(set) = set {
+                                set.insert(entry_i);
+                            }
+                        }
+                    }
+
+                    if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
+                        let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+                        let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                        let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+
+                        if image_states.is_none() {
+                            image_states.grid = ImageState::Pending(grid_image_state_rx);
+                            image_states.details = ImageState::Pending(details_image_state_rx);
+
+                            return Some(FerryImageInfo {
+                                image_file_name: image_file_name.clone(),
+                                expected_hash: grid_entry_info.hash.clone(),
+                                grid_entry_i: entry_i,
+                                grid_image_state_sx,
+                                details_image_state_sx,
+                                wait_group: entry_i.lt(&init_cell_count).then_some(wait_group.clone())
+                            })
+                        }
+                    }
+
+                    None
+                })
+                .collect::<Vec<_>>();
+
+            let ferry_images_info = FerryImagesInfo {
+                ctx,
+                thread_pool: &self.thread_pool,
+                hash_sx: &self.hash_sx,
+                image_dirs: self.image_dirs,
+                base_image_kind: BaseImageKind::Startup,
+                grid_cell_size: self.grid_cell_size,
+                force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
+                details_cell_size: self.details_cell_size,
+                force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
+                ferry_image_infos
+            };
+            ferry_images(ferry_images_info);
+
+            wait_group.wait();
+
+            // Match window background to egui
+            let win_hnd = frame.window_handle().unwrap();
+            if let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
+                fix_background_brush(hnd);
+            }
+
+            self.is_first_frame = false;
         }
 
         egui::CentralPanel::default()
@@ -867,7 +938,6 @@ impl<'a> MediaBrowser<'a> {
             .num_threads(thread::available_parallelism()?.get())
             .build()?);
         let (hash_sx, hash_rx) = mpsc::channel();
-        let (queue_sx, queue_rx) = mpsc::channel();
 
         let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
         let base_images_dir = current_exe_dir.join("images");
@@ -885,7 +955,7 @@ impl<'a> MediaBrowser<'a> {
         let mut cache: Cache = serde_json::from_slice(&cache_slc)?;
         let mut cached_images_to_remove = Vec::new();
 
-        let mut tags = cache.tags.iter()
+        let tags = cache.tags.iter()
             .map(|tag| (tag.clone(), default!())) // Clone these - cache entries need to reference them later
             .collect::<BTreeMap::<Rc<str>, BTreeSet<_>>>();
 
@@ -922,6 +992,7 @@ impl<'a> MediaBrowser<'a> {
             })
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
         let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
+        let grid_cell_space = grid_cell_size + GRID_IMAGE_SPACING;
         let details_cell_size = egui::vec2(details_cell_width, details_cell_width * ASPECT_RATIO_3_2);
 
         let grid_entries = media_dirs.iter()
@@ -1007,59 +1078,6 @@ impl<'a> MediaBrowser<'a> {
         let discord_display_kind = config.discord.display_kind;
         drop(config);
 
-        let ferry_image_infos = grid_entries.iter().enumerate()
-            .filter_map(|(entry_i, info)| {
-                // Fill tags
-                if let Some(CacheEntryInfo { tags: tag_is, .. }) = cache.entries.get_mut(&info.path) {
-                    for tag_i in tag_is {
-                        let tag = &cache.tags[*tag_i];
-                        let set = tags.get_mut(tag);
-
-                        if let Some(set) = set {
-                            set.insert(entry_i); // Grid entries are sorted / indices are stable
-                        }
-                    }
-                }
-
-                if let Some(image_file_name_i) = info.image_file_name_i {
-                    let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-                    let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
-                    let (image_file_name, image_states) = images.get_index_mut(image_file_name_i).unwrap();
-
-                    if image_states.is_none() {
-                        image_states.grid = ImageState::Pending(grid_image_state_rx);
-                        image_states.details = ImageState::Pending(details_image_state_rx);
-
-                        return Some(FerryImageInfo {
-                            image_file_name: image_file_name.clone(),
-                            expected_hash: info.hash.clone(),
-                            grid_entry_i: entry_i,
-                            grid_image_state_sx,
-                            details_image_state_sx
-                        })
-                    }
-                }
-
-                None
-            })
-            .collect::<Vec<_>>();
-
-        let ferry_images_info = FerryImagesInfo {
-            ctx,
-            thread_pool: &thread_pool,
-            hash_sx: &hash_sx,
-            queue_sx,
-            queue_rx,
-            image_dirs,
-            base_image_kind: BaseImageKind::Startup,
-            grid_cell_size,
-            force_resize_grid_images: cache.grid_cell_size != grid_cell_size,
-            details_cell_size,
-            force_resize_details_images: cache.details_cell_size != details_cell_size,
-            ferry_image_infos
-        };
-        ferry_images(ferry_images_info);
-
         let frame = egui::Frame::central_panel(&ctx.style()).inner_margin(
             egui::Margin::symmetric(FRAME_MARGIN as i8, FRAME_MARGIN as i8)
         );
@@ -1074,11 +1092,12 @@ impl<'a> MediaBrowser<'a> {
             cache,
             cached_images_to_remove,
             frame,
-            checked_background_brush: false,
+            is_first_frame: true,
             view_kind: ViewKind::Grid,
             grid_entries,
             grid_entry_i: default!(),
             grid_cell_size,
+            grid_cell_space,
             grid_scroll_offset: default!(),
             grid_view,
             grid_view_i: default!(),
@@ -1298,8 +1317,7 @@ impl<'a> MediaBrowser<'a> {
             ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
             let max_cell_count = self.grid_view.len();
-            let cell_space_x = self.grid_cell_size.x + GRID_IMAGE_SPACING.x;
-            let row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(cell_space_x).ceil() as usize; // ui.available_width() - (cell_space_x * n - GRID_IMAGE_SPACING.x) <= cell_space_x
+            let row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
             let row_cell_count = row_cell_count.clamp(1, max_cell_count);
             let max_row_count = max_cell_count.div_ceil(row_cell_count);
 
@@ -1312,7 +1330,7 @@ impl<'a> MediaBrowser<'a> {
                     let available_rect = ui.available_rect_before_wrap();
 
                     #[allow(clippy::cast_precision_loss)]
-                    let table_width = row_cell_count as f32 * cell_space_x - GRID_IMAGE_SPACING.x;
+                    let table_width = row_cell_count as f32 * self.grid_cell_space.x - GRID_IMAGE_SPACING.x;
                     let table_rect_min_x = (available_rect.center().x - table_width / 2.0).floor();
                     let table_rect = egui::Rect::from_min_size(
                         [table_rect_min_x, available_rect.top()].into(),
@@ -1447,7 +1465,6 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf) -> Res<()> {
-        let (queue_sx, queue_rx) = mpsc::channel();
         let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
         let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
 
@@ -1515,8 +1532,6 @@ impl<'a> MediaBrowser<'a> {
             ctx,
             thread_pool:  &self.thread_pool,
             hash_sx: &self.hash_sx,
-            queue_sx,
-            queue_rx,
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Pick { path: path.clone() },
             grid_cell_size: self.grid_cell_size,
@@ -1529,7 +1544,8 @@ impl<'a> MediaBrowser<'a> {
                     expected_hash: None,
                     grid_entry_i: self.grid_entry_i,
                     grid_image_state_sx,
-                    details_image_state_sx
+                    details_image_state_sx,
+                    wait_group: None
                 }
             ]
         };
