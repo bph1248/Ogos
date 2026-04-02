@@ -151,6 +151,12 @@ impl Button {
     }
 }
 
+impl Unicode {
+    pub fn click(&self, dur: Duration) {
+        kimpl::click_unicode(self.0, dur);
+    }
+}
+
 impl Wheel {
     pub fn act_on(&self, action: Action) {
         bind_wheel(*self, action)

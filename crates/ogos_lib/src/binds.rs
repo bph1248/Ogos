@@ -5,10 +5,7 @@ use ogos_core::*;
 use ogos_err::*;
 use ogos_display::*;
 use ogos_mki as mki;
-use mki::{
-    InputEvent::*,
-    *
-};
+use mki::*;
 
 use log::*;
 use qmk_via_api::{
@@ -33,6 +30,8 @@ use windows::{
         System::Power::*
     }
 };
+
+const UNDERSCORE: Unicode = Unicode(0x005F);
 
 pub(crate) mod qmk_deser {
     use super::*;
@@ -494,22 +493,6 @@ fn print_window_info() -> Res<()> { unsafe {
     Ok(())
 } }
 
-pub(crate) fn click_with_sleep(event: InputEvent) {
-    match event {
-        Keyboard(key) => {
-            key.press();
-            thread::sleep(Duration::from_millis(30));
-            key.release();
-        },
-        MouseButton(button) => {
-            button.press();
-            thread::sleep(Duration::from_millis(30));
-            button.release();
-        },
-        _ => ()
-    }
-}
-
 pub(crate) fn unmap_mki(from: InputEvent) {
     match from {
         InputEvent::Keyboard(key) => mki::remove_key_bind(key),
@@ -616,7 +599,7 @@ pub(crate) fn configure_static_binds() -> Res<()> {
         let action = Action {
             callback: Box::new(move |_, state| {
                 if state == State::Pressed && underscore.while_pressed.is_pressed() {
-                    click_with_sleep(Keyboard(Key::Minus));
+                    UNDERSCORE.click(Duration::from_millis(30));
                 }
             }),
             inhibit: InhibitEvent::maybe(move || {

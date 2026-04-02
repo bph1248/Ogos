@@ -12,33 +12,67 @@ use winapi::{
 };
 
 pub struct KeyStroke {
-    press: bool,
+    stroke: Stroke,
     key: Key
+}
+
+pub struct UnicodeStroke {
+    stroke: Stroke,
+    unicode: u16
+}
+
+pub(crate) enum Stroke {
+    Up,
+    Down
+}
+impl Stroke {
+    pub(crate) fn as_keyeventf(&self) -> DWORD {
+        match self {
+            Stroke::Up => KEYEVENTF_KEYUP,
+            Stroke::Down => 0
+        }
+    }
 }
 
 pub(crate) mod kimpl {
     use super::*;
 
     pub(crate) fn press(key: Key) {
-        send_key_strokes(&[KeyStroke { press: true, key }]);
+        send_key_strokes(&[KeyStroke { stroke: Stroke::Down, key }]);
     }
 
     pub(crate) fn release(key: Key) {
-        send_key_strokes(&[KeyStroke { press: false, key }]);
+        send_key_strokes(&[KeyStroke { stroke: Stroke::Up, key }]);
     }
 
     pub(crate) fn click(key: Key, dur: Duration) {
         match dur.is_zero() {
             true => {
                 send_key_strokes(&[
-                    KeyStroke { press: true, key },
-                    KeyStroke { press: false, key }
+                    KeyStroke { stroke: Stroke::Down, key },
+                    KeyStroke { stroke: Stroke::Up, key }
                 ]);
             },
             false => {
-                send_key_strokes(&[KeyStroke { press: true, key }]);
+                send_key_strokes(&[KeyStroke { stroke: Stroke::Down, key }]);
                 thread::sleep(dur);
-                send_key_strokes(&[KeyStroke { press: false, key }]);
+                send_key_strokes(&[KeyStroke { stroke: Stroke::Up, key }]);
+            }
+        }
+    }
+
+    pub(crate) fn click_unicode(unicode: u16, dur: Duration) {
+        match dur.is_zero() {
+            true => {
+                send_unicode_strokes(&[
+                    UnicodeStroke { stroke: Stroke::Down, unicode },
+                    UnicodeStroke { stroke: Stroke::Up, unicode }
+                ]);
+            },
+            false => {
+                send_unicode_strokes(&[UnicodeStroke { stroke: Stroke::Down, unicode }]);
+                thread::sleep(dur);
+                send_unicode_strokes(&[UnicodeStroke { stroke: Stroke::Up, unicode }]);
             }
         }
     }
@@ -51,38 +85,51 @@ pub(crate) mod kimpl {
     }
 }
 
-pub fn send_key_strokes(key_strokes: &[KeyStroke]) {
-    unsafe {
-        let mut inputs: Vec<INPUT> = Vec::with_capacity(key_strokes.len());
+pub fn send_key_strokes(key_strokes: &[KeyStroke]) { unsafe {
+    let mut inputs = key_strokes.iter()
+        .map(|key_stroke| {
+            let mut input_u: INPUT_u = std::mem::zeroed();
+            *input_u.ki_mut() = KEYBDINPUT {
+                wVk: 0,
+                wScan: MapVirtualKeyW(vk_code(key_stroke.key).into(), 0)
+                    .try_into()
+                    .expect("virtual key should map to scan code"),
+                dwFlags: KEYEVENTF_SCANCODE | key_stroke.stroke.as_keyeventf(),
+                time: 0,
+                dwExtraInfo: 0
+            };
 
-        let iter = key_strokes.iter()
-            .map(|key_stroke| {
-                let stroke = match key_stroke.press {
-                    true => 0,
-                    false => KEYEVENTF_KEYUP
-                };
+            INPUT {
+                type_: INPUT_KEYBOARD,
+                u: input_u
+            }
+        })
+        .collect::<Vec<_>>();
 
-                let mut input_u: INPUT_u = std::mem::zeroed();
-                *input_u.ki_mut() = KEYBDINPUT {
-                    wVk: 0,
-                    wScan: MapVirtualKeyW(vk_code(key_stroke.key).into(), 0)
-                        .try_into()
-                        .expect("virtual key should map to scan code"),
-                    dwFlags: KEYEVENTF_SCANCODE | stroke,
-                    time: 0,
-                    dwExtraInfo: 0
-                };
+    SendInput(inputs.len() as u32, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
+} }
 
-                INPUT {
-                    type_: INPUT_KEYBOARD,
-                    u: input_u
-                }
-            });
-        inputs.extend(iter);
+pub fn send_unicode_strokes(unicode_strokes: &[UnicodeStroke]) { unsafe {
+    let mut inputs = unicode_strokes.iter()
+        .map(|unicode_stroke| {
+            let mut input_u: INPUT_u = std::mem::zeroed();
+            *input_u.ki_mut() = KEYBDINPUT {
+                wVk: 0,
+                wScan: unicode_stroke.unicode,
+                dwFlags: KEYEVENTF_UNICODE | unicode_stroke.stroke.as_keyeventf(),
+                time: 0,
+                dwExtraInfo: 0
+            };
 
-        SendInput(inputs.len() as u32, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
-    }
-}
+            INPUT {
+                type_: INPUT_KEYBOARD,
+                u: input_u
+            }
+        })
+        .collect::<Vec<_>>();
+
+    SendInput(inputs.len() as u32, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
+} }
 
 // Missing defines
 const VK_0: i32 = 0x30;

@@ -132,3 +132,5 @@ impl fmt::Display for Key {
         Ok(())
     }
 }
+
+pub struct Unicode(pub u16);
