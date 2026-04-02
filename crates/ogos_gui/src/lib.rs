@@ -77,6 +77,12 @@ enum Watching {
     Words
 }
 
+fn error_alert(msg: String, sx: &mpsc::Sender<String>) {
+    error!("{}", msg);
+
+    sx.send(msg).unwrap();
+}
+
 fn to_discord_asset_name(s: impl AsRef<str>) -> String {
     s.as_ref().chars()
         .map(|c| {
@@ -151,7 +157,7 @@ fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
     Ok(PathBuf::from(path_str))
 } }
 
-fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind) {
+fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind, error_sx: mpsc::Sender<String>) {
     thread::spawn(move || {
         (|| -> Res<()> {
             let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
@@ -183,7 +189,9 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
             Ok(())
         })()
         .unwrap_or_else(|err| {
-            error!("{}: failed to launch media: {}", module_path!(), err);
+            let msg = format!("{}: failure handling media: {}", module_path!(), err);
+
+            error_alert(msg, &error_sx);
         });
     });
 }
@@ -793,7 +801,11 @@ struct MediaBrowser<'a> {
     discord_watching: Watching,
     discord_details: String,
     discord_state: String,
-    discord_display_kind: DiscordDisplayKind
+    discord_display_kind: DiscordDisplayKind,
+    open_error_win: bool,
+    error_sx: mpsc::Sender<String>,
+    error_rx: mpsc::Receiver<String>,
+    error_msg: String,
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -874,6 +886,18 @@ impl<'a> eframe::App for MediaBrowser<'a> {
         egui::CentralPanel::default()
             .frame(self.frame)
             .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
+
+        if !self.open_error_win &&
+            let Ok(msg) = self.error_rx.try_recv()
+        {
+            self.error_msg = msg;
+            self.open_error_win = true;
+        }
+
+        egui::Window::new("Error")
+            .open(&mut self.open_error_win)
+            .auto_sized()
+            .show(ctx, |ui| ui.label(self.error_msg.as_str()));
 
         // Close and save cache to file
         if ctx.input(|state| state.viewport().close_requested()) {
@@ -1082,6 +1106,9 @@ impl<'a> MediaBrowser<'a> {
             egui::Margin::symmetric(FRAME_MARGIN as i8, FRAME_MARGIN as i8)
         );
 
+        let (error_sx, error_rx) = mpsc::channel();
+        let error_msg = "".to_string();
+
         Ok(Self {
             thread_pool,
             image_dirs,
@@ -1126,7 +1153,11 @@ impl<'a> MediaBrowser<'a> {
             discord_watching: default!(),
             discord_details: default!(),
             discord_state: default!(),
-            discord_display_kind
+            discord_display_kind,
+            open_error_win: false,
+            error_sx,
+            error_rx,
+            error_msg
         })
     }
 
@@ -1786,7 +1817,8 @@ impl<'a> MediaBrowser<'a> {
                                         self.maintain_sample_rate,
                                         self.use_glsl_shaders,
                                         discord_info,
-                                        self.discord_display_kind
+                                        self.discord_display_kind,
+                                        self.error_sx.clone()
                                     );
                                 }
                             }
