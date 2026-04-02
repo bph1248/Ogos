@@ -34,9 +34,9 @@ Settings used in conjunction with `ogos --endpoint` / `--eq`.
 Settings related to global hotkeys and context-aware key/button maps, used in conjunction with `ogos --binds` (see [Keys & Buttons](#keys--buttons), [Tasks](#tasks)).
 
 - `hotkeys`
-    - `prefix`: A list of keys that must be held before pressing a trigger.
-    - `triggers`: A list of keys to tasks, such that a task is run if all keys (prefix + trigger) are pressed and then released.
-- `maps`: A list of process names to key/button maps, such that maps activate only when the foreground window belongs to `<exe>`.
+    - `prefix`: A list of modifier keys that must be held before pressing a trigger. Must contain at least one entry.
+    - `triggers`: A list of keys mapped to tasks, such that a task is run if all keys (prefix + trigger) are pressed and then released.
+- `maps`: A list of process names mapped to key/button maps, such that key/button maps activate only when the foreground window belongs to `<exe>`.
 - `underscore`: A hotkey for typing an underscore.
 - `qmk`: Settings used to assign key/button maps via the QMK/VIA API. Requires a QMK compatible keyboard.
     - `layer`: The keyboard layer to target.
@@ -68,7 +68,7 @@ Settings used in conjunction with `ogos --game <name>`, where `<name>` is an arb
 
 #### Media browser
 
-A GUI to collate files and folders into a unified 'grid view'. Launch videos with `mpv` or invoke a file's default handler.
+A GUI to collate files and folders into a unified view. Launch videos with `mpv` or invoke a file's default handler.
 
 - `dirs`: A list of directories to collate.
 - `window_inner_size`: The size of the window, excluding the border.
@@ -136,7 +136,7 @@ Settings used in conjunction with `ogos --window-shift`. Elevated privileges are
 - `leeway_px`: The distance in pixels a window may stray from its 'anchor'. An anchor is the initial layout (position/dimensions) of a window. Moving or resizing a window resets this anchor to the new layout (provided an anchor constraint is not in effect).
 - `stride_px`: The number of pixels to shift a window along the axes of the screen. The direction chosen is random.
 
-Shift behavior can be customized with constraints. When the properties of a window belonging to `<exe>` matches the criteria of a constraint, the constraint is applied to that window.
+Shift behavior can be customized with constraints. When the properties of a window belonging to `<exe>` matches the criteria of a constraint, the constraint is applied to the window.
 
 - `constraints`
     - `anchor`: Define a window's anchor rather than infer it from the window's initial layout.
@@ -197,7 +197,7 @@ Shift is disabled if the foreground window is full screen or `left_button`/`left
     binds: (
         // Optional
         hotkeys: (
-            prefix: [<key>, ..],
+            prefix: [<*shift, *ctrl, *win, *alt>, ..],
             tasks: {
                 <key>: <begin_pixel_cleaning, go_to_sleep, let_walk_away, print_window_info, toggle_display_mode>,
                 ..
@@ -216,8 +216,8 @@ Shift is disabled if the foreground window is full screen or `left_button`/`left
         },
         // Optional
         underscore: (
-            act_on: <key>,
-            while_pressed: <key>
+            prefix: <key>,
+            trigger: <key>
         ),
         // Optional
         qmk: (

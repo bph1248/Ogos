@@ -598,12 +598,12 @@ pub(crate) fn configure_static_binds() -> Res<()> {
     if let Some(underscore) = binds_config.underscore {
         let action = Action {
             callback: Box::new(move |_, state| {
-                if state == State::Pressed && underscore.while_pressed.is_pressed() {
+                if state == State::Pressed && underscore.prefix.is_pressed() {
                     UNDERSCORE.click(Duration::from_millis(30));
                 }
             }),
             inhibit: InhibitEvent::maybe(move || {
-                match underscore.while_pressed.is_pressed() {
+                match underscore.prefix.is_pressed() {
                     true => InhibitEvent::Yes,
                     false => InhibitEvent::No
                 }
@@ -612,7 +612,7 @@ pub(crate) fn configure_static_binds() -> Res<()> {
             sequencer: true
         };
 
-        underscore.act_on.act_on(action);
+        underscore.trigger.act_on(action);
     }
 
     info!("{}: configured", module_path!());

@@ -539,9 +539,9 @@ pub struct Qmk<'a> {
 #[serde(deny_unknown_fields)]
 pub struct Underscore {
     #[serde(deserialize_with = "deserialize_key")]
-    pub act_on: Key,
+    pub prefix: Key,
     #[serde(deserialize_with = "deserialize_key")]
-    pub while_pressed: Key
+    pub trigger: Key
 }
 
 #[derive(Deserialize)]
