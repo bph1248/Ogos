@@ -77,12 +77,6 @@ enum Watching {
     Words
 }
 
-fn error_alert(msg: String, sx: &mpsc::Sender<String>) {
-    error!("{}", msg);
-
-    sx.send(msg).unwrap();
-}
-
 fn to_discord_asset_name(s: impl AsRef<str>) -> String {
     s.as_ref().chars()
         .map(|c| {
@@ -191,7 +185,7 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
         .unwrap_or_else(|err| {
             let msg = format!("{}: failure handling media: {}", module_path!(), err);
 
-            error_alert(msg, &error_sx);
+            error_sx.send(msg).unwrap();
         });
     });
 }

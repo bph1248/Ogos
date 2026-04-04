@@ -147,12 +147,11 @@ pub(crate) fn add_tray_notify_icon(exe_module: HINSTANCE, class_name: PCWSTR, re
 fn shutdown() { unsafe {
     info!("{}: shutdown", module_path!());
 
-    let mut info = SHUTDOWN_INFO.get_unchecked().lock().unwrap();
-
-    while let Some(long_lived_task) = info.to_close.pop() {
+    let info = SHUTDOWN_INFO.get_unchecked();
+    for long_lived_task in info.to_close.iter() {
         (|| -> Res<()> {
             match long_lived_task {
-                LongLivedTask::ConfigWatch(event_close) => SetEvent(event_close)?,
+                LongLivedTask::_ConfigWatch(event_close) => SetEvent(*event_close)?,
                 LongLivedTask::PipeServer => pipe_msg(pipe_server::Msg::Close)?,
                 LongLivedTask::WindowWatch(tid) => PostThreadMessageW(tid.0, WM_OGOS_CLOSE, WPARAM(0), LPARAM(0))?,
                 _ => ()

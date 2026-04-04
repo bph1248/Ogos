@@ -26,7 +26,7 @@
 
 pub(crate) mod binds;
 pub(crate) mod cli;
-pub(crate) mod config_watch;
+// pub(crate) mod config_watch;
 pub(crate) mod cursor_watch;
 pub(crate) mod games;
 pub(crate) mod pipe_client;
@@ -83,7 +83,7 @@ const ICON_ID: usize = 1;
 const OGOS_TRAY_CLASS_NAME: PCWSTR = w!("OgosTray");
 
 static ON_TASKBAR_RECREATE_INFO: OnceCell<OnTaskbarRereateInfo> = OnceCell::new(); // Use sync:: as Windows may call wnd_proc from another thread
-static SHUTDOWN_INFO: OnceCell<Mutex<ShutdownInfo>> = OnceCell::new();
+static SHUTDOWN_INFO: OnceCell<ShutdownInfo> = OnceCell::new();
 
 bitflags! {
     struct EndSessionFlags: isize {
@@ -109,7 +109,7 @@ struct ShutdownInfo {
 #[derive(Debug)]
 #[subenum(CanReloadConfig)]
 pub(crate) enum LongLivedTask {
-    ConfigWatch(HANDLE),
+    _ConfigWatch(HANDLE),
     PipeServer,
     #[subenum(CanReloadConfig)]
     StaticBinds,
@@ -181,13 +181,15 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorAlertRx, JoinHandles)> {
     let window_foreground_comps = get_window_foreground_components(cli);
 
     // Binds / pipe server / window watch
-    let (error_alert_sx, error_alert_rx) = window_foreground_comps.contains(WindowForegroundComponents::DYNAMIC_BINDS)
+    let (error_sx, error_rx) = window_foreground_comps.contains(WindowForegroundComponents::DYNAMIC_BINDS)
         .then(|| -> Res<_> {
-            binds::configure_static_binds()?;
+            let (error_sx, error_rx) = mpsc::channel();
+
+            binds::configure_static_binds(error_sx.clone())?;
 
             thread_hnds.push(pipe_server::spawn(ready_sx.clone(), long_lived_channels.sxs.window_foreground.clone()));
 
-            Ok(mpsc::channel::<String>())
+            Ok((error_sx, error_rx))
         })
         .transpose()?
         .unzip();
@@ -197,13 +199,13 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorAlertRx, JoinHandles)> {
     let hook_mgr_tid = receive_ready(&mut shutdown_info.to_close, ready_rx);
     bitflags_match!(long_lived_channels.enabled, {
         EnabledChannels::WINDOW_FOREGROUND => {
-            thread_hnds.push(window_foreground::spawn(window_foreground_comps, error_alert_sx.unwrap(), long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
+            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap(), error_sx.unwrap()));
         },
         EnabledChannels::WINDOW_SHIFT => {
             thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
         },
         EnabledChannels::all() => {
-            thread_hnds.push(window_foreground::spawn(window_foreground_comps, error_alert_sx.unwrap(), long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap()));
+            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap(), error_sx.unwrap()));
             thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
         },
         _ => ()
@@ -218,12 +220,12 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorAlertRx, JoinHandles)> {
     //     to_close.push(LongLivedTask::ConfigWatch(event_close));
     // }
 
-    SHUTDOWN_INFO.set(Mutex::new(shutdown_info)).unwrap();
+    SHUTDOWN_INFO.set(shutdown_info).unwrap();
 
     // Tray
     thread_hnds.push(tray::spawn());
 
-    Ok((error_alert_rx, thread_hnds))
+    Ok((error_rx, thread_hnds))
 }
 
 fn receive_ready(to_close: &mut Vec<LongLivedTask>, rx: mpsc::Receiver<ReadyMsg>) -> Option<Tid> {

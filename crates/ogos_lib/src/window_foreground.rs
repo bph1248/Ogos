@@ -18,7 +18,7 @@ use std::{
     mem,
     sync::{
         atomic::*,
-        mpsc::*
+        mpsc
     },
     thread::{self, *},
     time::*
@@ -38,12 +38,12 @@ pub(crate) const TASKBAR_START_MENU_CLASS_NAME: &str = "Start";
 pub(crate) const WORKERW_CLASS_NAME: &str = "WorkerW";
 pub(crate) const WINDOW_WATCH_CLASS_NAME: &str = "OgosWindowWatch";
 
-#[derive(Default)]
 struct Binds<'a> {
     qmk: Option<QmkRuntime>,
     maps: Option<HashMap<&'a str, InputEventMaps>>,
     bound: Vec<InputEventMap>,
-    input_hooks_disabled: bool
+    input_hooks_disabled: bool,
+    error_sx: mpsc::Sender<String>
 }
 impl<'a> Binds<'a> {
     fn has_maps(&self, exe: &str) -> HasMaps {
@@ -95,14 +95,14 @@ pub(crate) type WinEventHooksSx = oneshot::Sender<Res<Vec<HWINEVENTHOOK>>>;
 
 #[derive(Default)]
 pub(crate) struct Senders {
-    pub(crate) window_foreground: Option<Sender<Msg>>,
-    pub(crate) window_shift: Option<Sender<window_shift::Msg>>
+    pub(crate) window_foreground: Option<mpsc::Sender<Msg>>,
+    pub(crate) window_shift: Option<mpsc::Sender<window_shift::Msg>>
 }
 
 #[derive(Default)]
 pub(crate) struct Receivers {
-    pub(crate) window_foreground: Option<Receiver<Msg>>,
-    pub(crate) window_shift: Option<Receiver<window_shift::Msg>>
+    pub(crate) window_foreground: Option<mpsc::Receiver<Msg>>,
+    pub(crate) window_shift: Option<mpsc::Receiver<window_shift::Msg>>
 }
 
 #[derive(Default)]
@@ -592,8 +592,11 @@ fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&s
         _ => { // Game is not foreground (active or not)
             match binds.input_hooks_disabled {
                 true => { // Game was foreground
+                    mki::clear();
                     mki::install_hooks();
-                    binds::reconfigure_static_binds();
+                    binds::configure_static_binds(binds.error_sx.clone()).unwrap_or_else(|err| {
+                        binds.error_sx.send(format!("{}: failed to reconfigure static binds: {}", module_path!(), err)).unwrap();
+                    });
 
                     binds.input_hooks_disabled = false;
                 },
@@ -861,7 +864,7 @@ pub(crate) fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2d) -> S
     }
 }
 
-fn init_binds<'a>(error_alert_sx: &Sender<String>) -> Res1<Binds<'a>> {
+fn init_binds<'a>(error_sx: &mpsc::Sender<String>) -> Res1<Binds<'a>> {
     (|| -> Res1<_> {
         const QMK_VID: u16 = 0x3434;
         const QMK_PID: u16 = 0x0140;
@@ -876,7 +879,7 @@ fn init_binds<'a>(error_alert_sx: &Sender<String>) -> Res1<Binds<'a>> {
         })
         .transpose()
         .unwrap_or_else(|err| {
-            error_alert_sx.send(err.to_string()).unwrap();
+            error_sx.send(err.to_string()).unwrap();
 
             None
         });
@@ -885,19 +888,20 @@ fn init_binds<'a>(error_alert_sx: &Sender<String>) -> Res1<Binds<'a>> {
             qmk,
             maps: binds_config.maps.clone(),
             bound: default!(),
-            input_hooks_disabled: default!()
+            input_hooks_disabled: default!(),
+            error_sx: error_sx.clone()
         })
     })()
     .map_err(|err| {
         let err = err.msg("failed to init binds");
 
-        error_alert_sx.send(err.to_string()).unwrap();
+        error_sx.send(err.to_string()).unwrap();
 
         err
     })
 }
 
-fn init_taskbar(rx: &Receiver<Msg>) -> Res1<Taskbar> {
+fn init_taskbar(rx: &mpsc::Receiver<Msg>) -> Res1<Taskbar> {
     match rx.recv()? {
         Msg::Taskbar(tb) => {
             tb.taskbar_hwnd.hide()?;
@@ -909,12 +913,12 @@ fn init_taskbar(rx: &Receiver<Msg>) -> Res1<Taskbar> {
     }
 }
 
-fn begin(enable: WindowForegroundComponents, error_alert_sx: Sender<String>, rx: Receiver<Msg>, hook_mgr_tid: Tid) -> Res<()> { unsafe {
+fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_tid: Tid, error_sx: mpsc::Sender<String>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let mut ts = ThreadState {
         hook_mgr_tid: hook_mgr_tid.0,
-        binds: enable.contains(WindowForegroundComponents::DYNAMIC_BINDS).then_some(init_binds(&error_alert_sx)?),
+        binds: enable.contains(WindowForegroundComponents::DYNAMIC_BINDS).then_some(init_binds(&error_sx)?),
         tb: enable.contains(WindowForegroundComponents::TASKBAR).then_some(init_taskbar(&rx)?),
         ..default!()
     };
@@ -928,15 +932,14 @@ fn begin(enable: WindowForegroundComponents, error_alert_sx: Sender<String>, rx:
             },
             Msg::Broadcast(BroadcastMsg::WmReloadConfig) => {
                 if ts.binds.is_some() {
-                    init_binds(&error_alert_sx).map(|mut binds| {
-                        unbind_maps(&mut binds);
+                    let mut binds = init_binds(&error_sx)?;
+                    unbind_maps(&mut binds);
 
-                        for (_, win_info) in ts.win_infos.iter_mut() {
-                            win_info.has_maps = binds.has_maps(&win_info.exe);
-                        }
+                    for (_, win_info) in ts.win_infos.iter_mut() {
+                        win_info.has_maps = binds.has_maps(&win_info.exe);
+                    }
 
-                        ts.binds = Some(binds);
-                    })?;
+                    ts.binds.replace(binds);
                 }
             },
             Msg::Pipe((msg, ack_sx)) => if let pipe_server::Msg::ActiveGame(exe) = msg {
@@ -1018,9 +1021,9 @@ fn begin(enable: WindowForegroundComponents, error_alert_sx: Sender<String>, rx:
     Ok(())
 } }
 
-pub(crate) fn spawn(enable: WindowForegroundComponents, sx: Sender<String>, rx: Receiver<Msg>, hook_mgr_tid: Tid) -> JoinHandle<()> {
+pub(crate) fn spawn(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_tid: Tid, error_sx: mpsc::Sender<String>) -> JoinHandle<()> {
     thread::spawn(move || {
-        begin(enable, sx, rx, hook_mgr_tid).unwrap_or_else(|err| {
+        begin(enable, rx, hook_mgr_tid, error_sx).unwrap_or_else(|err| {
             error!("{}: terminated: {}", module_path!(), err);
         });
     })

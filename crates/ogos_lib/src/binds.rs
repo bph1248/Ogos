@@ -18,7 +18,7 @@ use std::{
     collections::*,
     fmt::Write,
     fs,
-    sync::mpsc::{self, *},
+    sync::mpsc,
     thread,
     time::*
 };
@@ -59,27 +59,27 @@ pub(crate) mod qmk_deser {
 mod trigger_watch {
     use super::*;
 
-    pub(crate) fn begin(tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: Receiver<InputEvent>) {
+    pub(crate) fn begin(tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: mpsc::Receiver<InputEvent>, error_sx: mpsc::Sender<String>) {
         for trigger in rx.iter() {
             if let InputEvent::Keyboard(key) = trigger && let Some(task) = tasks.get(&key) {
                 match task {
                     Task::BeginPixelCleaning => begin_pixel_cleaning(pixel_cleaning_prelude).unwrap_or_else(|err| {
-                        error!("{}: failure during pixel cleaning: {}", module_path!(), err);
+                        error_sx.send(format!("{}: failure during pixel cleaning: {}", module_path!(), err)).unwrap();
                     }),
                     Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
-                        error!("{}: failed to let walk away: {}", module_path!(), err);
+                        error_sx.send(format!("{}: failed to let walk away: {}", module_path!(), err)).unwrap();
                     }),
                     Task::GoToSleep => unsafe {
                         _ = SetSuspendState(false, false, true).win32_core_ok().x().inspect_err(|err| {
-                            error!("{}: failed to go to sleep: {}", module_path!(), err);
+                            error_sx.send(format!("{}: failed to go to sleep: {}", module_path!(), err)).unwrap();
                         });
                     },
                     Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
-                        error!("{}: failed to toggle display mode: {}", module_path!(), err);
+                        error_sx.send(format!("{}: failed to toggle display mode: {}", module_path!(), err)).unwrap();
                     }),
                     Task::PrintWindowInfo => {
                         print_window_info().unwrap_or_else(|err| {
-                            error!("{}: failed to print window info: {}", module_path!(), err);
+                            error_sx.send(format!("{}: failed to print window info: {}", module_path!(), err)).unwrap();
                         });
                     }
                 }
@@ -513,7 +513,7 @@ pub(crate) fn unmap_qmk(qmk: &QmkRuntime, from: Key) {
     }
 }
 
-pub(crate) fn configure_static_binds() -> Res<()> {
+pub(crate) fn configure_static_binds(error_sx: mpsc::Sender<String>) -> Res<()> {
     let config = config::get().read()?;
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: Binds::NAME })?;
 
@@ -524,7 +524,7 @@ pub(crate) fn configure_static_binds() -> Res<()> {
         // Invoke tasks
         let pixel_cleaning_prelude = config.pixel_cleaning;
         let (invoke_task_sx, rx) = mpsc::channel::<InputEvent>();
-        thread::spawn(move || trigger_watch::begin(tasks, pixel_cleaning_prelude, rx));
+        thread::spawn(move || trigger_watch::begin(tasks, pixel_cleaning_prelude, rx, error_sx));
 
         for key in hotkeys.prefix.iter() {
             let invoke_task_sx = invoke_task_sx.clone();
@@ -618,12 +618,4 @@ pub(crate) fn configure_static_binds() -> Res<()> {
     info!("{}: configured", module_path!());
 
     Ok(())
-}
-
-pub(crate) fn reconfigure_static_binds() {
-    mki::clear();
-
-    configure_static_binds().unwrap_or_else(|err| {
-        error!("{}: failed to reconfigure static binds: {}", module_path!(), err);
-    });
 }
