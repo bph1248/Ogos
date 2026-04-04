@@ -44,6 +44,16 @@ impl<'a> NovideoSrgbInfo<'a> {
     pub const NAME: &'static str = "novideo_srgb";
 }
 
+impl<'a> Display for NovideoSrgbInfo<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.enable_clamp {
+            true => write!(f, "clamp: {}, optimization: {}, primaries: {}, target: {}, gamma: {}",
+                self.enable_clamp, self.enable_optimization, self.primaries_source, self.color_space_target, self.gamma),
+            false => write!(f, "clamp: {}", self.enable_clamp)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(try_from = "BindVar")]
 pub enum ColorBitDepth {
@@ -98,7 +108,8 @@ impl TryFrom<BindVar> for ColorBitDepth {
     }
 }
 
-#[derive(Clone, Copy, Default, Deserialize)]
+#[derive(Clone, Copy, Default, Deserialize, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 #[repr(i32)]
 pub enum ColorSpaceTarget {
     #[serde(rename = "bt_709")]
@@ -111,18 +122,21 @@ pub enum ColorSpaceTarget {
     #[serde(rename = "bt_2020")]
     Bt2020
 }
+impl Display for ColorSpaceTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", Into::<&'static str>::into(self))
+    }
+}
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum DisplayMode {
     Sdr,
     Hdr
 }
 impl Display for DisplayMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sdr => write!(f, "sdr"),
-            Self::Hdr => write!(f, "hdr")
-        }
+        write!(f, "{}", Into::<&'static str>::into(self))
     }
 }
 impl Not for DisplayMode {
@@ -176,8 +190,9 @@ impl TryFrom<BindVar> for DitherBitDepth {
     }
 }
 
-#[derive(Clone, Copy,Deserialize)]
+#[derive(Clone, Copy,Deserialize, IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum DitherMode {
     SpatialStatic,
     SpatialStatic2x2,
@@ -200,17 +215,11 @@ impl Deref for DitherMode {
 }
 impl Display for DitherMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SpatialStatic => write!(f, "spatial_static"),
-            Self::SpatialStatic2x2 => write!(f, "spatial_static2x2"),
-            Self::SpatialDynamic => write!(f, "spatial_dynamic"),
-            Self::SpatialDynamic2x2 => write!(f, "spatial_dynamic2x2"),
-            Self::Temporal => write!(f, "temporal")
-        }
+        write!(f, "{}", Into::<&'static str>::into(self))
     }
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum DitherState {
     Default,
@@ -230,11 +239,7 @@ impl Deref for DitherState {
 }
 impl Display for DitherState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Default => write!(f, "default"),
-            Self::Enabled => write!(f, "enabled"),
-            Self::Disabled => write!(f, "disabled")
-        }
+        write!(f, "{}", Into::<&'static str>::into(self))
     }
 }
 
@@ -253,8 +258,9 @@ pub struct GammaFfi {
     pub black_output_offset: f64
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize, IntoStaticStr)]
 #[serde(deny_unknown_fields)]
+#[strum(serialize_all = "snake_case")]
 pub enum Gamma {
     #[serde(rename = "srgb")]
     Srgb,
@@ -302,8 +308,15 @@ impl Gamma {
     }
 }
 
-#[derive(Clone, Default, Deserialize)]
+impl Display for Gamma {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", Into::<&'static str>::into(self))
+    }
+}
+
+#[derive(Clone, Default, Deserialize, IntoStaticStr)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum PrimariesSource<'a> {
     #[default]
     Edid,
@@ -315,5 +328,11 @@ impl<'a> PrimariesSource<'a> {
             Self::Edid => 0,
             Self::Profile { .. } => 1
         }
+    }
+}
+
+impl<'a> Display for PrimariesSource<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", Into::<&'static str>::into(self))
     }
 }

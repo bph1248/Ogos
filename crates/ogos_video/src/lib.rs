@@ -112,15 +112,21 @@ fn deserialize_streams<'de, D>(deserializer: D) -> Result<Streams, D::Error> whe
         fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> where
             A: SeqAccess<'de>
         {
-            let mut streams = Streams::default();
+            let mut video_stream = None;
+            let mut audio_stream = None;
             loop {
                 match seq.next_element::<Stream>() {
-                    Ok(Some(Stream::Video(video_stream))) => streams.video = video_stream,
-                    Ok(Some(Stream::Audio(audio_stream))) => streams.audio = audio_stream,
+                    Ok(Some(Stream::Video(v))) => if video_stream.is_none() { video_stream = Some(v) },
+                    Ok(Some(Stream::Audio(a))) => if audio_stream.is_none() { audio_stream = Some(a) },
                     Ok(None) => break,
                     _ => ()
                 }
             }
+
+            let streams = Streams {
+                video: video_stream.unwrap_or_default(),
+                audio: audio_stream.unwrap_or_default()
+            };
 
             Ok(streams)
         }
@@ -380,18 +386,21 @@ pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, ove
                         set_display_mode_op = SetDisplayModeOp::Set(DisplayMode::Sdr);
 
                         // Bit depth / novideo_srgb optimization
-                        if let Some(vid_bit_depth) = ffprobe.streams.video.bits_per_raw_sample.filter(|depth| depth == "10").as_ref() {
-                            info!("{}: bit depth: {}", module_path!(), vid_bit_depth);
+                        if let Some("10") = ffprobe.streams.video.bits_per_raw_sample.as_deref() {
+                            info!("{}: bit depth: 10", module_path!());
 
-                            if let Some(info) = config.display_modes.as_ref().and_then(|display_modes| display_modes.sdr.novideo_srgb.as_ref()) {
-                                let info = NovideoSrgbInfo {
+                            let (_, display_ids) = get_first_gpu_display_ids()?;
+                            let color_bit_depth = get_color_bit_depth(display_ids.displayId)?;
+
+                            if color_bit_depth == ColorBitDepth::N10 && let Some(prev) = config.display_modes.as_ref()
+                                .and_then(|display_modes| display_modes.sdr.novideo_srgb.clone()) && prev.enable_optimization
+                            {
+                                let novideo_srgb_info = NovideoSrgbInfo {
                                     enable_optimization: false,
-                                    ..info.clone()
+                                    ..prev.clone()
                                 };
 
-                                control_novideo_srgb(&info).map(|_| {
-                                    let prev = info.clone();
-
+                                control_novideo_srgb(&novideo_srgb_info).inspect(|_| {
                                     revert_to.push(Setting::NovideoSrgb(prev));
                                 })?;
                             }

@@ -306,7 +306,11 @@ pub fn control_novideo_srgb(info: &NovideoSrgbInfo) -> Res2<()> { unsafe {
             let apply_info = make_novideo_srgb_apply_info(info)?;
 
             match (ffi.novideo_srgb_apply_fn)(&apply_info.0) {
-                42 => Ok(()),
+                42 => {
+                    info!("{}: novideo_srgb: {}", module_path!(), info);
+
+                    Ok(())
+                },
                 _ => Err(ErrVar::FailedNovideoSrgbApply)?
             }
         },
@@ -314,7 +318,7 @@ pub fn control_novideo_srgb(info: &NovideoSrgbInfo) -> Res2<()> { unsafe {
     }
 } }
 
-fn get_color_bit_depth(display_id: NvU32) -> nvapi::Result<ColorBitDepth> { unsafe {
+pub fn get_color_bit_depth(display_id: NvU32) -> nvapi::Result<ColorBitDepth> { unsafe {
     use nvapi_530::*;
 
     let mut color_data = NV_COLOR_DATA {
@@ -415,7 +419,7 @@ pub fn get_first_display_path() -> Res1<DISPLAYCONFIG_PATH_INFO> { unsafe {
     Ok(paths[0])
 } }
 
-fn get_first_gpu_display_ids() -> Res1<(NvPhysicalGpuHandle, NV_GPU_DISPLAYIDS)> { unsafe {
+pub fn get_first_gpu_display_ids() -> Res1<(NvPhysicalGpuHandle, NV_GPU_DISPLAYIDS)> { unsafe {
     let mut gpu_hnds = [NvPhysicalGpuHandle::default(); NVAPI_MAX_PHYSICAL_GPUS];
     let mut gpu_count = 0;
     NvAPI_EnumPhysicalGPUs(&mut gpu_hnds, &mut gpu_count).nvapi_ok()?;
