@@ -260,13 +260,13 @@ pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, ove
         let config = config::get().read()?;
         let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Mpv::NAME })?;
 
-        let ffprobe_path = confirm_or_find_app(App::FFPROBE, config.app_paths.ffprobe.as_ref())?;
-        let mpv_path = confirm_or_find_app(App::MPV, config.app_paths.mpv.as_ref())?;
+        let ffprobe_path = confirm_or_find_app(config.app_paths.ffprobe.as_ref(), App::FFPROBE)?;
+        let mpv_path = confirm_or_find_app(config.app_paths.mpv.as_ref(), App::MPV)?;
 
-        let mut cmd = Command::new(mpv_path.as_path());
+        let mut cmd = Command::new(mpv_path.as_ref());
         let mut args = vec![];
 
-        let mut ffprobe_cmd = Command::new(&ffprobe_path);
+        let mut ffprobe_cmd = Command::new(ffprobe_path.as_ref());
         ffprobe_cmd.args(["-v", "quiet", "-read_intervals", "%+#1", "-show_entries", "stream=codec_type,bits_per_raw_sample,sample_rate,color_transfer:side_data=side_data_type,max_content", "-of", "json"])
             .arg(vid_path)
             .creation_flags(CREATE_NO_WINDOW.0);

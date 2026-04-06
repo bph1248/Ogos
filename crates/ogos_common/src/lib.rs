@@ -20,6 +20,7 @@ use nvapi_530::*;
 use paste::*;
 use serde::*;
 use std::{
+    borrow::*,
     fmt::{self, Display},
     ops::*,
     path::*,
@@ -299,36 +300,35 @@ fn find_app(name: &'static str) -> ResVar<PathBuf> {
     which::which(name).map_err(|_| ErrVar::MissingFile { path: name.as_static_cow_path() })
 }
 
-pub fn confirm_or_find_app<P>(name: &'static str, path: Option<P>) -> ResVar<PathBuf> where
+pub fn confirm_or_find_app<'a, P>(confirm: Option<&'a P>, app: &'static str) -> ResVar<Cow<'a, Path>> where
     P: AsRef<Path>
 {
-    fn inner(name: &'static str, confirm: Option<&Path>) -> ResVar<PathBuf> {
-        confirm.map(|path| match path.confirm() {
-            Ok(path) => Ok(path.to_owned()),
-            Err(err) => match err {
-                ErrVar::MissingFile { path } => {
-                    error!("{}: invalid app path: {} - searching for {}", module_path!(), path.display(), name);
+    fn inner<'a>(confirm: Option<&'a Path>, app: &'static str) -> ResVar<Cow<'a, Path>> {
+        confirm.map(|path| {
+            match path.try_exists()? {
+                true => Ok(path.into()),
+                false => {
+                    error!("{}: invalid app path: {} - searching for {}", module_path!(), path.display(), app);
 
-                    find_app(name).inspect(|path| info!("{}: found app path: {}", module_path!(), path.display()))
-                },
-                _ => Err(err)
+                    find_app(app).inspect(|path| info!("{}: found app: {}", module_path!(), path.display())).map(into!())
+                }
             }
         })
-        .unwrap_or_else(|| find_app(name))
+        .unwrap_or_else(|| find_app(app).map(into!()))
     }
 
-    inner(name, path.as_ref().map(|path| path.as_ref()))
+    inner(confirm.map(|v| v.as_ref()), app)
 }
 
 pub fn get_file_kind(ext: &str) -> FileKind {
     let guess = mime_guess::from_ext(ext).first();
 
-    match guess.as_ref().map(|mime| mime.type_()) {
-        Some(mime::IMAGE) => FileKind::Image,
-        Some(mime::VIDEO) => FileKind::Vid,
-        Some(_) => FileKind::Other,
-        None => FileKind::Unknown
-    }
+    guess.as_ref().map(|mime| match mime.type_() {
+        mime::IMAGE => FileKind::Image,
+        mime::VIDEO => FileKind::Vid,
+        _ => FileKind::Other
+    })
+    .unwrap_or(FileKind::Unknown)
 }
 
 pub fn get_first_process<'a>(proc_name: &str, system: &'a mut System) -> Option<&'a Process> {

@@ -115,9 +115,9 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
         let mut cmd;
         match cli.gaming.use_special_k {
             true => {
-                let skif_path = confirm_or_find_app(App::SKIF, config.app_paths.skif.as_ref())?;
+                let skif_path = confirm_or_find_app(config.app_paths.skif.as_ref(), App::SKIF)?;
 
-                cmd = Command::new(skif_path);
+                cmd = Command::new(skif_path.as_ref());
                 cmd.arg(launcher_or_game_path);
             },
             false => {

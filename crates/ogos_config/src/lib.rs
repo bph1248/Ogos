@@ -647,12 +647,14 @@ pub struct Audio<'a> {
 
 const fn epic() -> &'static str { r"C:\Program Files (x86)\Epic Games\Launcher\Portal\Binaries\Win64\EpicGamesLauncher.exe" }
 const fn gog() -> &'static str { r"C:\Program Files (x86)\GOG Galaxy\GalaxyClient.exe" }
+const fn novideo_srgb() -> &'static str { r"./novideo_srgb/novideo_srgb.dll" }
 const fn steam() -> &'static str { r"C:\Program Files (x86)\steam\steam.exe" }
 
 fn app_paths<'a>() -> AppPaths<'a> {
     AppPaths {
         epic: epic(),
         gog: gog(),
+        novideo_srgb: novideo_srgb(),
         steam: steam(),
         ..default!()
     }
@@ -667,7 +669,8 @@ pub struct AppPaths<'a> {
     #[serde(default = "gog")]
     pub gog: &'a str,
     pub mpv: Option<&'a str>,
-    pub novideo_srgb: Option<&'a str>,
+    #[serde(default = "novideo_srgb")]
+    pub novideo_srgb: &'a str,
     pub skif: Option<&'a str>,
     #[serde(default = "steam")]
     pub steam: &'a str

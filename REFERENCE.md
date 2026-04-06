@@ -169,7 +169,7 @@ Shift is disabled if the foreground window is full screen or `left_button`/`left
         gog: "<path>",
         // Optional
         mpv: "<path>",
-        // Optional
+        // Optional, default: "./novideo_srgb/novideo_srgb.dll"
         novideo_srgb: "<path>",
         // Optional
         skif: "<path>",

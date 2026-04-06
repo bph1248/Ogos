@@ -125,19 +125,12 @@ fn error_alert(msg: String) {
     _ = gui::begin(gui::Kind::Info { msg });
 }
 
-fn find_novideo_srgb(config: RwLockReadGuard<'_, Config>) -> Res1<PathBuf> {
-    let confirm_deps = |path: &Path| -> ResVar<()>{
-        path.with_file_name("EDIDParser.dll").confirm()?;
-        path.with_file_name("NvAPIWrapper.dll").confirm()?;
-        path.with_file_name("WindowsDisplayAPI.dll").confirm()?;
+fn confirm_novideo_srgb_deps(path: &Path) -> Res1<()> {
+    path.with_file_name("EDIDParser.dll").confirm()?;
+    path.with_file_name("NvAPIWrapper.dll").confirm()?;
+    path.with_file_name("WindowsDisplayAPI.dll").confirm()?;
 
-        Ok(())
-    };
-
-    let path = confirm_or_find_app(App::NOVIDEO_SRGB, config.app_paths.novideo_srgb.as_ref())?;
-    confirm_deps(path.as_path())?;
-
-    Ok(path)
+    Ok(())
 }
 
 fn get_long_lived_channels(cli: &Cli) -> LongLivedChannels {
@@ -386,6 +379,7 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
 fn init() -> Res<(Cli, CliPathKind)> {
     let current_exe_path = env::current_exe()?;
     let current_exe_dir = current_exe_path.get_dir()?;
+    env::set_current_dir(current_exe_dir)?; // For relative path lookups
     CURRENT_EXE_DIR.set(current_exe_dir.into()).map_err(|_| ErrVar::FailedSetOnceCell)?;
 
     // Parse Cli
@@ -483,22 +477,34 @@ fn init() -> Res<(Cli, CliPathKind)> {
 
     // Config
     let config = config::load().map_err(|err| err.msg("failed to load config"))?;
-    CONFIG.set(RwLock::new(config)).map_err(|_| ErrVar::FailedSetConfig)?;
 
     // NovideoSrgb
-    let config = config::get().read()?;
-    if let Some(display_modes_config) = config.display_modes.as_ref() {
-        match display_modes_config.sdr.novideo_srgb.is_some() || display_modes_config.hdr.novideo_srgb.is_some() {
+    if let Some(display_modes) = config.display_modes.as_ref() {
+        let primaries_sources = [&display_modes.sdr, &display_modes.hdr].into_iter()
+            .filter_map(|display_mode| display_mode.novideo_srgb.as_ref())
+            .map(|novideo_srgb| &novideo_srgb.primaries_source);
+        let novideo_srgb_is_present = primaries_sources.size_hint().1.unwrap() > 0;
+
+        for primaries_source in primaries_sources {
+            if let display::PrimariesSource::Profile { path } = primaries_source &&
+                !Path::new(path).try_exists()?
+            {
+                Err(ErrVar::MissingFile { path: path.as_static_cow_path() })?;
+            }
+        }
+
+        match novideo_srgb_is_present {
             true => {
-                let novideo_srgb_path = find_novideo_srgb(config)?;
-                let runtime_config_path = novideo_srgb_path.with_file_name("novideo_srgb.runtimeconfig.json").confirm()?;
-                let novideo_srgb_path = PdCString::from_os_str(novideo_srgb_path)?;
+                let novideo_srgb_dll_path = confirm_or_find_app(Some(&config.app_paths.novideo_srgb), App::NOVIDEO_SRGB)?;
+                confirm_novideo_srgb_deps(&novideo_srgb_dll_path)?;
+                let runtime_config_path = novideo_srgb_dll_path.with_file_name("novideo_srgb.runtimeconfig.json").confirm()?;
+                let novideo_srgb_dll_path = PdCString::from_os_str(novideo_srgb_dll_path.as_ref())?;
                 let runtime_config_path = PdCString::from_os_str(runtime_config_path)?;
 
                 let hostfxr = Hostfxr::load_with_nethost()?;
                 let ctx = hostfxr.initialize_for_runtime_config(runtime_config_path)?;
 
-                let delegate_loader = ctx.get_delegate_loader_for_assembly(novideo_srgb_path)?;
+                let delegate_loader = ctx.get_delegate_loader_for_assembly(novideo_srgb_dll_path)?;
                 let novideo_srgb_apply_fn = delegate_loader.get_function_with_unmanaged_callers_only::<NovideoSrgbApplyFn>(
                     pdcstr!("novideo_srgb.Interop, novideo_srgb"),
                     pdcstr!("NovideoSrgbApply")
@@ -514,6 +520,8 @@ fn init() -> Res<(Cli, CliPathKind)> {
             false => NOVIDEO_SRGB_FFI.set(None).map_err(|_| ErrVar::FailedSetOnceCell)?
         }
     }
+
+    CONFIG.set(RwLock::new(config)).map_err(|_| ErrVar::FailedSetConfig)?;
 
     Ok((cli, cli_path_kind))
 }
