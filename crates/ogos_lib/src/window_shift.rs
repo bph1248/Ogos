@@ -159,8 +159,8 @@ pub(crate) enum Msg {
     MenuStart,
     MenuEnd
 }
-impl Name for Msg {
-    fn name(&self) -> &'static str {
+impl VarName for Msg {
+    fn var_name(&self) -> &'static str {
         self.into()
     }
 }

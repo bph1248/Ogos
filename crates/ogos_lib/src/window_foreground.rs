@@ -218,8 +218,8 @@ pub(crate) enum Msg {
     WinEventHookTaskbarLocationChange { hwnd: usize },
     WmMouseMove(LPARAM, Instant)
 }
-impl Name for Msg {
-    fn name(&self) -> &'static str {
+impl VarName for Msg {
+    fn var_name(&self) -> &'static str {
         self.into()
     }
 }
@@ -999,7 +999,7 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
     };
 
     for msg in rx.iter() {
-        let msg_name = msg.name();
+        let msg_name = msg.var_name();
 
         if let Err(err) = handle_msg(msg) {
             error!("{}: failure on message loop: {}: {}", module_path!(), msg_name, err);

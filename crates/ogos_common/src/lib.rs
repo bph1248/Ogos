@@ -115,8 +115,8 @@ pub enum BroadcastMsg {
     WmDisplayChange(LPARAM),
     WmReloadConfig
 }
-impl Name for BroadcastMsg {
-    fn name(&self) -> &'static str {
+impl VarName for BroadcastMsg {
+    fn var_name(&self) -> &'static str {
         self.into()
     }
 }
@@ -177,10 +177,6 @@ impl BoolExt for bool {
             false => BOOL(0)
         }
     }
-}
-
-pub trait Name {
-    fn name(&self) -> &'static str;
 }
 
 pub trait PathExt {
@@ -282,6 +278,10 @@ impl StrExt for &str {
     unsafe fn to_win_str(&self) -> WinStr { unsafe {
         WinStr::new(self)
     } }
+}
+
+pub trait VarName {
+    fn var_name(&self) -> &'static str;
 }
 
 pub fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, sleep_dur: Duration) -> Res<T> {

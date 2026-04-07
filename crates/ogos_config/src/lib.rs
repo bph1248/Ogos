@@ -35,6 +35,15 @@ macro_rules! impl_name {
             pub const NAME: &str = map_ascii_case!(Case::Snake, stringify!($name));
         }
     };
+    (type $name:ident) => {
+        impl Name for $name<'_> {
+            const NAME: &'static str = map_ascii_case!(Case::Snake, stringify!($name));
+        }
+    };
+}
+
+pub trait Name {
+    const NAME: &'static str;
 }
 
 fn deserialize_key<'de, D>(deserializer: D) -> Result<Key, D::Error> where
@@ -462,10 +471,8 @@ pub struct GameInfo<'a> {
     pub res: Option<Extent2dU>
 }
 
-#[derive(Deserialize)]
-#[serde(transparent)]
-pub struct Games<'a>(#[serde(borrow)] pub HashMap<&'a str, GameInfo<'a>>);
-impl_name!(Games, 'a);
+pub type Games<'a> = HashMap<&'a str, GameInfo<'a>>;
+impl_name!(type Games);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -553,7 +560,6 @@ struct ClickMap(
 
 #[derive(Clone, Copy)]
 pub enum InputEventMap {
-    // PressMirror { from: MouseWheel(Wheel), .. } won't make it past config
     PressMirror { from: InputEvent, to: InputEvent },
     WheelClick { from: InputEvent, to: InputEvent, dur: Duration }
 }
@@ -626,7 +632,6 @@ impl_name!(EqApo, 'a);
 pub struct App<'a> {
     #[serde(rename = "app")]
     pub path: &'a str,
-    #[serde(borrow)]
     pub args: Vec<&'a str>
 }
 impl<'a> App<'a> {

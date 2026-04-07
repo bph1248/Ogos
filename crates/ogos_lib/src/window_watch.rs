@@ -107,13 +107,13 @@ impl WinEventHookContext {
 impl Display for WinEventHookContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.get_hwnd() {
-            Some(hwnd) => write!(f, "{}: hwnd: {:p}, exe: {}, caption: {}", self.name(), hwnd.0, hwnd.get_exe_or_err(), hwnd.get_caption_or_err()),
-            None => write!(f, "{}", self.name())
+            Some(hwnd) => write!(f, "{}: hwnd: {:p}, exe: {}, caption: {}", self.var_name(), hwnd.0, hwnd.get_exe_or_err(), hwnd.get_caption_or_err()),
+            None => write!(f, "{}", self.var_name())
         }
     }
 }
-impl Name for WinEventHookContext {
-    fn name(&self) -> &'static str{
+impl VarName for WinEventHookContext {
+    fn var_name(&self) -> &'static str{
         self.into()
     }
 }
@@ -137,9 +137,9 @@ fn error_and_close(msg_name: &str, err: ErrLoc) { unsafe {
 } }
 
 fn dispatch_msg<T>(msg: T) where
-    T: Dispatch + Name
+    T: Dispatch + VarName
 {
-    let msg_name = msg.name();
+    let msg_name = msg.var_name();
     THREAD_STATE.with(|ts| -> Res<()> {
         let sxs = &ts.get().unwrap().sxs;
 

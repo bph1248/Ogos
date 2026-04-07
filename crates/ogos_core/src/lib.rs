@@ -126,6 +126,24 @@ impl fmt::Display for Displayer<'_, RECT> {
         write!(f, "{{{}, {}, {}, {}}}{{{}, {}}}", self.left, self.top, self.right, self.bottom, self.width(), self.height())
     }
 }
+impl<T> fmt::Display for Displayer<'_, Vec<T>> where
+    T: fmt::Display
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let mut iter = self.iter();
+
+        write!(f, "[")?;
+        if let Some(v) = iter.next() {
+            write!(f, "{}", v)?;
+        }
+        for v in iter {
+            write!(f, ", {}", v)?;
+        }
+        write!(f, "]")?;
+
+        Ok(())
+    }
+}
 fn fmt_command(cmd: &Command, f: &mut Formatter<'_>) -> Result {
     let program = cmd.get_program().display();
 
