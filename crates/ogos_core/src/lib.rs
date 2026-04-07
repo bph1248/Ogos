@@ -116,9 +116,14 @@ impl fmt::Display for Displayer<'_, HWND> {
         write!(f, "{:p}", self.0)
     }
 }
-impl fmt::Display for Displayer<'_, Option<&str>> {
+impl<T> fmt::Display for Displayer<'_, Option<T>> where
+    T: fmt::Display
+{
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}", self.as_ref().map_or("<None>", |s| s))
+        match self.as_ref() {
+            Some(v) => write!(f, "{}", v),
+            None => write!(f, "<None>")
+        }
     }
 }
 impl fmt::Display for Displayer<'_, RECT> {

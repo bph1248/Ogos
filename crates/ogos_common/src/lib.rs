@@ -354,7 +354,7 @@ pub fn output_command(cmd: &mut Command) -> ResVar<Output> {
 
     match output.status.success() {
         true => Ok(output),
-        false => Err(ErrVar::UnsuccessfulExitCode { code: output.status.code(), cmd: cmd.as_display().to_string() })
+        false => Err(ErrVar::UnsuccessfulExitCode { code: output.status.code(), cmd: cmd.as_display().to_string(), stdout: output.stdout })
     }
 }
 

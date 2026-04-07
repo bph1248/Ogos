@@ -211,7 +211,7 @@ pub enum ErrVar {
     UnknownEndpoint,
     UnknownEqApoConfigName,
     UnknownGame { name: String },
-    UnsuccessfulExitCode { code: Option<i32>, cmd: String },
+    UnsuccessfulExitCode { code: Option<i32>, cmd: String, stdout: Vec<u8> },
 
     Win32InvalidHandle,
     Win32NonZeroLResult { lresult: LRESULT }
@@ -308,7 +308,7 @@ impl Display for ErrVar {
             UnknownEndpoint => write!(f, "unknown endpoint"),
             UnknownEqApoConfigName => write!(f, "unknown eq apo config name"),
             UnknownGame { name } => write!(f, "unknown game: {}", name),
-            UnsuccessfulExitCode { code, cmd } => write!(f, "unsuccessful exit code: {:?}, command: {}", code, cmd),
+            UnsuccessfulExitCode { code, cmd, stdout } => write!(f, "unsuccessful exit code: {}, command: {}, stdout: \n{}", code.as_display(), cmd, String::from_utf8_lossy(stdout)),
             Win32InvalidHandle => write!(f, "invalid win32 handle"),
             Win32NonZeroLResult { lresult } => write!(f, "non-zero win32 lresult: {}", lresult.0)
         }
