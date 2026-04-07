@@ -952,6 +952,29 @@ impl<'a> MediaBrowser<'a> {
         // let elapsed = now.elapsed();
         // info!("elapsed = {}", elapsed.as_micros());
 
+        let config = config::get().read()?;
+        let (media_dirs,
+            grid_cell_width,
+            details_cell_width,
+            scroll_multiplier
+        ) = config.media_browser.as_ref()
+            .map(|media_browser_config| {
+                #[allow(clippy::cast_precision_loss)]
+                (
+                    &media_browser_config.dirs,
+                    media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
+                    media_browser_config.details_cell_width.next_multiple_of(2) as f32,
+                    media_browser_config.scroll_multiplier
+                )
+            })
+            .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
+        if media_dirs.is_empty() {
+            Err(ErrVar::MissingDirs)?;
+        }
+        let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
+        let grid_cell_space = grid_cell_size + GRID_IMAGE_SPACING;
+        let details_cell_size = egui::vec2(details_cell_width, details_cell_width * ASPECT_RATIO_3_2);
+
         let thread_pool = Arc::new(rayon::ThreadPoolBuilder::new()
             .num_threads(thread::available_parallelism()?.get())
             .build()?);
@@ -992,26 +1015,6 @@ impl<'a> MediaBrowser<'a> {
                 .transpose()
             })
             .collect::<Res<IndexMap::<Arc<str>, ImageStates>>>()?;
-
-        let config = config::get().read()?;
-        let (media_dirs,
-            grid_cell_width,
-            details_cell_width,
-            scroll_multiplier
-        ) = config.media_browser.as_ref()
-            .map(|media_browser_config| {
-                #[allow(clippy::cast_precision_loss)]
-                (
-                    &media_browser_config.dirs,
-                    media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.details_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.scroll_multiplier
-                )
-            })
-            .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
-        let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
-        let grid_cell_space = grid_cell_size + GRID_IMAGE_SPACING;
-        let details_cell_size = egui::vec2(details_cell_width, details_cell_width * ASPECT_RATIO_3_2);
 
         let grid_entries = media_dirs.iter()
             .map(|dir| Path::new(dir).read_dir())
