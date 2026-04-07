@@ -151,7 +151,7 @@ fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
     Ok(PathBuf::from(path_str))
 } }
 
-fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, use_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind, error_sx: mpsc::Sender<String>) {
+fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, override_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind, error_sx: mpsc::Sender<String>) {
     thread::spawn(move || {
         (|| -> Res<()> {
             let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
@@ -164,7 +164,7 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, us
             .transpose()?;
 
             match file_kind {
-                FileKind::Vid => video::launch_mpv(&path, maintain_sample_rate.into(), use_glsl_shaders)?,
+                FileKind::Vid => video::launch_mpv(&path, maintain_sample_rate.into(), override_glsl_shaders)?,
                 _ => {
                     let handler = get_default_handler(&path)?;
 
@@ -789,7 +789,8 @@ struct MediaBrowser<'a> {
     details_levels: Vec<PathBuf>,
     scroll_multiplier: f32,
     maintain_sample_rate: bool,
-    use_glsl_shaders: bool,
+    override_glsl_shaders: bool,
+    enable_override_glsl_shaders_checkbox: bool,
     discord_app_ids: DiscordAppIds<'a>,
     discord_enabled: bool,
     discord_watching: Watching,
@@ -974,6 +975,9 @@ impl<'a> MediaBrowser<'a> {
         let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
         let grid_cell_space = grid_cell_size + GRID_IMAGE_SPACING;
         let details_cell_size = egui::vec2(details_cell_width, details_cell_width * ASPECT_RATIO_3_2);
+        let discord_app_ids = config.discord.app_ids.clone();
+        let discord_display_kind = config.discord.display_kind;
+        let enable_override_glsl_shaders_checkbox = config.mpv.as_ref().map(|mpv_config| mpv_config.override_glsl_shaders.is_some()).unwrap_or(false);
 
         let thread_pool = Arc::new(rayon::ThreadPoolBuilder::new()
             .num_threads(thread::available_parallelism()?.get())
@@ -1095,8 +1099,6 @@ impl<'a> MediaBrowser<'a> {
         grid_view.extend(0..grid_entries.len());
         sort_grid_view(&mut grid_view, &grid_entries);
 
-        let discord_app_ids = config.discord.app_ids.clone();
-        let discord_display_kind = config.discord.display_kind;
         drop(config);
 
         let frame = egui::Frame::central_panel(&ctx.style()).inner_margin(
@@ -1144,7 +1146,8 @@ impl<'a> MediaBrowser<'a> {
             details_levels: Vec::with_capacity(16),
             scroll_multiplier,
             maintain_sample_rate: default!(),
-            use_glsl_shaders: default!(),
+            override_glsl_shaders: default!(),
+            enable_override_glsl_shaders_checkbox,
             discord_app_ids,
             discord_enabled: default!(),
             discord_watching: default!(),
@@ -1812,7 +1815,7 @@ impl<'a> MediaBrowser<'a> {
                                         dir_entry_info.path.clone(),
                                         dir_entry_info.file_kind,
                                         self.maintain_sample_rate,
-                                        self.use_glsl_shaders,
+                                        self.override_glsl_shaders,
                                         discord_info,
                                         self.discord_display_kind,
                                         self.error_sx.clone()
@@ -1895,7 +1898,7 @@ impl<'a> MediaBrowser<'a> {
             .show(|ui| {
                 ui.add_enabled_ui(!self.details_dir_entries.is_empty(), |ui| {
                     ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
-                    ui.checkbox(&mut self.use_glsl_shaders, "Override GLSL shaders");
+                    ui.add_enabled(self.enable_override_glsl_shaders_checkbox, egui::Checkbox::new(&mut self.override_glsl_shaders, "Override GLSL shaders"));
                     ui.menu_button("Discord Rich Presence", |ui| self.discord_menu(ui));
                 });
             });
