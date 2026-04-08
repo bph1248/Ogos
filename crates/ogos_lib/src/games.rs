@@ -70,6 +70,14 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
             revert_to.push(Setting::CursorSize(32));
         }
 
+        if cli.gaming.set_display_mode_hdr {
+            let prev = set_display_mode(SetDisplayModeOp::Set(DisplayMode::Hdr))?;
+
+            if let Some(prev) = prev {
+                revert_to.push(Setting::DisplayMode(prev));
+            }
+        }
+
         if cli.gaming.set_res &&
             let Some(res) = game_info.res
         {
@@ -77,14 +85,6 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
 
             if let Some(prev) = prev {
                 revert_to.push(Setting::ScreenExtent(prev));
-            }
-        }
-
-        if cli.gaming.set_display_mode_hdr {
-            let prev = set_display_mode(SetDisplayModeOp::Set(DisplayMode::Hdr))?;
-
-            if let Some(prev) = prev {
-                revert_to.push(Setting::DisplayMode(prev));
             }
         }
 
