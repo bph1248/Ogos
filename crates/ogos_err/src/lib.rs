@@ -164,6 +164,7 @@ pub enum ErrVar {
     WinCore(#[from] windows::core::Error),
     WinCore061(#[from] windows_061::core::Error),
 
+    Close,
     FailedBindVarFrom { from: String },
     FailedBuildLoggerConfig,
     FailedColorBitDepthFrom { from: String },
@@ -261,6 +262,7 @@ impl Display for ErrVar {
             WinCore(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             WinCore061(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
 
+            Close => write!(f, "close"),
             FailedBindVarFrom { from } => write!(f, "failed bind var from: {}", from),
             FailedBuildLoggerConfig => write!(f, "failed to build logger config"),
             FailedColorBitDepthFrom { from } => write!(f, "failed color bit depth from: {}", from),

@@ -112,6 +112,7 @@ impl From<&PathBuf> for WinStr {
 
 #[derive(Clone, Copy, IntoStaticStr)]
 pub enum BroadcastMsg {
+    Close,
     WmDisplayChange(LPARAM),
     WmReloadConfig
 }

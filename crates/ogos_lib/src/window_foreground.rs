@@ -925,6 +925,7 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
 
     let mut handle_msg = |msg: Msg| -> Res<()> {
         match msg {
+            Msg::Broadcast(BroadcastMsg::Close) => Err(ErrVar::Close)?,
             Msg::Broadcast(BroadcastMsg::WmDisplayChange(lparam)) => {
                 if let Some(tb) = ts.tb.as_mut() {
                     handle_wm_display_change(tb, lparam);
@@ -1002,6 +1003,10 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
         let msg_name = msg.var_name();
 
         if let Err(err) = handle_msg(msg) {
+            if let ErrVar::Close = *err.var {
+                break
+            }
+
             error!("{}: failure on message loop: {}: {}", module_path!(), msg_name, err);
 
             if let ErrVar::FailedContactHookMgr { .. } = *err.var {

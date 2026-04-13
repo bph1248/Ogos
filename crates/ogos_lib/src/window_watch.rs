@@ -403,7 +403,11 @@ fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<Read
 
     while GetMessageW(&mut msg, None, 0, 0).as_bool() {
         match msg.message {
-            WM_OGOS_CLOSE => PostQuitMessage(0),
+            WM_OGOS_CLOSE => {
+                dispatch_msg(BroadcastMsg::Close);
+
+                PostQuitMessage(0);
+            },
             WM_OGOS_RELOAD_CONFIG => dispatch_msg(BroadcastMsg::WmReloadConfig),
             WM_OGOS_REQUEST_WIN_EVENT_HOOKS => {
                 let (sx, request) = *Box::from_raw(msg.lParam.0 as *mut (Option<WinEventHooksSx>, WinEventHookRequest));

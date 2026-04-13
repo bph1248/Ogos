@@ -544,6 +544,7 @@ fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_erro
         };
 
         match msg {
+            Msg::Broadcast(BroadcastMsg::Close) => Err(ErrVar::Close)?,
             Msg::Broadcast(BroadcastMsg::WmDisplayChange(lparam)) => {
                 let width = (lparam.0 & 0xFFFF) as i32;
                 let height = ((lparam.0 >> 16) & 0xFFFF) as i32;
@@ -677,7 +678,7 @@ fn begin(rx: Receiver<Msg>) -> Res<()> { unsafe {
             },
             Err(err) => {
                 match *err.var {
-                    ErrVar::Recv(_) => break,
+                    ErrVar::Close => break,
                     ErrVar::RecvTimeout(recv_timeout_err) => {
                         if let RecvTimeoutError::Disconnected = recv_timeout_err {
                             break
