@@ -7,7 +7,7 @@ use log::*;
 use serde::*;
 use std::{
     ffi::*,
-    sync::mpsc::*,
+    sync::mpsc,
     thread::{self, *}
 };
 use strum::*;
@@ -49,7 +49,7 @@ pub(crate) enum Msg {
 }
 
 // See https://learn.microsoft.com/en-us/windows/win32/secauthz/creating-a-security-descriptor-for-a-new-object-in-c--
-fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<window_foreground::Msg>>) -> Res<()> { unsafe {
+fn begin(send_ready: mpsc::Sender<ReadyMsg>, window_foreground_sx: Option<mpsc::Sender<window_foreground::Msg>>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     // Init a SID for the well-known Everyone group
@@ -162,10 +162,10 @@ fn begin(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<windo
     Ok(())
 } }
 
-pub(crate) fn spawn(send_ready: Sender<ReadyMsg>, window_foreground_sx: Option<Sender<window_foreground::Msg>>) -> JoinHandle<()> {
-    thread::spawn(|| {
+pub(crate) fn spawn(send_ready: mpsc::Sender<ReadyMsg>, window_foreground_sx: Option<mpsc::Sender<window_foreground::Msg>>, error_sx: mpsc::Sender<String>) -> JoinHandle<()> {
+    thread::spawn(move || {
         begin(send_ready, window_foreground_sx).unwrap_or_else(|err| {
-            error!("{}: terminated: {}", module_path!(), err);
+            error_sx.send(format!("{}: terminated: {}", module_path!(), err)).unwrap();
         });
     })
 }

@@ -13,6 +13,7 @@ use ogos_err::*;
 use log::*;
 use std::{
     cell::*,
+    sync::mpsc,
     fmt::{self, *},
     sync::mpsc::*,
     thread::{self, *}
@@ -472,10 +473,10 @@ fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<Read
     Ok(())
 } }
 
-pub(crate) fn spawn(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<ReadyMsg>) -> JoinHandle<()> {
+pub(crate) fn spawn(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<ReadyMsg>, error_sx: mpsc::Sender<String>) -> JoinHandle<()> {
     thread::spawn(move || {
         begin(enable, sxs, ready_sx).unwrap_or_else(|err| {
-            error!("{}: terminated: {}", module_path!(), err);
+            error_sx.send(format!("{}: terminated: {}", module_path!(), err)).unwrap();
         });
     })
 }

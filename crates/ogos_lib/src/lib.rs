@@ -160,13 +160,14 @@ fn get_window_foreground_components(cli: &Cli) -> WindowForegroundComponents {
     window_foreground_comps
 }
 
-type ErrorAlertRx = Option<mpsc::Receiver<String>>;
+type ErrorRx = mpsc::Receiver<String>;
 type JoinHandles = Vec<JoinHandle<()>>;
-fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorAlertRx, JoinHandles)> {
+fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorRx, JoinHandles)> {
     let mut shutdown_info = ShutdownInfo {
         to_close: Vec::new()
     };
     let mut thread_hnds = Vec::new();
+    let (error_sx, error_rx) = mpsc::channel();
 
     // let mut can_reload_config = Vec::new();
     let (ready_sx, ready_rx) = mpsc::channel::<ReadyMsg>();
@@ -174,32 +175,25 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorAlertRx, JoinHandles)> {
     let window_foreground_comps = get_window_foreground_components(cli);
 
     // Binds / pipe server / window watch
-    let (error_sx, error_rx) = window_foreground_comps.contains(WindowForegroundComponents::DYNAMIC_BINDS)
-        .then(|| -> Res<_> {
-            let (error_sx, error_rx) = mpsc::channel();
+    if window_foreground_comps.contains(WindowForegroundComponents::DYNAMIC_BINDS) {
+        binds::configure_static_binds(error_sx.clone())?;
 
-            binds::configure_static_binds(error_sx.clone())?;
-
-            thread_hnds.push(pipe_server::spawn(ready_sx.clone(), long_lived_channels.sxs.window_foreground.clone()));
-
-            Ok((error_sx, error_rx))
-        })
-        .transpose()?
-        .unzip();
-    thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx));
+        thread_hnds.push(pipe_server::spawn(ready_sx.clone(), long_lived_channels.sxs.window_foreground.clone(), error_sx.clone()));
+    }
+    thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx, error_sx.clone()));
 
     // Window foreground/shift
     let hook_mgr_tid = receive_ready(&mut shutdown_info.to_close, ready_rx);
     bitflags_match!(long_lived_channels.enabled, {
         EnabledChannels::WINDOW_FOREGROUND => {
-            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap(), error_sx.unwrap()));
+            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap(), error_sx.clone()));
         },
         EnabledChannels::WINDOW_SHIFT => {
-            thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
+            thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap(), error_sx.clone()));
         },
         EnabledChannels::all() => {
-            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap(), error_sx.unwrap()));
-            thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap()));
+            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap(), error_sx.clone()));
+            thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap(), error_sx.clone()));
         },
         _ => ()
     });
@@ -356,11 +350,9 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
     // Long-lived tasks
     if cli.binds || cli.taskbar || cli.window_shift {
         match init_long_lived_tasks(&cli) {
-            Ok((error_alert_rx, thread_hnds)) => {
-                if let Some(error_alert_rx) = error_alert_rx {
-                    for msg in error_alert_rx.iter() {
-                        error_alert(msg);
-                    }
+            Ok((error_rx, thread_hnds)) => {
+                for msg in error_rx.iter() {
+                    error_alert(msg);
                 }
 
                 for hnd in thread_hnds {

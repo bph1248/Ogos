@@ -16,7 +16,7 @@ use std::{
     fmt::{self, Display},
     mem::{self, *},
     ops::Sub,
-    sync::mpsc::*,
+    sync::mpsc,
     thread::{self, *},
     time::*
 };
@@ -531,7 +531,7 @@ fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window_shift_
     Ok(win_info)
 }
 
-fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_errored: &mut HashMap<usize, Errored>, window_shift_config: &WindowShift, rx: &Receiver<Msg>) -> Res<()> {
+fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_errored: &mut HashMap<usize, Errored>, window_shift_config: &WindowShift, rx: &mpsc::Receiver<Msg>) -> Res<()> {
     let interval_begin = now!();
     let interval_end = interval_begin + Duration::from_secs(u64::from(window_shift_config.interval_dur));
     let time_remaining = || interval_end - now!();
@@ -603,7 +603,7 @@ fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> Res<boo
     Ok(false)
 }
 
-fn begin(rx: Receiver<Msg>) -> Res<()> { unsafe {
+fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let config = config::get().read()?;
@@ -706,10 +706,10 @@ fn begin(rx: Receiver<Msg>) -> Res<()> { unsafe {
     Ok(())
 } }
 
-pub(crate) fn spawn(rx: Receiver<Msg>) -> JoinHandle<()> {
-    thread::spawn(|| {
+pub(crate) fn spawn(rx: mpsc::Receiver<Msg>, error_sx: mpsc::Sender<String>) -> JoinHandle<()> {
+    thread::spawn(move || {
         begin(rx).unwrap_or_else(|err| {
-            error!("{}: terminated: {}", module_path!(), err);
+            error_sx.send(format!("{}: terminated: {}", module_path!(), err)).unwrap();
         });
     })
 }

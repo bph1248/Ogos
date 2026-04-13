@@ -913,12 +913,12 @@ fn init_taskbar(rx: &mpsc::Receiver<Msg>) -> Res1<Taskbar> {
     }
 }
 
-fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_tid: Tid, error_sx: mpsc::Sender<String>) -> Res<()> { unsafe {
+fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_tid: Tid, error_sx: &mpsc::Sender<String>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let mut ts = ThreadState {
         hook_mgr_tid: hook_mgr_tid.0,
-        binds: enable.contains(WindowForegroundComponents::DYNAMIC_BINDS).then_some(init_binds(&error_sx)?),
+        binds: enable.contains(WindowForegroundComponents::DYNAMIC_BINDS).then_some(init_binds(error_sx)?),
         tb: enable.contains(WindowForegroundComponents::TASKBAR).then_some(init_taskbar(&rx)?),
         ..default!()
     };
@@ -933,7 +933,7 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
             },
             Msg::Broadcast(BroadcastMsg::WmReloadConfig) => {
                 if ts.binds.is_some() {
-                    let mut binds = init_binds(&error_sx)?;
+                    let mut binds = init_binds(error_sx)?;
                     unbind_maps(&mut binds);
 
                     for (_, win_info) in ts.win_infos.iter_mut() {
@@ -1028,8 +1028,8 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
 
 pub(crate) fn spawn(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_tid: Tid, error_sx: mpsc::Sender<String>) -> JoinHandle<()> {
     thread::spawn(move || {
-        begin(enable, rx, hook_mgr_tid, error_sx).unwrap_or_else(|err| {
-            error!("{}: terminated: {}", module_path!(), err);
+        begin(enable, rx, hook_mgr_tid, &error_sx).unwrap_or_else(|err| {
+            error_sx.send(format!("{}: terminated: {}", module_path!(), err)).unwrap();
         });
     })
 }
