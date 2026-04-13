@@ -16,7 +16,7 @@ use serde::*;
 use std::{
     cell::*,
     collections::*,
-    fmt::Write,
+    fmt::{self, Write},
     fs,
     sync::mpsc,
     thread,
@@ -141,8 +141,21 @@ struct ThreadState {
 }
 
 struct TopLevelSiblingsInfo {
-    fg_pid: u32,
+    win_pid: u32,
     siblings: Vec<HWND>
+}
+
+enum WinLocation {
+    Foreground,
+    Cursor
+}
+impl fmt::Display for WinLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Foreground => write!(f, "foreground"),
+            Self::Cursor => write!(f, "cursor")
+        }
+    }
 }
 
 thread_local! {
@@ -398,12 +411,12 @@ unsafe extern "system" fn enum_child_windows_proc(hwnd: HWND, lparam: LPARAM) ->
 } }
 
 unsafe extern "system" fn enum_windows_tl_siblings_proc(hwnd: HWND, lparam: LPARAM) -> BOOL { unsafe {
-    let TopLevelSiblingsInfo { fg_pid, siblings } = &mut *(lparam.0 as *mut _);
+    let TopLevelSiblingsInfo { win_pid, siblings } = &mut *(lparam.0 as *mut _);
 
-    let mut win_pid = 0;
-    GetWindowThreadProcessId(hwnd, Some(&mut win_pid));
+    let mut enum_win_pid = 0;
+    GetWindowThreadProcessId(hwnd, Some(&mut enum_win_pid));
 
-    if win_pid == *fg_pid && IsWindowVisible(hwnd).as_bool() {
+    if enum_win_pid == *win_pid && IsWindowVisible(hwnd).as_bool() {
         siblings.push(hwnd);
     }
 
@@ -422,52 +435,65 @@ fn _is_top_level_window(hwnd: HWND) -> bool { unsafe {
 } }
 
 fn print_window_info() -> Res<()> { unsafe {
+    fn inner(s: &mut String, win_location: WinLocation, hwnd: HWND) -> Res1<()> { unsafe {
+        let exe = hwnd.get_exe_or_err();
+        let tpids = hwnd.get_thread_proc_ids().unwrap_or_default();
+        let caption = hwnd.get_caption_or_err();
+        let class = hwnd._get_class_or_err();
+        let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
+        let parent = hwnd.get_parent().unwrap_or_default();
+
+        let mut children: Vec<HWND> = Vec::new();
+        _ = EnumChildWindows(Some(hwnd), Some(enum_child_windows_proc), LPARAM(&mut children as *mut _ as _)); // Return value is not used
+        let mut tl_siblings_info = TopLevelSiblingsInfo {
+            win_pid: tpids.proc,
+            siblings: Vec::new()
+        };
+        EnumWindows(Some(enum_windows_tl_siblings_proc), LPARAM(&mut tl_siblings_info as *mut _ as _))?;
+
+        writeln!(s, "{win_location}:").unwrap();
+        writeln!(s, "\thwnd: {}, exe: {}, caption: {}, class: {}, owner: {}, parent: {}",
+            hwnd.as_display(), exe, caption, class, owner.as_display(), parent.as_display()).unwrap();
+
+        writeln!(s, "{win_location} children:").unwrap();
+        for child in children {
+            let caption = child.get_caption_or_err();
+            let class = child._get_class_or_err();
+            let owner = GetWindow(child, GW_OWNER).unwrap_or_default();
+            let parent = child.get_parent().unwrap_or_default();
+
+            writeln!(s, "\thwnd: {}, caption: {}, class: {}, owner: {}, parent: {}",
+                child.as_display(), caption, class, owner.as_display(), parent.as_display()).unwrap();
+        }
+
+        writeln!(s, "{win_location} top level siblings:").unwrap();
+        let root_owner = GetAncestor(hwnd, GA_ROOTOWNER);
+        for sibling in tl_siblings_info.siblings {
+            if sibling == root_owner { continue }
+
+            let caption = sibling.get_caption_or_err();
+            let class = sibling._get_class_or_err();
+            let owner = GetWindow(sibling, GW_OWNER).unwrap_or_default();
+            let parent = sibling.get_parent().unwrap_or_default();
+
+            writeln!(s, "\thwnd: {}, caption: {}, class: {}, owner: {}, parent: {}",
+                sibling.as_display(), caption, class, owner.as_display(), parent.as_display()).unwrap();
+        }
+
+        Ok(())
+    } }
+
     let mut s = String::new();
 
-    let fg_hwnd = GetForegroundWindow();
-    let fg_exe = fg_hwnd.get_exe_or_err();
-    let fg_tpids = fg_hwnd.get_thread_proc_ids().unwrap_or_default();
-    let fg_caption = fg_hwnd.get_caption_or_err();
-    let fg_class = fg_hwnd._get_class_or_err();
-    let fg_owner = GetWindow(fg_hwnd, GW_OWNER).unwrap_or_default();
-    let fg_parent = fg_hwnd.get_parent().unwrap_or_default();
+    inner(&mut s, WinLocation::Foreground, GetForegroundWindow())?;
 
-    let mut children: Vec<HWND> = Vec::new();
-    _ = EnumChildWindows(Some(fg_hwnd), Some(enum_child_windows_proc), LPARAM(&mut children as *mut _ as _)); // Return value is not used
-    let mut tl_siblings_info = TopLevelSiblingsInfo {
-        fg_pid: fg_tpids.proc,
-        siblings: Vec::new()
-    };
-    EnumWindows(Some(enum_windows_tl_siblings_proc), LPARAM(&mut tl_siblings_info as *mut _ as _))?;
+    writeln!(s).unwrap();
 
-    writeln!(s, "foreground:").unwrap();
-    writeln!(s, "\thwnd: {}, exe: {}, caption: {}, class: {}, owner: {}, parent: {}",
-        fg_hwnd.as_display(), fg_exe, fg_caption, fg_class, fg_owner.as_display(), fg_parent.as_display()).unwrap();
+    let mut cursor_pos = POINT::default();
+    GetCursorPos(&mut cursor_pos)?;
+    inner(&mut s, WinLocation::Cursor, WindowFromPoint(cursor_pos))?;
 
-    writeln!(s, "foreground children:").unwrap();
-    for hwnd in children {
-        let caption = hwnd.get_caption_or_err();
-        let class = hwnd._get_class_or_err();
-        let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
-        let parent = hwnd.get_parent().unwrap_or_default();
-
-        writeln!(s, "\thwnd: {}, caption: {}, class: {}, owner: {}, parent: {}",
-            hwnd.as_display(), caption, class, owner.as_display(), parent.as_display()).unwrap();
-    }
-
-    let fg_root_owner = GetAncestor(fg_hwnd, GA_ROOTOWNER);
-    writeln!(s, "foreground top level siblings:").unwrap();
-    for hwnd in tl_siblings_info.siblings {
-        if hwnd == fg_root_owner { continue }
-
-        let caption = hwnd.get_caption_or_err();
-        let class = hwnd._get_class_or_err();
-        let owner = GetWindow(hwnd, GW_OWNER).unwrap_or_default();
-        let parent = hwnd.get_parent().unwrap_or_default();
-
-        writeln!(s, "\thwnd: {}, caption: {}, class: {}, owner: {}, parent: {}",
-            hwnd.as_display(), caption, class, owner.as_display(), parent.as_display()).unwrap();
-    }
+    writeln!(s).unwrap();
 
     let screen_extent = get_screen_extent()?;
     let mut eligible_for_shift_info = EligibleForShiftInfo {
