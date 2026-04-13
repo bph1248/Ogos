@@ -141,7 +141,7 @@ pub(crate) struct Taskbar {
     pub(crate) taskbar_hooks: Option<WinEventHooksRx>,
     pub(crate) taskbar_side: Side,
     pub(crate) taskbar_rect: RECT,
-    pub(crate) shell_experience_state: Option<(HWND, PendingHooks)>,
+    pub(crate) shell_experience_state: Option<(HWND, HookState)>,
     pub(crate) start_menu_class_name: WinStr,
     pub(crate) start_menu_hwnd: HWND,
     pub(crate) start_menu_rect: RECT,
@@ -224,9 +224,9 @@ impl VarName for Msg {
     }
 }
 
-pub(crate) enum PendingHooks {
-    Ok(),
-    Check(WinEventHooksRx)
+pub(crate) enum HookState {
+    Pending(WinEventHooksRx),
+    Ready()
 }
 
 fn leak_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> ResVar<()> { unsafe {
@@ -495,24 +495,27 @@ fn handle_win_event_hook_foreground_location_change(tb: &Taskbar, hwnd: HWND) ->
     Ok(())
 }
 
+fn hook_shell_experience_host_destroy(tb: &mut Taskbar, hwnd: HWND, hook_mgr_tid: u32) -> Res1<()> {
+    let tpids = hwnd.get_thread_proc_ids()?;
+    let request = WinEventHookRequest {
+        infos: vec![WinEventHookInfo { eventmin: EVENT_OBJECT_DESTROY, eventmax: EVENT_OBJECT_DESTROY, idprocess: tpids.proc, idthread: tpids.thread, ctx: WinEventHookContext::ShellExperienceHostDestroy }]
+    };
+    let rx = request_win_event_hooks(hook_mgr_tid, request)?;
+    tb.shell_experience_state = Some((hwnd, HookState::Pending(rx)));
+
+    Ok(())
+}
+
 fn handle_win_event_hook_shell_experience_host_location_change(ts: &mut ThreadState, hook: HWINEVENTHOOK, hwnd: HWND) -> Res2<()> {
     let caption = hwnd.get_caption()?;
 
     match caption {
-        _ if caption == "Windows Shell Experience Host" => return Ok(()), // First entry will match here - will then re-enter as "Jump List"
         _ if caption.starts_with("Jump List") => {
-            let tb = ts.tb.as_mut().unwrap();
-
             let request = WinEventUnhookRequest { hooks: vec![hook] };
             request_win_event_unhooks(ts.hook_mgr_tid, request)?;
 
-            let tpids = hwnd.get_thread_proc_ids()?;
-            let request = WinEventHookRequest {
-                infos: vec![WinEventHookInfo { eventmin: EVENT_OBJECT_DESTROY, eventmax: EVENT_OBJECT_DESTROY, idprocess: tpids.proc, idthread: tpids.thread, ctx: WinEventHookContext::ShellExperienceHostDestroy }]
-            };
-            let rx = request_win_event_hooks(ts.hook_mgr_tid, request)?;
-            tb.shell_experience_state = Some((hwnd, PendingHooks::Check(rx)));
-
+            let tb = ts.tb.as_mut().unwrap();
+            hook_shell_experience_host_destroy(tb, hwnd, ts.hook_mgr_tid)?;
             move_hitbox_about_jump_list(tb, hwnd)?;
         },
         _ => ()
@@ -626,12 +629,12 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
 
                 // Shell experience host / jump list
                 let mut shell_experience_state = tb.shell_experience_state.take_if(|(shell_experience_hwnd, _)| *shell_experience_hwnd == hwnd);
-                if let Some((_, PendingHooks::Check(rx))) = shell_experience_state {
+                if let Some((_, HookState::Pending(rx))) = shell_experience_state {
                     _ = rx.blocking_recv()??;
-                    shell_experience_state = Some((hwnd, PendingHooks::Ok()));
+                    shell_experience_state = Some((hwnd, HookState::Ready()));
                 }
-                if let Some((_, PendingHooks::Ok())) = shell_experience_state {
-                    tb.shell_experience_state = Some((hwnd, PendingHooks::Ok()));
+                if let Some((_, HookState::Ready())) = shell_experience_state {
+                    tb.shell_experience_state = shell_experience_state;
 
                     move_hitbox_about_jump_list(tb, hwnd)?;
 
@@ -640,7 +643,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
 
                 let caption = hwnd.get_caption()?;
                 match caption {
-                    _ if caption == "Windows Shell Experience Host" => { // Shell experience host process doesn't exist
+                    _ if caption == "Windows Shell Experience Host" => { // Shell experience host process didn't exist until now. Initial rect and caption won't resemble a jump list - hook location change and race to catch change
                         let tpids = hwnd.get_thread_proc_ids()?;
                         let request = WinEventHookRequest {
                             infos: vec![WinEventHookInfo { eventmin: EVENT_OBJECT_LOCATIONCHANGE, eventmax: EVENT_OBJECT_LOCATIONCHANGE, idprocess: tpids.proc, idthread: tpids.thread, ctx: WinEventHookContext::ShellExperienceHostLocationChange }]
@@ -649,13 +652,8 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
 
                         return Ok(())
                     },
-                    _ if caption.starts_with("Jump List") => { // Shell experience host process exists
-                        let tpids = hwnd.get_thread_proc_ids()?;
-                        let request = WinEventHookRequest {
-                            infos: vec![WinEventHookInfo { eventmin: EVENT_OBJECT_DESTROY, eventmax: EVENT_OBJECT_DESTROY, idprocess: tpids.proc, idthread: tpids.thread, ctx: WinEventHookContext::ShellExperienceHostDestroy }]
-                        };
-                        tb.shell_experience_state = Some((hwnd, PendingHooks::Check(request_win_event_hooks(ts.hook_mgr_tid, request)?)));
-
+                    _ if caption.starts_with("Jump List") => { // Shell experience host process already exists
+                        hook_shell_experience_host_destroy(tb, hwnd, ts.hook_mgr_tid)?;
                         move_hitbox_about_jump_list(tb, hwnd)?;
 
                         return Ok(())

@@ -22,10 +22,7 @@ use std::{
     process::*,
     string::*
 };
-use windows::Win32::{
-    Foundation::*,
-    System::Threading::*
-};
+use windows::Win32::System::Threading::*;
 
 const MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME: &str = "maintain_sample_rate.guard";
 const NA_STR: &str = "<n/a>";
@@ -326,31 +323,22 @@ pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, ove
 
         match vid_color_transfer == "smpte2084" || ffprobe.side_data.is_dolby_vision {
             true => {
-                match (reshade_config, ffprobe.side_data.max_content) {
-                    (Some(reshade_config), Some(max_content)) if max_content > 0 => { // Statically tone map with ReShade
-                        // Check ReShade.ini exists as symlink in mpv dir. Link from ProgramData if it's missing (ie. due to scoop update)
+                match reshade_config.zip(ffprobe.side_data.max_content) {
+                    Some((reshade_config, max_content)) if max_content > 0 => { // Statically tone map with ReShade
                         let reshade_settings_sym_link_path = mpv_path.with_file_name("ReShade.ini");
-
-                        if reshade_settings_sym_link_path.as_path().confirm().is_err() {
-                            // Either the symlink doesn't exist or its target doesn't exist. In case the symlink exists but is broken, remove it
+                        if !reshade_settings_sym_link_path.try_exists()? {
+                            // Either the symlink doesn't exist or its target doesn't exist, in which case, remove it
                             if let Err(err) = fs::remove_file(&reshade_settings_sym_link_path) &&
                                 err.kind() != io::ErrorKind::NotFound
                             {
                                 Err(err)?;
                             }
 
-                            // Check ReShade.ini exists before symlinking
-                            Path::new(reshade_config.settings_path).confirm_static()?;
+                            let reshade_settings_path = Path::new(reshade_config.settings_path).confirm_static()?;
+                            if let Err(err) = os::windows::fs::symlink_file(reshade_settings_path, &reshade_settings_sym_link_path) {
+                                warn!("{}: failed to symlink {} to {} - copying file instead: {}", module_path!(), reshade_settings_path.display(), reshade_settings_sym_link_path.display(), err);
 
-                            if let Err(err) = os::windows::fs::symlink_file(reshade_config.settings_path, &reshade_settings_sym_link_path) {
-                                let question = match err.raw_os_error().map(|code| WIN32_ERROR(code as u32)) {
-                                    Some(ERROR_PRIVILEGE_NOT_HELD) => " Is developer mode enabled?",
-                                    _ => ""
-                                };
-
-                                warn!("{}: failed to symlink {} to {}.{} Copying file instead", module_path!(), Path::new(&reshade_config.settings_path).to_string_lossy(), reshade_settings_sym_link_path.to_string_lossy(), question);
-
-                                fs::copy(reshade_config.settings_path, reshade_settings_sym_link_path)?;
+                                fs::copy(reshade_settings_path, reshade_settings_sym_link_path)?;
                             }
                         }
 

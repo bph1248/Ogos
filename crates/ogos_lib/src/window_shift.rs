@@ -576,14 +576,8 @@ fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_erro
     loop {
         if let Err(err) = inner() {
             match *err.var {
-                ErrVar::ReloadConfig => break Err(err),
-                ErrVar::RecvTimeout(recv_timeout_err) => {
-                    match recv_timeout_err {
-                        RecvTimeoutError::Timeout => break Ok(()), // Typical, time is up this interval
-                        RecvTimeoutError::Disconnected => break Err(err)
-                    }
-                },
-                _ => error!("{}: failed to process messages: {}", module_path!(), err)
+                ErrVar::RecvTimeout(mpsc::RecvTimeoutError::Timeout) => break Ok(()), // Typical, time is up this interval
+                _ => break Err(err)
             }
         }
     }
@@ -608,8 +602,10 @@ fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
 
     let config = config::get().read()?;
     let mut window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigKey { name: config::WindowShift::NAME })?;
-    window_shift_config.interval_dur = window_shift_config.interval_dur.max(1);
     drop(config);
+
+    window_shift_config.interval_dur = window_shift_config.interval_dur.max(1);
+    window_shift_config.leeway = window_shift_config.leeway.max(1);
 
     let current_desktop_hnd = get_current_thread_desktop()?;
     let mut win_infos: HashMap<usize, WinInfo> = HashMap::new();
@@ -617,8 +613,10 @@ fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
 
     let mut rng = rand::rng();
     let config::WindowShift { stride, .. } = window_shift_config;
-    let x_axis_choices = [stride.x as i32, -(stride.x as i32)];
-    let y_axis_choices = [stride.y as i32, -(stride.y as i32)];
+    let stride_x = stride.x.min(window_shift_config.leeway) as i32;
+    let stride_y = stride.y.min(window_shift_config.leeway) as i32;
+    let x_axis_choices = [stride_x, -stride_x];
+    let y_axis_choices = [stride_y, -stride_y];
 
     let mut ts = ThreadState {
         screen_extent: get_screen_extent()?,
@@ -679,11 +677,6 @@ fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
             Err(err) => {
                 match *err.var {
                     ErrVar::Close => break,
-                    ErrVar::RecvTimeout(recv_timeout_err) => {
-                        if let RecvTimeoutError::Disconnected = recv_timeout_err {
-                            break
-                        }
-                    },
                     ErrVar::ReloadConfig => {
                         (|| -> ResVar<()> {
                             let config = config::get().read()?;
@@ -695,7 +688,11 @@ fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
                             error!("{}: failed to reload config: {}", module_path!(), err);
                         });
                     },
-                    _ => error!("{}: failed on iteration: {}", module_path!(), err)
+                    _ => {
+                        error!("{}: failed to process message: {}", module_path!(), err);
+
+                        break
+                    }
                 }
             }
         }

@@ -57,6 +57,31 @@ const FRAME_MARGIN: f32 = 15.0;
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const SEPARATOR_WIDTH: f32 = 2.0;
 
+type AspectRatioV = f32;
+
+#[derive(Default, Serialize, Deserialize)]
+struct Cache {
+    #[serde(default)]
+    grid_cell_size: egui::Vec2,
+    #[serde(default)]
+    details_cell_size: egui::Vec2,
+    #[serde(default)]
+    images: IndexSet<Rc<str>>,
+    #[serde(default)]
+    tags: Vec<Rc<str>>,
+    entries: HashMap<PathBuf, CacheEntryInfo>
+}
+
+#[derive(Serialize, Deserialize)]
+struct CacheEntryInfo {
+    #[serde(rename = "image")]
+    image_file_name_i: Option<usize>,
+    sort_name: Option<Rc<str>>,
+    hash: Option<Arc<str>>,
+    #[serde(default)]
+    tags: Vec<usize>
+}
+
 #[derive(Clone)]
 struct DirEntryInfo {
     path: PathBuf,
@@ -64,9 +89,113 @@ struct DirEntryInfo {
     file_kind: FileKind
 }
 
+struct FerryImageInfo {
+    image_file_name: Arc<str>,
+    expected_hash: Option<Arc<str>>,
+    grid_entry_i: usize,
+    grid_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
+    details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
+    wait_group: Option<WaitGroup>
+}
+
+struct FerryImagesInfo<'a> {
+    ctx: &'a egui::Context,
+    thread_pool: &'a Arc<ThreadPool>,
+    hash_sx: &'a mpsc::Sender<HashInfo>,
+    image_dirs: &'static ImageDirs,
+    base_image_kind: BaseImageKind,
+    grid_cell_size: egui::Vec2,
+    force_resize_grid_images: bool,
+    details_cell_size: egui::Vec2,
+    force_resize_details_images: bool,
+    ferry_image_infos: Vec<FerryImageInfo>
+}
+
+struct GridEntryInfo {
+    path: PathBuf,
+    stem: Rc<str>,
+    sort_name: Option<Rc<str>>,
+    file_kind: FileKind,
+    image_file_name_i: Option<usize>,
+    hash: Option<Arc<str>>
+}
+
+struct HashInfo {
+    grid_entry_i: usize,
+    hash: Arc<str>
+}
+
+struct ImageDirs {
+    base: PathBuf,
+    grid: PathBuf,
+    details: PathBuf
+}
+
+#[derive(Default)]
+struct ImageStates {
+    grid: ImageState,
+    details: ImageState,
+    ref_count: usize
+}
+impl ImageStates {
+    fn is_none(&self) -> bool {
+        matches!((&self.grid, &self.details), (ImageState::None, ImageState::None))
+    }
+}
+
+struct QueueImageInfo {
+    src_path: PathBuf,
+    image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
+    resize: Option<ResizeImage>
+}
+
+struct ResizeImage {
+    dst_path: PathBuf,
+    dst_size: egui::Vec2
+}
+
+#[derive(Default)]
+struct TagWinButtonMenuInfo {
+    is_open: bool,
+    tag_op: Option<(Rc<str>, TagOp)>
+}
+
+#[derive(Clone)]
+enum BaseImageKind {
+    Pick { path: PathBuf },
+    Startup
+}
+
+#[derive(Default)]
+enum ImageState {
+    #[default]
+    None,
+    Pending(oneshot::Receiver<Result<(egui::ColorImage, Orientation), ()>>),
+    Ready((egui::TextureHandle, Orientation)),
+    Failed
+}
+
 pub enum Kind {
     Info { msg: String },
     MediaBrowser
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Orientation {
+    Wide,
+    Tall
+}
+
+enum TagOp {
+    Rename,
+    Remove
+}
+
+#[derive(Default)]
+enum ViewKind {
+    #[default]
+    Grid,
+    Details
 }
 
 #[derive(Default, Deserialize, PartialEq)]
@@ -77,17 +206,71 @@ enum Watching {
     Words
 }
 
-fn to_discord_asset_name(s: impl AsRef<str>) -> String {
-    s.as_ref().chars()
-        .map(|c| {
-            let c = c.to_ascii_lowercase();
+trait AsOrientation {
+    fn as_orientation(&self) -> Orientation;
+}
+impl AsOrientation for f32 {
+    fn as_orientation(&self) -> Orientation {
+        match *self <= ASPECT_RATIO_3_2 {
+            true => Orientation::Wide,
+            false => Orientation::Tall
+        }
+    }
+}
 
-            match c {
-                '\'' | '.' | ' ' => '_',
-                _ => c
+fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle, orientation: Orientation) -> egui::Response {
+    let image = egui::Image::new(tex).sense(egui::Sense::click_and_drag()).fit_to_exact_size(tex.size_vec2());
+
+    match orientation {
+        Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)),
+        Orientation::Tall => ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| ui.add(image))
+    }
+    .inner
+}
+
+fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str, label: &str) -> egui::Response {
+    match image_state {
+        ImageState::Ready((tex, orientation)) => add_image(ui, tex, *orientation),
+        ImageState::Pending(rx) => {
+            let recvd = match rx.try_recv() {
+                Ok(res) => res,
+                Err(TryRecvError::Empty) => return alloc_hover_response(ui),
+                Err(TryRecvError::Closed) => Err(())
+            };
+
+            match recvd {
+                Ok((color_image, orientation)) => {
+                    let tex = ui.ctx().load_texture(tex_name, color_image, default!());
+                    let resp = add_image(ui, &tex, orientation);
+                    *image_state = ImageState::Ready((tex, orientation));
+
+                    resp
+                },
+                Err(_) => {
+                    let resp = add_label(ui, label);
+                    *image_state = ImageState::Failed;
+
+                    resp
+                }
             }
-        })
-        .collect()
+        },
+        ImageState::Failed => add_label(ui, label),
+        _ => alloc_hover_response(ui)
+    }
+}
+
+fn add_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+
+        let label = egui::Label::new(text);
+        ui.add(label).on_hover_cursor(egui::CursorIcon::Default)
+    })
+    .inner
+}
+
+fn alloc_hover_response(ui: &mut egui::Ui) -> egui::Response {
+    ui.allocate_response(ui.available_size(), egui::Sense::hover())
 }
 
 fn sinc(x: f64) -> f64 {
@@ -133,165 +316,6 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
         image::DynamicImage::ImageRgba8(image) => image,
         _ => image.to_rgba8()
     })
-}
-
-fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
-    let ext = path.get_file_ext()?;
-    let ext = concat_string!(".", ext);
-    let ext = ext.as_str().to_win_str();
-
-    let mut buffer = [0_u16; MAX_PATH as usize];
-    let path_str = PWSTR(buffer.as_mut_ptr());
-    let mut path_len = buffer.len() as u32;
-
-    AssocQueryStringW(ASSOCF_INIT_DEFAULTTOSTAR, ASSOCSTR_EXECUTABLE, *ext, None, Some(path_str), &mut path_len,).ok()?;
-
-    let path_str = String::from_utf16(&buffer[..path_len as usize - 1])?;
-
-    Ok(PathBuf::from(path_str))
-} }
-
-fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, override_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind, error_sx: mpsc::Sender<String>) {
-    thread::spawn(move || {
-        (|| -> Res<()> {
-            let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
-                let mut ipc_client = DiscordIpcClient::new(discord_info.app_id.as_str());
-
-                discord::begin(&mut ipc_client, &discord_info.as_view(), discord_display_kind)?;
-
-                Ok(ipc_client)
-            })
-            .transpose()?;
-
-            match file_kind {
-                FileKind::Vid => video::launch_mpv(&path, maintain_sample_rate.into(), override_glsl_shaders)?,
-                _ => {
-                    let handler = get_default_handler(&path)?;
-
-                    let mut command = Command::new(handler);
-                    command.arg(path);
-
-                    output_command(&mut command)?;
-                }
-            }
-
-            if let Some(mut ipc_client) = ipc_client {
-                ipc_client.clear_activity()?;
-                ipc_client.close()?;
-            }
-
-            Ok(())
-        })()
-        .unwrap_or_else(|err| {
-            let msg = format!("{}: failure handling media: {}", module_path!(), err);
-
-            error_sx.send(msg).unwrap();
-        });
-    });
-}
-
-fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle, orientation: Orientation) -> egui::Response {
-    let image = egui::Image::new(tex).sense(egui::Sense::click_and_drag()).fit_to_exact_size(tex.size_vec2());
-
-    match orientation {
-        Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)),
-        Orientation::Tall => ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| ui.add(image))
-    }
-    .inner
-}
-
-fn add_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-
-        let label = egui::Label::new(text);
-        ui.add(label).on_hover_cursor(egui::CursorIcon::Default)
-    })
-    .inner
-}
-
-fn alloc_hover_response(ui: &mut egui::Ui) -> egui::Response {
-    ui.allocate_response(ui.available_size(), egui::Sense::hover())
-}
-
-fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str, label: &str) -> egui::Response {
-    match image_state {
-        ImageState::Ready((tex, orientation)) => add_image(ui, tex, *orientation),
-        ImageState::Pending(rx) => {
-            let recvd = match rx.try_recv() {
-                Ok(res) => res,
-                Err(TryRecvError::Empty) => return alloc_hover_response(ui),
-                Err(TryRecvError::Closed) => Err(())
-            };
-
-            match recvd {
-                Ok((color_image, orientation)) => {
-                    let tex = ui.ctx().load_texture(tex_name, color_image, default!());
-                    let resp = add_image(ui, &tex, orientation);
-                    *image_state = ImageState::Ready((tex, orientation));
-
-                    resp
-                },
-                Err(_) => {
-                    let resp = add_label(ui, label);
-                    *image_state = ImageState::Failed;
-
-                    resp
-                }
-            }
-        },
-        ImageState::Failed => add_label(ui, label),
-        _ => alloc_hover_response(ui)
-    }
-}
-
-fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect) {
-    ui.painter().rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
-}
-
-fn stroke_rect_painter(painter: egui::Painter, rect: egui::Rect) {
-    painter.rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
-}
-
-fn populate_grid_view(view: &mut Vec<usize>, entries: &[GridEntryInfo], set: &BTreeSet<usize>) {
-    view.clear();
-    view.extend(set.iter().cloned());
-    sort_grid_view(view, entries);
-}
-
-fn sort_grid_view(view: &mut [usize], entries: &[GridEntryInfo]) {
-    view.sort_unstable_by(|a, b| {
-        let entry_a = &entries[*a];
-        let entry_b = &entries[*b];
-        let name_a = entry_a.sort_name.as_deref().unwrap_or(entry_a.stem.as_ref());
-        let name_b = entry_b.sort_name.as_deref().unwrap_or(entry_b.stem.as_ref());
-
-        name_a.cmp(name_b)
-    });
-}
-
-fn ferry_cached_image(path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> ResVar<()> {
-    fn inner(path: PathBuf) -> ResVar<(egui::ColorImage, AspectRatioV)> {
-        let image = load_rgba_image(path.as_path())?;
-        let (width, height) = image.dimensions();
-        let aspect_ratio_v = get_aspect_ratio_v(width as f32, height as f32);
-
-        let pixels = image.as_raw();
-        let color_image = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], pixels);
-
-        Ok((color_image, aspect_ratio_v))
-    }
-
-    match inner(path) {
-        Ok((image, aspect_ratio_v)) => image_state_sx.send(Ok((image, aspect_ratio_v.as_orientation()))).unwrap(),
-        Err(err) => {
-            image_state_sx.send(Err(())).unwrap();
-
-            Err(err)?;
-        }
-    }
-
-    Ok(())
 }
 
 fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> Res1<()> {
@@ -358,15 +382,28 @@ fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, i
     Ok(())
 }
 
-fn queue_ferry_cached_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
-    queue_sx.send(
-        QueueImageInfo {
-            src_path,
-            image_state_sx,
-            resize: None
+fn ferry_cached_image(path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> ResVar<()> {
+    fn inner(path: PathBuf) -> ResVar<(egui::ColorImage, AspectRatioV)> {
+        let image = load_rgba_image(path.as_path())?;
+        let (width, height) = image.dimensions();
+        let aspect_ratio_v = get_aspect_ratio_v(width as f32, height as f32);
+
+        let pixels = image.as_raw();
+        let color_image = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], pixels);
+
+        Ok((color_image, aspect_ratio_v))
+    }
+
+    match inner(path) {
+        Ok((image, aspect_ratio_v)) => image_state_sx.send(Ok((image, aspect_ratio_v.as_orientation()))).unwrap(),
+        Err(err) => {
+            image_state_sx.send(Err(())).unwrap();
+
+            Err(err)?;
         }
-    )
-    .unwrap();
+    }
+
+    Ok(())
 }
 
 fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, dst_path: PathBuf, dst_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
@@ -378,6 +415,17 @@ fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: Path
                 dst_path,
                 dst_size
             })
+        }
+    )
+    .unwrap();
+}
+
+fn queue_ferry_cached_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
+    queue_sx.send(
+        QueueImageInfo {
+            src_path,
+            image_state_sx,
+            resize: None
         }
     )
     .unwrap();
@@ -493,170 +541,6 @@ fn ferry_images(info: FerryImagesInfo) {
     });
 }
 
-fn replace_dir_entries(entries: &mut Vec<DirEntryInfo>, dir: &Path) {
-    (|| -> ResVar<()> {
-        entries.clear();
-
-        let read_dir = dir.read_dir()?;
-        for dir_entry in read_dir {
-            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
-                let path = dir_entry.path();
-                let stem = path.get_file_stem()?.to_string();
-                let file_kind = path.get_file_kind()?;
-
-                entries.push(DirEntryInfo { path, stem, file_kind });
-
-                Ok(())
-            })
-            .unwrap_or_else(|err| error!("{}: failed to read dir entry: dir: {}: {}", module_path!(), dir.display(), err));
-        }
-
-        Ok(())
-    })()
-    .unwrap_or_else(|err| error!("{}: failed to read dir: {}: {}", module_path!(), dir.display(), err));
-}
-
-type AspectRatioV = f32;
-
-#[derive(Serialize, Deserialize)]
-struct CacheEntryInfo {
-    #[serde(rename = "image")]
-    image_file_name_i: Option<usize>,
-    sort_name: Option<Rc<str>>,
-    hash: Option<Arc<str>>,
-    #[serde(default)]
-    tags: Vec<usize>
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct Cache {
-    #[serde(default)]
-    grid_cell_size: egui::Vec2,
-    #[serde(default)]
-    details_cell_size: egui::Vec2,
-    #[serde(default)]
-    images: IndexSet<Rc<str>>,
-    #[serde(default)]
-    tags: Vec<Rc<str>>,
-    entries: HashMap<PathBuf, CacheEntryInfo>
-}
-
-struct FerryImageInfo {
-    image_file_name: Arc<str>,
-    expected_hash: Option<Arc<str>>,
-    grid_entry_i: usize,
-    grid_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    wait_group: Option<WaitGroup>
-}
-
-struct FerryImagesInfo<'a> {
-    ctx: &'a egui::Context,
-    thread_pool: &'a Arc<ThreadPool>,
-    hash_sx: &'a mpsc::Sender<HashInfo>,
-    image_dirs: &'static ImageDirs,
-    base_image_kind: BaseImageKind,
-    grid_cell_size: egui::Vec2,
-    force_resize_grid_images: bool,
-    details_cell_size: egui::Vec2,
-    force_resize_details_images: bool,
-    ferry_image_infos: Vec<FerryImageInfo>
-}
-
-struct GridEntryInfo {
-    path: PathBuf,
-    stem: Rc<str>,
-    sort_name: Option<Rc<str>>,
-    file_kind: FileKind,
-    image_file_name_i: Option<usize>,
-    hash: Option<Arc<str>>
-}
-
-struct HashInfo {
-    grid_entry_i: usize,
-    hash: Arc<str>
-}
-
-struct ImageDirs {
-    base: PathBuf,
-    grid: PathBuf,
-    details: PathBuf
-}
-
-struct QueueImageInfo {
-    src_path: PathBuf,
-    image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    resize: Option<ResizeImage>
-}
-
-#[derive(Default)]
-struct ImageStates {
-    grid: ImageState,
-    details: ImageState,
-    ref_count: usize
-}
-impl ImageStates {
-    fn is_none(&self) -> bool {
-        matches!((&self.grid, &self.details), (ImageState::None, ImageState::None))
-    }
-}
-
-struct ResizeImage {
-    dst_path: PathBuf,
-    dst_size: egui::Vec2
-}
-
-#[derive(Default)]
-struct TagWinButtonMenuInfo {
-    is_open: bool,
-    tag_op: Option<(Rc<str>, TagOp)>
-}
-
-#[derive(Default)]
-enum ImageState {
-    #[default]
-    None,
-    Pending(oneshot::Receiver<Result<(egui::ColorImage, Orientation), ()>>),
-    Ready((egui::TextureHandle, Orientation)),
-    Failed
-}
-
-#[derive(Clone)]
-enum BaseImageKind {
-    Pick { path: PathBuf },
-    Startup
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Orientation {
-    Wide,
-    Tall
-}
-
-enum TagOp {
-    Rename,
-    Remove
-}
-
-#[derive(Default)]
-enum ViewKind {
-    #[default]
-    Grid,
-    Details
-}
-
-trait AsOrientation {
-    fn as_orientation(&self) -> Orientation;
-}
-impl AsOrientation for f32 {
-    fn as_orientation(&self) -> Orientation {
-        match *self <= ASPECT_RATIO_3_2 {
-            true => Orientation::Wide,
-            false => Orientation::Tall
-        }
-    }
-}
-
 fn fix_background_brush(hnd: Win32WindowHandle) {
     fn make_colorref(r: u8, g: u8, b: u8) -> COLORREF {
         COLORREF(u32::from(r) | u32::from(g) << 8 | u32::from(b) << 16)
@@ -683,6 +567,122 @@ fn fix_background_brush(hnd: Win32WindowHandle) {
     .unwrap_or_else(|err| {
         error!("{}: failed to set background brush: {}", module_path!(), err);
     });
+}
+
+fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
+    let ext = path.get_file_ext()?;
+    let ext = concat_string!(".", ext);
+    let ext = ext.as_str().to_win_str();
+
+    let mut buffer = [0_u16; MAX_PATH as usize];
+    let path_str = PWSTR(buffer.as_mut_ptr());
+    let mut path_len = buffer.len() as u32;
+
+    AssocQueryStringW(ASSOCF_INIT_DEFAULTTOSTAR, ASSOCSTR_EXECUTABLE, *ext, None, Some(path_str), &mut path_len,).ok()?;
+
+    let path_str = String::from_utf16(&buffer[..path_len as usize - 1])?;
+
+    Ok(PathBuf::from(path_str))
+} }
+
+fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, override_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind, error_sx: mpsc::Sender<String>) {
+    thread::spawn(move || {
+        (|| -> Res<()> {
+            let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
+                let mut ipc_client = DiscordIpcClient::new(discord_info.app_id.as_str());
+
+                discord::begin(&mut ipc_client, &discord_info.as_view(), discord_display_kind)?;
+
+                Ok(ipc_client)
+            })
+            .transpose()?;
+
+            match file_kind {
+                FileKind::Vid => video::launch_mpv(&path, maintain_sample_rate.into(), override_glsl_shaders)?,
+                _ => {
+                    let handler = get_default_handler(&path)?;
+
+                    let mut command = Command::new(handler);
+                    command.arg(path);
+
+                    output_command(&mut command)?;
+                }
+            }
+
+            if let Some(mut ipc_client) = ipc_client {
+                ipc_client.clear_activity()?;
+                ipc_client.close()?;
+            }
+
+            Ok(())
+        })()
+        .unwrap_or_else(|err| {
+            let msg = format!("{}: failure handling media: {}", module_path!(), err);
+
+            error_sx.send(msg).unwrap();
+        });
+    });
+}
+
+fn populate_grid_view(view: &mut Vec<usize>, entries: &[GridEntryInfo], set: &BTreeSet<usize>) {
+    view.clear();
+    view.extend(set.iter().cloned());
+    sort_grid_view(view, entries);
+}
+
+fn replace_dir_entries(entries: &mut Vec<DirEntryInfo>, dir: &Path) {
+    (|| -> ResVar<()> {
+        entries.clear();
+
+        let read_dir = dir.read_dir()?;
+        for dir_entry in read_dir {
+            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
+                let path = dir_entry.path();
+                let stem = path.get_file_stem()?.to_string();
+                let file_kind = path.get_file_kind()?;
+
+                entries.push(DirEntryInfo { path, stem, file_kind });
+
+                Ok(())
+            })
+            .unwrap_or_else(|err| error!("{}: failed to read dir entry: dir: {}: {}", module_path!(), dir.display(), err));
+        }
+
+        Ok(())
+    })()
+    .unwrap_or_else(|err| error!("{}: failed to read dir: {}: {}", module_path!(), dir.display(), err));
+}
+
+fn sort_grid_view(view: &mut [usize], entries: &[GridEntryInfo]) {
+    view.sort_unstable_by(|a, b| {
+        let entry_a = &entries[*a];
+        let entry_b = &entries[*b];
+        let name_a = entry_a.sort_name.as_deref().unwrap_or(entry_a.stem.as_ref());
+        let name_b = entry_b.sort_name.as_deref().unwrap_or(entry_b.stem.as_ref());
+
+        name_a.cmp(name_b)
+    });
+}
+
+fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect) {
+    ui.painter().rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
+}
+
+fn stroke_rect_painter(painter: egui::Painter, rect: egui::Rect) {
+    painter.rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
+}
+
+fn to_discord_asset_name(s: impl AsRef<str>) -> String {
+    s.as_ref().chars()
+        .map(|c| {
+            let c = c.to_ascii_lowercase();
+
+            match c {
+                '\'' | '.' | ' ' => '_',
+                _ => c
+            }
+        })
+        .collect()
 }
 
 struct Info {
@@ -948,11 +948,6 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 }
 impl<'a> MediaBrowser<'a> {
     fn new(ctx: &egui::Context) -> Res<Self> {
-        // let now = now!();
-
-        // let elapsed = now.elapsed();
-        // info!("elapsed = {}", elapsed.as_micros());
-
         let config = config::get().read()?;
         let (media_dirs,
             grid_cell_width,
@@ -960,7 +955,6 @@ impl<'a> MediaBrowser<'a> {
             scroll_multiplier
         ) = config.media_browser.as_ref()
             .map(|media_browser_config| {
-                #[allow(clippy::cast_precision_loss)]
                 (
                     &media_browser_config.dirs,
                     media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
