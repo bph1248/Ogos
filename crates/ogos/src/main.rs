@@ -2,6 +2,7 @@
 
 use ogos_err::*;
 
+#[hotpath::main]
 fn main() -> Res<()> {
     ogos_lib::entry()
 }

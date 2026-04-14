@@ -7,6 +7,7 @@ version = { workspace = true }
 build = "build.rs"
 
 [dependencies]
+hotpath = { workspace = true }
 ogos_err = { path = "../ogos_err" }
 ogos_lib = { path = "../ogos_lib" }
 
@@ -15,6 +16,8 @@ winres = "0.1"
 
 [features]
 dbg_console = []
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
 
 [package.metadata.about]
 ignore = true

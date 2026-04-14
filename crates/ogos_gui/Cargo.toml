@@ -16,6 +16,7 @@ discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
 egui = { version = "0.33.0", default-features = false, features = ["serde"] }
 egui_extras = { version = "0.33.0", default-features = false }
+hotpath = { workspace = true }
 image = { workspace = true }
 indexmap = { version = "2.12.1", features = ["serde"] }
 log = { workspace = true }
@@ -25,6 +26,7 @@ ogos_core = { workspace = true }
 ogos_discord = { workspace = true }
 ogos_err = { workspace = true }
 ogos_video = { workspace = true }
+range-compare = "0.1.1"
 raw-window-handle = "0.6.2"
 rayon = { workspace = true }
 resize = { workspace = true }
@@ -36,3 +38,7 @@ tap = "1.0.1"
 tokio = { workspace = true }
 wgpu = { version = "27.0.1", features = ["dx12"] }
 windows = { workspace = true }
+
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]

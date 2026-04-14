@@ -409,7 +409,9 @@ pub struct MediaBrowser<'a> {
     pub grid_cell_width: u32,
     pub details_cell_width: u32,
     #[serde(default = "scroll_multiplier")]
-    pub scroll_multiplier: f32
+    pub scroll_multiplier: f32,
+    pub lookahead: usize,
+    pub proximity: usize
 }
 impl_name!(MediaBrowser, 'a);
 

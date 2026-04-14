@@ -36,6 +36,7 @@ use std::{
 };
 use tap::TapOptional;
 use tokio::sync::oneshot::{self, error::*};
+use range_compare::*;
 use windows::{
     core::PWSTR,
     Win32::{
@@ -95,7 +96,7 @@ struct FerryImageInfo {
     grid_entry_i: usize,
     grid_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
     details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    wait_group: Option<WaitGroup>
+    grid_wait: Option<WaitGroup>
 }
 
 struct FerryImagesInfo<'a> {
@@ -147,6 +148,26 @@ struct QueueImageInfo {
     src_path: PathBuf,
     image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
     resize: Option<ResizeImage>
+}
+
+#[derive(Default)]
+struct Residence {
+    cell_range: Range<usize>,
+    load: Option<Range<usize>>,
+    drop: Option<Range<usize>>
+}
+impl Residence {
+    fn with_load(mut self, load: Range<usize>) -> Self {
+        self.load = Some(load);
+
+        self
+    }
+
+    fn with_drop(mut self, drop: Range<usize>) -> Self {
+        self.drop = Some(drop);
+
+        self
+    }
 }
 
 struct ResizeImage {
@@ -256,6 +277,7 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str
         },
         ImageState::Failed => add_label(ui, label),
         _ => alloc_hover_response(ui)
+        // _ => add_label(ui, label)
     }
 }
 
@@ -270,7 +292,7 @@ fn add_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
 }
 
 fn alloc_hover_response(ui: &mut egui::Ui) -> egui::Response {
-    ui.allocate_response(ui.available_size(), egui::Sense::hover())
+    ui.allocate_response(ui.available_size(), egui::Sense::click())
 }
 
 fn sinc(x: f64) -> f64 {
@@ -457,7 +479,7 @@ fn ferry_images(info: FerryImagesInfo) {
             grid_entry_i,
             grid_image_state_sx,
             details_image_state_sx,
-            wait_group
+            grid_wait
         } = info;
 
         let ctx = ctx.clone();
@@ -502,7 +524,7 @@ fn ferry_images(info: FerryImagesInfo) {
                     }
                 }
 
-                drop(wait_group);
+                drop(grid_wait);
 
                 ctx.request_repaint();
 
@@ -771,6 +793,9 @@ struct MediaBrowser<'a> {
     grid_view_i: usize,
     grid_view_selected_i: Option<usize>,
     removed_entry_from_grid_view: bool,
+    lookahead: usize,
+    proximity: usize,
+    resident_cell_range: Range<usize>,
     sort_name_edit: String,
     tag_add_edit: String,
     /// Sets of indices into [`grid_entries`]
@@ -803,19 +828,22 @@ struct MediaBrowser<'a> {
     error_msg: String,
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
+    #[hotpath::measure]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.is_first_frame {
             // Calc number of cells initially visible - don't render til images are loaded
             let content_rect = ctx.content_rect();
-            // content_rect.width() - (self.grid_cell_size.x * available_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
-            let available_row_cell_count = (content_rect.width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
-            let available_col_cell_count = (content_rect.height() - self.grid_cell_size.y).div(self.grid_cell_space.y).ceil() as usize;
-            let init_cell_count = (available_row_cell_count * available_col_cell_count).clamp(1, self.grid_view.len());
-            let wait_group = WaitGroup::new();
+            let avail_row_cell_count = (content_rect.width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
+                // content_rect.width() - (self.grid_cell_size.x * avail_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
+            let avail_col_cell_count = (content_rect.height()).div(self.grid_cell_space.y).ceil() as usize + 1; // Add another row - egui::ScrollArea::show_rows() adds 1 to max_row
+            let visible_cell_count = (avail_row_cell_count * avail_col_cell_count /* + avail_row_cell_count */).clamp(1, self.grid_view.len());
+            let resident_cell_count = (visible_cell_count + self.lookahead * avail_row_cell_count).min(self.grid_view.len());
+            self.resident_cell_range = 0..resident_cell_count;
 
-            let ferry_image_infos = self.grid_view.iter()
-                .filter_map(|&entry_i| {
-                    let grid_entry_info = &self.grid_entries[entry_i];
+            let wait_group = WaitGroup::new();
+            let ferry_image_infos = self.grid_view.iter().enumerate()
+                .filter_map(|(grid_view_i, &grid_entry_i)| {
+                    let grid_entry_info = &self.grid_entries[grid_entry_i];
 
                     // Fill tags
                     if let Some(CacheEntryInfo { tags: tag_is, .. }) = self.cache.entries.get_mut(&grid_entry_info.path) {
@@ -824,12 +852,14 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                             let set = self.tags.get_mut(tag);
 
                             if let Some(set) = set {
-                                set.insert(entry_i);
+                                set.insert(grid_entry_i);
                             }
                         }
                     }
 
-                    if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
+                    if let Some(image_file_name_i) = grid_entry_info.image_file_name_i &&
+                        grid_view_i < resident_cell_count
+                    {
                         let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
                         let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
                         let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
@@ -841,10 +871,10 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                             return Some(FerryImageInfo {
                                 image_file_name: image_file_name.clone(),
                                 expected_hash: grid_entry_info.hash.clone(),
-                                grid_entry_i: entry_i,
+                                grid_entry_i,
                                 grid_image_state_sx,
                                 details_image_state_sx,
-                                wait_group: entry_i.lt(&init_cell_count).then_some(wait_group.clone())
+                                grid_wait: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone())
                             })
                         }
                     }
@@ -952,20 +982,22 @@ impl<'a> MediaBrowser<'a> {
         let (media_dirs,
             grid_cell_width,
             details_cell_width,
-            scroll_multiplier
+            scroll_multiplier,
+            lookahead,
+            proximity
         ) = config.media_browser.as_ref()
             .map(|media_browser_config| {
                 (
                     &media_browser_config.dirs,
                     media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
                     media_browser_config.details_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.scroll_multiplier
+                    media_browser_config.scroll_multiplier,
+                    media_browser_config.lookahead,
+                    media_browser_config.proximity
+
                 )
             })
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
-        if media_dirs.is_empty() {
-            Err(ErrVar::MissingDirs)?;
-        }
         let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
         let grid_cell_space = grid_cell_size + GRID_IMAGE_SPACING;
         let details_cell_size = egui::vec2(details_cell_width, details_cell_width * ASPECT_RATIO_3_2);
@@ -1088,6 +1120,9 @@ impl<'a> MediaBrowser<'a> {
                 })
             })
             .collect::<Vec<_>>();
+        if grid_entries.is_empty() {
+            Err(ErrVar::MissingEntries)?;
+        }
 
         let mut grid_view = Vec::with_capacity(grid_entries.len());
         grid_view.extend(0..grid_entries.len());
@@ -1123,6 +1158,9 @@ impl<'a> MediaBrowser<'a> {
             grid_view_i: default!(),
             grid_view_selected_i: default!(),
             removed_entry_from_grid_view: default!(),
+            lookahead,
+            proximity,
+            resident_cell_range: default!(),
             sort_name_edit: default!(),
             tag_add_edit: default!(),
             tags,
@@ -1337,6 +1375,138 @@ impl<'a> MediaBrowser<'a> {
         });
     }
 
+    fn page(&mut self, ctx: &egui::Context, residence: &Residence) {
+        if let Some(drop) = residence.drop.clone() {
+            let (sx, rx) = mpsc::channel();
+
+            for grid_view_i in drop {
+                let grid_entry_i = self.grid_view[grid_view_i];
+                let grid_entry_info = &self.grid_entries[grid_entry_i];
+
+                if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
+                    let (_, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+
+                    image_states.ref_count = image_states.ref_count.saturating_sub(1);
+                    if image_states.ref_count == 0 {
+                        sx.send(std::mem::take(image_states)).unwrap();
+                    }
+                }
+            }
+
+            self.thread_pool.spawn_fifo(move || {
+                for image_states in rx.into_iter() {
+                    if let ImageState::Pending(rx) = image_states.grid {
+                        _ = rx.blocking_recv();
+                    }
+                    if let ImageState::Pending(rx) = image_states.details {
+                        _ = rx.blocking_recv();
+                    }
+                }
+            });
+        }
+
+        if let Some(load) = residence.load.clone() {
+            let ferry_image_infos = load
+                .filter_map(|grid_view_i| {
+                    let grid_entry_i = self.grid_view[grid_view_i];
+                    let grid_entry_info = &self.grid_entries[grid_entry_i];
+
+                    if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
+                        let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+                        let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                        let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+
+                        if image_states.is_none() {
+                            image_states.grid = ImageState::Pending(grid_image_state_rx);
+                            image_states.details = ImageState::Pending(details_image_state_rx);
+
+                            return Some(FerryImageInfo {
+                                image_file_name: image_file_name.clone(),
+                                expected_hash: grid_entry_info.hash.clone(),
+                                grid_entry_i: grid_view_i,
+                                grid_image_state_sx,
+                                details_image_state_sx,
+                                grid_wait: None
+                            })
+                        }
+                    }
+
+                    None
+                })
+                .collect::<Vec<_>>();
+
+            let ferry_images_info = FerryImagesInfo {
+                ctx,
+                thread_pool: &self.thread_pool,
+                hash_sx: &self.hash_sx,
+                image_dirs: self.image_dirs,
+                base_image_kind: BaseImageKind::Startup,
+                grid_cell_size: self.grid_cell_size,
+                force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
+                details_cell_size: self.details_cell_size,
+                force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
+                ferry_image_infos
+            };
+            ferry_images(ferry_images_info);
+        }
+    }
+
+    fn get_residence(&self, visible_row_range: &Range<usize>, row_cell_count: usize, max_cell_count: usize) -> Option<Residence> {
+        let proximity = self.proximity * row_cell_count;
+        let lookahead = self.lookahead * row_cell_count;
+        let visible_cell_range = (visible_row_range.start * row_cell_count)..(visible_row_range.end * row_cell_count);
+        let mut new_resident_cell_range = self.resident_cell_range.clone();
+
+        let range_starts_diff = visible_cell_range.start.saturating_sub(self.resident_cell_range.start);
+        let range_ends_diff = self.resident_cell_range.end.saturating_sub(visible_cell_range.end);
+
+        // Proximal end
+        if range_ends_diff <= proximity {
+            new_resident_cell_range.end = visible_cell_range.end.add(lookahead).min(max_cell_count);
+        }
+        // Distal start
+        if range_starts_diff >= lookahead + proximity {
+            new_resident_cell_range.start = visible_cell_range.start.saturating_sub(lookahead);
+        }
+        // Proximal start
+        if range_starts_diff <= proximity {
+            new_resident_cell_range.start = visible_cell_range.start.saturating_sub(lookahead);
+        }
+        // Distal end
+        if range_ends_diff >= lookahead + proximity {
+            new_resident_cell_range.end = visible_cell_range.end.add(lookahead).min(max_cell_count);
+        }
+
+        let mut residence: Residence = default!();
+        residence.cell_range = new_resident_cell_range.clone();
+
+        let cmp = self.resident_cell_range.compare(&new_resident_cell_range);
+        residence = match cmp {
+            RangeCmpResult::RangeEmpty |
+            RangeCmpResult::CompletelyTheSame |
+            RangeCmpResult::CompletelyIncluded { .. } |
+            RangeCmpResult::MiddleIncluded { .. } =>
+                return None,
+            RangeCmpResult::NotIncludedBelow |
+            RangeCmpResult::NotIncludedAbove =>
+                residence.with_load(new_resident_cell_range).with_drop(self.resident_cell_range.clone()),
+            RangeCmpResult::EndIncluded { other_after, original_part_which_is_not_included, .. } =>
+                residence.with_load(other_after).with_drop(original_part_which_is_not_included),
+            RangeCmpResult::StartIncluded { other_before, original_part_which_is_not_included, .. } =>
+                residence.with_load(other_before).with_drop(original_part_which_is_not_included),
+            RangeCmpResult::SameStartOriginalShorter { other_after_not_included, .. } =>
+                residence.with_load(other_after_not_included),
+            RangeCmpResult::SameStartOtherShorter { original_after_not_included, .. } =>
+                residence.with_drop(original_after_not_included),
+            RangeCmpResult::SameEndOriginalShorter { other_before_not_included, .. } =>
+                residence.with_load(other_before_not_included),
+            RangeCmpResult::SameEndOtherShorter { original_before_not_included, .. } =>
+                residence.with_drop(original_before_not_included)
+        };
+
+        Some(residence)
+    }
+
     fn grid_view(&mut self, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
@@ -1352,6 +1522,12 @@ impl<'a> MediaBrowser<'a> {
                 .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
                 .vertical_scroll_offset(self.grid_scroll_offset)
                 .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
+                    if let Some(residence) = self.get_residence(&row_range, row_cell_count, max_cell_count) {
+                        self.page(ui.ctx(), &residence);
+
+                        self.resident_cell_range = residence.cell_range;
+                    }
+
                     let available_rect = ui.available_rect_before_wrap();
 
                     #[allow(clippy::cast_precision_loss)]
@@ -1570,7 +1746,7 @@ impl<'a> MediaBrowser<'a> {
                     grid_entry_i: self.grid_entry_i,
                     grid_image_state_sx,
                     details_image_state_sx,
-                    wait_group: None
+                    grid_wait: None
                 }
             ]
         };
@@ -2000,6 +2176,7 @@ pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
         "Ogos",
         native_options,
         Box::new(|cctx| {
+            cctx.egui_ctx.options_mut(|options| options.reduce_texture_memory = true);
             cctx.egui_ctx.set_pixels_per_point(1.0);
             cctx.egui_ctx.style_mut(|style| {
                 let factor = 1.5;
