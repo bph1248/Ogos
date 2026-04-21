@@ -19,7 +19,7 @@ use std::{
     fmt::{self, Write},
     fs,
     sync::mpsc,
-    thread,
+    thread::{self, *},
     time::*
 };
 use windows::{
@@ -56,31 +56,39 @@ pub(crate) mod qmk_deser {
     }
 }
 
-mod trigger_watch {
+pub(crate) mod trigger_watch {
     use super::*;
 
-    pub(crate) fn begin(tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: mpsc::Receiver<InputEvent>, error_sx: mpsc::Sender<String>) {
-        for trigger in rx.iter() {
-            if let InputEvent::Keyboard(key) = trigger && let Some(task) = tasks.get(&key) {
-                match task {
-                    Task::BeginPixelCleaning => begin_pixel_cleaning(pixel_cleaning_prelude).unwrap_or_else(|err| {
-                        error_sx.send(format!("{}: failure during pixel cleaning: {}", module_path!(), err)).unwrap();
-                    }),
-                    Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
-                        error_sx.send(format!("{}: failed to let walk away: {}", module_path!(), err)).unwrap();
-                    }),
-                    Task::GoToSleep => unsafe {
-                        _ = SetSuspendState(false, false, true).win32_core_ok().x().inspect_err(|err| {
-                            error_sx.send(format!("{}: failed to go to sleep: {}", module_path!(), err)).unwrap();
-                        });
-                    },
-                    Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
-                        error_sx.send(format!("{}: failed to toggle display mode: {}", module_path!(), err)).unwrap();
-                    }),
-                    Task::PrintWindowInfo => {
-                        print_window_info().unwrap_or_else(|err| {
-                            error_sx.send(format!("{}: failed to print window info: {}", module_path!(), err)).unwrap();
-                        });
+    pub enum Msg {
+        Close,
+        InputEvent(InputEvent)
+    }
+
+    pub(crate) fn begin(tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: mpsc::Receiver<Msg>, error_sx: mpsc::Sender<String>) {
+        for msg in rx.iter() {
+            match msg {
+                Msg::Close => break,
+                Msg::InputEvent(trigger) => if let InputEvent::Keyboard(key) = trigger && let Some(task) = tasks.get(&key) {
+                    match task {
+                        Task::BeginPixelCleaning => begin_pixel_cleaning(pixel_cleaning_prelude).unwrap_or_else(|err| {
+                            error_sx.send(format!("{}: failure during pixel cleaning: {}", module_path!(), err)).unwrap();
+                        }),
+                        Task::LetWalkAway => let_walk_away().unwrap_or_else(|err| {
+                            error_sx.send(format!("{}: failed to let walk away: {}", module_path!(), err)).unwrap();
+                        }),
+                        Task::GoToSleep => unsafe {
+                            _ = SetSuspendState(false, false, true).win32_core_ok().x().inspect_err(|err| {
+                                error_sx.send(format!("{}: failed to go to sleep: {}", module_path!(), err)).unwrap();
+                            });
+                        },
+                        Task::ToggleDisplayMode => _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
+                            error_sx.send(format!("{}: failed to toggle display mode: {}", module_path!(), err)).unwrap();
+                        }),
+                        Task::PrintWindowInfo => {
+                            print_window_info().unwrap_or_else(|err| {
+                                error_sx.send(format!("{}: failed to print window info: {}", module_path!(), err)).unwrap();
+                            });
+                        }
                     }
                 }
             }
@@ -539,109 +547,100 @@ pub(crate) fn unmap_qmk(qmk: &QmkRuntime, from: Key) {
     }
 }
 
-pub(crate) fn configure_static_binds(error_sx: mpsc::Sender<String>) -> Res<()> {
-    let config = config::get().read()?;
-    let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: Binds::NAME })?;
+pub(crate) fn init_hotkeys(hotkeys: &Hotkeys, pixel_cleaning_prelude: Option<PixelCleaning>, trigger_watch_sx: mpsc::Sender<trigger_watch::Msg>, trigger_watch_rx: mpsc::Receiver<trigger_watch::Msg>, error_sx: mpsc::Sender<String>) -> JoinHandle<()> {
+    #[allow(unused_mut)]
+    let mut tasks = hotkeys.tasks.clone();
 
-    if let Some(hotkeys) = binds_config.hotkeys.as_ref() {
-        #[allow(unused_mut)]
-        let mut tasks = hotkeys.tasks.clone();
+    // Invoke tasks
+    let trigger_watch_hnd = thread::spawn(move || trigger_watch::begin(tasks, pixel_cleaning_prelude, trigger_watch_rx, error_sx));
 
-        // Invoke tasks
-        let pixel_cleaning_prelude = config.pixel_cleaning;
-        let (invoke_task_sx, rx) = mpsc::channel::<InputEvent>();
-        thread::spawn(move || trigger_watch::begin(tasks, pixel_cleaning_prelude, rx, error_sx));
+    for key in hotkeys.prefix.iter() {
+        let trigger_watch_sx = trigger_watch_sx.clone();
 
-        for key in hotkeys.prefix.iter() {
-            let invoke_task_sx = invoke_task_sx.clone();
+        let callback = Box::new(move |event, state| {
+            match state {
+                State::Pressed => if let InputEvent::Keyboard(key) = event {
+                    THREAD_STATE.with_borrow_mut(|ts| {
+                        ts.prefix_pressed.insert(key);
+                    });
+                },
+                State::Released => THREAD_STATE.with_borrow_mut(|ts| {
+                    if let InputEvent::Keyboard(key) = event {
+                        ts.prefix_pressed.remove(&key);
+                    }
 
-            let callback = Box::new(move |event, state| {
-                match state {
-                    State::Pressed => if let InputEvent::Keyboard(key) = event {
-                        THREAD_STATE.with_borrow_mut(|ts| {
-                            ts.prefix_pressed.insert(key);
-                        });
-                    },
-                    State::Released => THREAD_STATE.with_borrow_mut(|ts| {
-                        if let InputEvent::Keyboard(key) = event {
-                            ts.prefix_pressed.remove(&key);
-                        }
-
-                        if ts.prefix_pressed.is_empty() && !ts.trigger_is_pressed && let Some(trigger) = ts.trigger_to_send.take() {
-                            invoke_task_sx.send(trigger).unwrap();
-                        }
-                    }),
-                    _ => ()
-                }
-            });
-            let action = Action {
-                callback,
-                inhibit: InhibitEvent::No,
-                // Don't bother offloading - the callback is processed quickly enough on the LL hook thread
-                defer: false,
-                sequencer: false
-            };
-
-            key.act_on(action);
-        }
-
-        let prefix_len = hotkeys.prefix.len();
-        let triggers_iter = hotkeys.tasks.keys();
-
-        for key in triggers_iter {
-            let invoke_task_sx = invoke_task_sx.clone();
-
-            let callback = Box::new(move |event, state| {
-                match state {
-                    State::Pressed => THREAD_STATE.with_borrow_mut(|ts| {
-                        ts.trigger_is_pressed = true;
-
-                        if ts.prefix_pressed.len() == prefix_len && ts.trigger_to_send.is_none() {
-                            ts.trigger_to_send = Some(event);
-                        }
-                    }),
-                    State::Released => THREAD_STATE.with_borrow_mut(|ts| {
-                        ts.trigger_is_pressed = false;
-
-                        if ts.prefix_pressed.is_empty() && let Some(trigger) = ts.trigger_to_send.take() {
-                            invoke_task_sx.send(trigger).unwrap();
-                        }
-                    }),
-                    _ => ()
-                }
-            });
-            let action = Action {
-                callback,
-                inhibit: InhibitEvent::No,
-                defer: false,
-                sequencer: false
-            };
-
-            key.act_on(action);
-        }
-    }
-
-    if let Some(underscore) = binds_config.underscore {
+                    if ts.prefix_pressed.is_empty() && !ts.trigger_is_pressed && let Some(trigger) = ts.trigger_to_send.take() {
+                        trigger_watch_sx.send(trigger_watch::Msg::InputEvent(trigger)).unwrap();
+                    }
+                }),
+                _ => ()
+            }
+        });
         let action = Action {
-            callback: Box::new(move |_, state| {
-                if state == State::Pressed && underscore.prefix.is_pressed() {
-                    UNDERSCORE.click(Duration::from_millis(30));
-                }
-            }),
-            inhibit: InhibitEvent::maybe(move || {
-                match underscore.prefix.is_pressed() {
-                    true => InhibitEvent::Yes,
-                    false => InhibitEvent::No
-                }
-            }),
+            callback,
+            inhibit: InhibitEvent::No,
+            // Don't bother offloading - the callback is processed quickly enough on the LL hook thread
             defer: false,
-            sequencer: true
+            sequencer: false
         };
 
-        underscore.trigger.act_on(action);
+        key.act_on(action);
     }
 
-    info!("{}: configured", module_path!());
+    let prefix_len = hotkeys.prefix.len();
+    let triggers_iter = hotkeys.tasks.keys();
 
-    Ok(())
+    for key in triggers_iter {
+        let trigger_watch_sx = trigger_watch_sx.clone();
+
+        let callback = Box::new(move |event, state| {
+            match state {
+                State::Pressed => THREAD_STATE.with_borrow_mut(|ts| {
+                    ts.trigger_is_pressed = true;
+
+                    if ts.prefix_pressed.len() == prefix_len && ts.trigger_to_send.is_none() {
+                        ts.trigger_to_send = Some(event);
+                    }
+                }),
+                State::Released => THREAD_STATE.with_borrow_mut(|ts| {
+                    ts.trigger_is_pressed = false;
+
+                    if ts.prefix_pressed.is_empty() && let Some(trigger) = ts.trigger_to_send.take() {
+                        trigger_watch_sx.send(trigger_watch::Msg::InputEvent(trigger)).unwrap();
+                    }
+                }),
+                _ => ()
+            }
+        });
+        let action = Action {
+            callback,
+            inhibit: InhibitEvent::No,
+            defer: false,
+            sequencer: false
+        };
+
+        key.act_on(action);
+    }
+
+    trigger_watch_hnd
+}
+
+pub(crate) fn init_underscore(underscore: Underscore) {
+    let action = Action {
+        callback: Box::new(move |_, state| {
+            if state == State::Pressed && underscore.prefix.is_pressed() {
+                UNDERSCORE.click(Duration::from_millis(30));
+            }
+        }),
+        inhibit: InhibitEvent::maybe(move || {
+            match underscore.prefix.is_pressed() {
+                true => InhibitEvent::Yes,
+                false => InhibitEvent::No
+            }
+        }),
+        defer: false,
+        sequencer: true
+    };
+
+    underscore.trigger.act_on(action);
 }

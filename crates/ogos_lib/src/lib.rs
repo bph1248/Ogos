@@ -151,7 +151,7 @@ fn get_window_foreground_components(cli: &Cli) -> WindowForegroundComponents {
     let mut window_foreground_comps = WindowForegroundComponents::empty();
 
     if cli.binds {
-        window_foreground_comps |= WindowForegroundComponents::DYNAMIC_BINDS;
+        window_foreground_comps |= WindowForegroundComponents::BINDS;
     }
     if cli.taskbar {
         window_foreground_comps |= WindowForegroundComponents::TASKBAR;
@@ -175,9 +175,7 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorRx, JoinHandles)> {
     let window_foreground_comps = get_window_foreground_components(cli);
 
     // Binds / pipe server / window watch
-    if window_foreground_comps.contains(WindowForegroundComponents::DYNAMIC_BINDS) {
-        binds::configure_static_binds(error_sx.clone())?;
-
+    if window_foreground_comps.contains(WindowForegroundComponents::BINDS) {
         thread_hnds.push(pipe_server::spawn(ready_sx.clone(), long_lived_channels.sxs.window_foreground.clone(), error_sx.clone()));
     }
     thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx, error_sx.clone()));

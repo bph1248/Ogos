@@ -354,7 +354,7 @@ fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<Read
             init_hitbox(&sxs)?;
         }
 
-        if enable.contains(WindowForegroundComponents::DYNAMIC_BINDS | !WindowForegroundComponents::TASKBAR) {
+        if enable.contains(WindowForegroundComponents::BINDS | !WindowForegroundComponents::TASKBAR) {
             SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(all_foreground_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS | WINEVENT_SKIPOWNTHREAD).win32_var_ok()?;
         }
 

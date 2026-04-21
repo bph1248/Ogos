@@ -39,6 +39,7 @@ pub(crate) const WORKERW_CLASS_NAME: &str = "WorkerW";
 pub(crate) const WINDOW_WATCH_CLASS_NAME: &str = "OgosWindowWatch";
 
 struct Binds<'a> {
+    trigger_watch: Option<(JoinHandle<()>, mpsc::Sender<trigger_watch::Msg>)>,
     qmk: Option<QmkRuntime>,
     maps: Option<HashMap<&'a str, InputEventMaps>>,
     bound: Vec<InputEventMap>,
@@ -78,7 +79,7 @@ bitflags! {
 
     #[derive(Clone, Copy, PartialEq)]
     pub(crate) struct WindowForegroundComponents: u32 {
-        const DYNAMIC_BINDS     = 0b00000001;
+        const BINDS             = 0b00000001;
         const TASKBAR           = 0b00000010;
         const WINDOW_SHIFT      = 0b00000100;
     }
@@ -580,7 +581,7 @@ fn handle_win_event_hook_taskbar_location_change(tb: &mut Taskbar, hwnd: HWND) -
     Ok(())
 } }
 
-fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&str>) {
+fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&str>) -> Res1<()> {
     match active_game {
         Some(exe) if exe == win_info.exe.as_str() => { // Game is foreground
             if !win_info.has_maps.as_bool() || // No maps, no need for input hooks
@@ -597,9 +598,23 @@ fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&s
                 true => { // Game was foreground
                     mki::clear();
                     mki::install_hooks();
-                    binds::configure_static_binds(binds.error_sx.clone()).unwrap_or_else(|err| {
-                        binds.error_sx.send(format!("{}: failed to reconfigure static binds: {}", module_path!(), err)).unwrap();
-                    });
+                    if let Some((hnd, _)) = binds.trigger_watch.take() {
+                        _ = hnd.join();
+
+                        let config = config::get().read()?;
+                        let binds_config = config.binds.as_ref().unwrap();
+                        let hotkeys_config = binds_config.hotkeys.as_ref().unwrap();
+                        let underscore_config = binds_config.underscore;
+
+                        let (trigger_watch_sx, trigger_watch_rx) = mpsc::channel();
+                        let trigger_watch_hnd = binds::init_hotkeys(hotkeys_config, config.pixel_cleaning, trigger_watch_sx.clone(), trigger_watch_rx, binds.error_sx.clone());
+
+                        if let Some(underscore_config) = underscore_config {
+                            binds::init_underscore(underscore_config);
+                        };
+
+                        binds.trigger_watch = Some((trigger_watch_hnd, trigger_watch_sx));
+                    }
 
                     binds.input_hooks_disabled = false;
                 },
@@ -611,6 +626,8 @@ fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&s
     if win_info.has_maps.as_bool() {
         bind_maps(binds, win_info.exe.as_str());
     }
+
+    Ok(())
 }
 
 fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res2<()> {
@@ -715,7 +732,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
 
                 // Binds
                 if let Some(binds) = ts.binds.as_mut() {
-                    can_i_have_a_go(binds, win_info, ts.active_game.as_deref());
+                    can_i_have_a_go(binds, win_info, ts.active_game.as_deref())?;
                 }
             },
             false => {
@@ -863,18 +880,28 @@ pub(crate) fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2d) -> S
 }
 
 fn init_binds<'a>(error_sx: &mpsc::Sender<String>) -> Res1<Binds<'a>> {
-    (|| -> Res1<_> {
-        const QMK_VID: u16 = 0x3434;
-        const QMK_PID: u16 = 0x0140;
-        const USAGE_PAGE: u16 = 0xff60;
+    let config = config::get().read()?;
+    let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Binds::NAME })?;
 
-        let config = config::get().read()?;
-        let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Binds::NAME })?;
-        let qmk_config = binds_config.qmk.as_ref();
+    let (hotkeys_config, underscore_config) = binds_config.hotkeys.as_ref().zip(binds_config.underscore)
+        .unzip();
 
-        let qmk = qmk_config.map(|qmk_config| {
-            binds::QmkRuntime::new(QMK_VID, QMK_PID, USAGE_PAGE, qmk_config)
-        })
+    let trigger_watch = hotkeys_config.map(|hotkeys_config| {
+        let (trigger_watch_sx, trigger_watch_rx) = mpsc::channel();
+        let trigger_watch_hnd = binds::init_hotkeys(hotkeys_config, config.pixel_cleaning, trigger_watch_sx.clone(), trigger_watch_rx, error_sx.clone());
+
+        (trigger_watch_hnd, trigger_watch_sx)
+    });
+
+    if let Some(underscore_config) = underscore_config {
+        binds::init_underscore(underscore_config);
+    };
+
+    const QMK_VID: u16 = 0x3434;
+    const QMK_PID: u16 = 0x0140;
+    const USAGE_PAGE: u16 = 0xff60;
+
+    let qmk = binds_config.qmk.map(|qmk| binds::QmkRuntime::new(QMK_VID, QMK_PID, USAGE_PAGE, &qmk))
         .transpose()
         .unwrap_or_else(|err| {
             error_sx.send(err.to_string()).unwrap();
@@ -882,21 +909,16 @@ fn init_binds<'a>(error_sx: &mpsc::Sender<String>) -> Res1<Binds<'a>> {
             None
         });
 
-        Ok(Binds {
-            qmk,
-            maps: binds_config.maps.clone(),
-            bound: default!(),
-            input_hooks_disabled: default!(),
-            error_sx: error_sx.clone()
-        })
-    })()
-    .map_err(|err| {
-        let err = err.msg("failed to init binds");
+    let binds = Binds {
+        trigger_watch,
+        qmk,
+        maps: binds_config.maps.clone(),
+        bound: default!(),
+        input_hooks_disabled: default!(),
+        error_sx: error_sx.clone()
+    };
 
-        error_sx.send(err.to_string()).unwrap();
-
-        err
-    })
+    Ok(binds)
 }
 
 fn init_taskbar(rx: &mpsc::Receiver<Msg>) -> Res1<Taskbar> {
@@ -916,7 +938,7 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
 
     let mut ts = ThreadState {
         hook_mgr_tid: hook_mgr_tid.0,
-        binds: enable.contains(WindowForegroundComponents::DYNAMIC_BINDS).then_some(init_binds(error_sx)?),
+        binds: enable.contains(WindowForegroundComponents::BINDS).then_some(init_binds(error_sx)?),
         tb: enable.contains(WindowForegroundComponents::TASKBAR).then_some(init_taskbar(&rx)?),
         ..default!()
     };
@@ -930,16 +952,16 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
                 }
             },
             Msg::Broadcast(BroadcastMsg::WmReloadConfig) => {
-                if ts.binds.is_some() {
-                    let mut binds = init_binds(error_sx)?;
-                    unbind_maps(&mut binds);
+                // if ts.binds.is_some() {
+                //     let mut binds = init_dynamic_binds(error_sx)?;
+                //     unbind_maps(&mut binds);
 
-                    for (_, win_info) in ts.win_infos.iter_mut() {
-                        win_info.has_maps = binds.has_maps(&win_info.exe);
-                    }
+                //     for (_, win_info) in ts.win_infos.iter_mut() {
+                //         win_info.has_maps = binds.has_maps(&win_info.exe);
+                //     }
 
-                    ts.binds.replace(binds);
-                }
+                //     ts.binds.replace(binds);
+                // }
             },
             Msg::Pipe((msg, ack_sx)) => if let pipe_server::Msg::ActiveGame(exe) = msg {
                 ts.active_game = exe;
@@ -1002,6 +1024,11 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
 
         if let Err(err) = handle_msg(msg) {
             if let ErrVar::Close = *err.var {
+                if let Some(binds) = ts.binds.as_mut() && let Some((hnd, sx)) = binds.trigger_watch.take() {
+                    sx.send(trigger_watch::Msg::Close).unwrap();
+                    _ = hnd.join();
+                }
+
                 break
             }
 
