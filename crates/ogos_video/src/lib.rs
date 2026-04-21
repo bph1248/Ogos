@@ -113,8 +113,8 @@ fn deserialize_streams<'de, D>(deserializer: D) -> Result<Streams, D::Error> whe
             let mut audio_stream = None;
             loop {
                 match seq.next_element::<Stream>() {
-                    Ok(Some(Stream::Video(v))) => if video_stream.is_none() { video_stream = Some(v) },
-                    Ok(Some(Stream::Audio(a))) => if audio_stream.is_none() { audio_stream = Some(a) },
+                    Ok(Some(Stream::Video(v))) if video_stream.is_none() => video_stream = Some(v),
+                    Ok(Some(Stream::Audio(a))) if audio_stream.is_none() => audio_stream = Some(a),
                     Ok(None) => break,
                     _ => ()
                 }

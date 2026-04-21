@@ -358,12 +358,8 @@ fn evaluate_for_shift<'a>(win_info: &'a mut WinInfo, window_shift_config: &'a Wi
         Papers::CheckConstraint => {
             if let Some(shift_constraint) = window_shift_config.get_shift_constraint(&win_info.exe) {
                 match shift_constraint.criteria.relation {
-                    WindowRelation::TopLevelFree => if top_level_window_relation_found(win_info.hwnd, None, &shift_constraint.criteria)? {
-                        return Ok(())
-                    },
-                    WindowRelation::TopLevelOwned => if top_level_window_relation_found(win_info.hwnd, Some(win_info.hwnd), &shift_constraint.criteria)? {
-                        return Ok(())
-                    },
+                    WindowRelation::TopLevelFree if top_level_window_relation_found(win_info.hwnd, None, &shift_constraint.criteria)? => return Ok(()),
+                    WindowRelation::TopLevelOwned if top_level_window_relation_found(win_info.hwnd, Some(win_info.hwnd), &shift_constraint.criteria)? => return Ok(()),
                     _ => ()
                 }
             }
