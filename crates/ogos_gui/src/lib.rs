@@ -59,6 +59,7 @@ const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const SEPARATOR_WIDTH: f32 = 2.0;
 
 type AspectRatioV = f32;
+type Residence = Range<usize>;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Cache {
@@ -151,12 +152,43 @@ struct QueueImageInfo {
 }
 
 #[derive(Default)]
-struct Residence {
-    cell_range: Range<usize>,
+struct Stream {
+    load: Option<HashSet<usize>>,
+    drop: Option<HashSet<usize>>
+}
+impl Stream {
+    fn with_flatten_load(mut self, view_load: Range<usize>, grid_view: &[usize]) -> Self {
+        self.load = Some(view_load.map(|i| grid_view[i]).collect());
+
+        self
+    }
+
+    fn with_flatten_drop(mut self, view_drop: Range<usize>, grid_view: &[usize]) -> Self {
+        self.drop = Some(view_drop.map(|i| grid_view[i]).collect());
+
+        self
+    }
+
+    fn into_symmetric_diff(self) -> Self {
+        let (load, drop) = self.load.zip(self.drop)
+            .map(|(load, drop)| {
+                let new_load = load.difference(&drop).cloned().collect::<HashSet<_>>();
+                let new_drop = drop.difference(&load).cloned().collect::<HashSet<_>>();
+
+                (new_load, new_drop)
+            })
+            .unzip();
+
+        Self { load, drop }
+    }
+}
+
+#[derive(Default)]
+struct StreamView {
     load: Option<Range<usize>>,
     drop: Option<Range<usize>>
 }
-impl Residence {
+impl StreamView {
     fn with_load(mut self, load: Range<usize>) -> Self {
         self.load = Some(load);
 
@@ -168,6 +200,18 @@ impl Residence {
 
         self
     }
+
+    fn flatten(self, grid_view: &[usize]) -> Stream {
+        let load = self.load.map(|view_load| {
+            view_load.map(|i| grid_view[i]).collect::<HashSet<_>>()
+        });
+
+        let drop = self.drop.map(|view_drop| {
+            view_drop.map(|i| grid_view[i]).collect::<HashSet<_>>()
+        });
+
+        Stream { load, drop }
+    }
 }
 
 struct ResizeImage {
@@ -176,9 +220,10 @@ struct ResizeImage {
 }
 
 #[derive(Default)]
-struct TagWinButtonMenuInfo {
+struct TagWinButtonMenuDeferred {
     is_open: bool,
-    tag_op: Option<(Rc<str>, TagOp)>
+    tag_op: Option<(Rc<str>, TagOp)>,
+    stream: Option<Stream>
 }
 
 #[derive(Clone)]
@@ -795,14 +840,14 @@ struct MediaBrowser<'a> {
     removed_entry_from_grid_view: bool,
     lookahead: usize,
     proximity: usize,
-    resident_cell_range: Range<usize>,
+    residence: Range<usize>,
     sort_name_edit: String,
     tag_add_edit: String,
     /// Sets of indices into [`grid_entries`]
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
     active_tag: Option<Rc<str>>,
     open_tag_win: bool,
-    tag_win_button_menu: TagWinButtonMenuInfo,
+    tag_win_button_menu: TagWinButtonMenuDeferred,
     tag_win_rename_edit: String,
     tag_win_stamp: Option<Instant>,
     tag_win_cursor_checked: bool,
@@ -828,151 +873,12 @@ struct MediaBrowser<'a> {
     error_msg: String,
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
-    #[hotpath::measure]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.is_first_frame {
-            // Calc number of cells initially visible - don't render til images are loaded
-            let content_rect = ctx.content_rect();
-            let avail_row_cell_count = (content_rect.width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
-                // content_rect.width() - (self.grid_cell_size.x * avail_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
-            let avail_col_cell_count = (content_rect.height()).div(self.grid_cell_space.y).ceil() as usize + 1; // Add another row - egui::ScrollArea::show_rows() adds 1 to max_row
-            let visible_cell_count = (avail_row_cell_count * avail_col_cell_count /* + avail_row_cell_count */).clamp(1, self.grid_view.len());
-            let resident_cell_count = (visible_cell_count + self.lookahead * avail_row_cell_count).min(self.grid_view.len());
-            self.resident_cell_range = 0..resident_cell_count;
-
-            let wait_group = WaitGroup::new();
-            let ferry_image_infos = self.grid_view.iter().enumerate()
-                .filter_map(|(grid_view_i, &grid_entry_i)| {
-                    let grid_entry_info = &self.grid_entries[grid_entry_i];
-
-                    // Fill tags
-                    if let Some(CacheEntryInfo { tags: tag_is, .. }) = self.cache.entries.get_mut(&grid_entry_info.path) {
-                        for tag_i in tag_is {
-                            let tag = &self.cache.tags[*tag_i];
-                            let set = self.tags.get_mut(tag);
-
-                            if let Some(set) = set {
-                                set.insert(grid_entry_i);
-                            }
-                        }
-                    }
-
-                    if let Some(image_file_name_i) = grid_entry_info.image_file_name_i &&
-                        grid_view_i < resident_cell_count
-                    {
-                        let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-                        let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
-                        let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
-
-                        if image_states.is_none() {
-                            image_states.grid = ImageState::Pending(grid_image_state_rx);
-                            image_states.details = ImageState::Pending(details_image_state_rx);
-
-                            return Some(FerryImageInfo {
-                                image_file_name: image_file_name.clone(),
-                                expected_hash: grid_entry_info.hash.clone(),
-                                grid_entry_i,
-                                grid_image_state_sx,
-                                details_image_state_sx,
-                                grid_wait: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone())
-                            })
-                        }
-                    }
-
-                    None
-                })
-                .collect::<Vec<_>>();
-
-            let ferry_images_info = FerryImagesInfo {
-                ctx,
-                thread_pool: &self.thread_pool,
-                hash_sx: &self.hash_sx,
-                image_dirs: self.image_dirs,
-                base_image_kind: BaseImageKind::Startup,
-                grid_cell_size: self.grid_cell_size,
-                force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
-                details_cell_size: self.details_cell_size,
-                force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
-                ferry_image_infos
-            };
-            ferry_images(ferry_images_info);
-
-            wait_group.wait();
-
-            // Match window background to egui
-            let win_hnd = frame.window_handle().unwrap();
-            if let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
-                fix_background_brush(hnd);
-            }
-
-            self.is_first_frame = false;
-        }
-
-        egui::CentralPanel::default()
-            .frame(self.frame)
-            .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
-
-        if !self.open_error_win &&
-            let Ok(msg) = self.error_rx.try_recv()
-        {
-            self.error_msg = msg;
-            self.open_error_win = true;
-        }
-
-        egui::Window::new("Error")
-            .open(&mut self.open_error_win)
-            .auto_sized()
-            .show(ctx, |ui| ui.label(self.error_msg.as_str()));
-
-        // Close and save cache to file
-        if ctx.input(|state| state.viewport().close_requested()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-
-            for image_file_name in self.cached_images_to_remove.drain(..) {
-                let paths = [
-                    self.image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp"),
-                    self.image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp")
-                ];
-
-                for path in paths {
-                    fs::remove_file(path.as_path()).unwrap_or_else(|err| error!("{}: failed to remove cached image: {}: {}", module_path!(), path.display(), err));
-                }
-            }
-
-            self.cache.grid_cell_size = self.grid_cell_size;
-            self.cache.details_cell_size = self.details_cell_size;
-            self.cache.tags = self.tags.keys().cloned().collect();
-            self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
-            self.cache.entries.clear();
-
-            let mut grid_entry_tags = vec![Some(Vec::with_capacity(self.tags.len())); self.grid_entries.len()];
-            for (tag_i, (_, set)) in self.tags.iter().enumerate() {
-                for grid_entry_i in set {
-                    grid_entry_tags[*grid_entry_i].as_mut().unwrap().push(tag_i);
-                }
-            }
-
-            while let Ok(HashInfo { grid_entry_i, hash }) = self.hash_rx.try_recv() {
-                self.grid_entries[grid_entry_i].hash = Some(hash);
-            }
-
-            for (i, info) in self.grid_entries.drain(..).enumerate() {
-                self.cache.entries.insert(
-                    info.path,
-                    CacheEntryInfo {
-                        image_file_name_i: info.image_file_name_i,
-                        sort_name: info.sort_name,
-                        hash: info.image_file_name_i.map(|_| info.hash).unwrap_or_default(),
-                        tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
-                    }
-                );
-            }
-
-            let cache_file = File::options()
-                .truncate(true)
-                .write(true)
-                .open(self.cache_path.as_path()).unwrap();
-            serde_json::to_writer_pretty(cache_file, &self.cache).unwrap();
+            self.first_frame(ctx, frame);
+            self.continue_update(ctx);
+        } else {
+            self.continue_update(ctx);
         }
     }
 }
@@ -1160,7 +1066,7 @@ impl<'a> MediaBrowser<'a> {
             removed_entry_from_grid_view: default!(),
             lookahead,
             proximity,
-            resident_cell_range: default!(),
+            residence: default!(),
             sort_name_edit: default!(),
             tag_add_edit: default!(),
             tags,
@@ -1193,6 +1099,147 @@ impl<'a> MediaBrowser<'a> {
         })
     }
 
+    fn first_frame(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let visible_cell_count = self.reset_residence(ctx);
+
+        let wait_group = WaitGroup::new();
+        let ferry_image_infos = self.grid_view.iter().enumerate()
+            .filter_map(|(grid_view_i, &grid_entry_i)| {
+                let grid_entry_info = &self.grid_entries[grid_entry_i];
+
+                // Fill tags
+                if let Some(CacheEntryInfo { tags: tag_is, .. }) = self.cache.entries.get_mut(&grid_entry_info.path) {
+                    for tag_i in tag_is {
+                        let tag = &self.cache.tags[*tag_i];
+                        let set = self.tags.get_mut(tag);
+
+                        if let Some(set) = set {
+                            set.insert(grid_entry_i);
+                        }
+                    }
+                }
+
+                if let Some(image_file_name_i) = grid_entry_info.image_file_name_i &&
+                    grid_view_i < self.residence.end
+                {
+                    let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+                    let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                    let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+
+                    if image_states.is_none() {
+                        image_states.grid = ImageState::Pending(grid_image_state_rx);
+                        image_states.details = ImageState::Pending(details_image_state_rx);
+
+                        return Some(FerryImageInfo {
+                            image_file_name: image_file_name.clone(),
+                            expected_hash: grid_entry_info.hash.clone(),
+                            grid_entry_i,
+                            grid_image_state_sx,
+                            details_image_state_sx,
+                            grid_wait: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone()) // Render once visible images have loaded
+                        })
+                    }
+                }
+
+                None
+            })
+            .collect::<Vec<_>>();
+
+        let ferry_images_info = FerryImagesInfo {
+            ctx,
+            thread_pool: &self.thread_pool,
+            hash_sx: &self.hash_sx,
+            image_dirs: self.image_dirs,
+            base_image_kind: BaseImageKind::Startup,
+            grid_cell_size: self.grid_cell_size,
+            force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
+            details_cell_size: self.details_cell_size,
+            force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
+            ferry_image_infos
+        };
+        ferry_images(ferry_images_info);
+
+        wait_group.wait();
+
+        // Match window background to egui
+        let win_hnd = frame.window_handle().unwrap();
+        if let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
+            fix_background_brush(hnd);
+        }
+
+        self.is_first_frame = false;
+    }
+
+    #[hotpath::measure]
+    fn continue_update(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default()
+            .frame(self.frame)
+            .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
+
+        if !self.open_error_win &&
+            let Ok(msg) = self.error_rx.try_recv()
+        {
+            self.error_msg = msg;
+            self.open_error_win = true;
+        }
+
+        egui::Window::new("Error")
+            .open(&mut self.open_error_win)
+            .auto_sized()
+            .show(ctx, |ui| ui.label(self.error_msg.as_str()));
+
+        // Close and save cache to file
+        if ctx.input(|state| state.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+
+            for image_file_name in self.cached_images_to_remove.drain(..) {
+                let paths = [
+                    self.image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp"),
+                    self.image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp")
+                ];
+
+                for path in paths {
+                    fs::remove_file(path.as_path()).unwrap_or_else(|err| error!("{}: failed to remove cached image: {}: {}", module_path!(), path.display(), err));
+                }
+            }
+
+            self.cache.grid_cell_size = self.grid_cell_size;
+            self.cache.details_cell_size = self.details_cell_size;
+            self.cache.tags = self.tags.keys().cloned().collect();
+            self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
+            self.cache.entries.clear();
+
+            let mut grid_entry_tags = vec![Some(Vec::with_capacity(self.tags.len())); self.grid_entries.len()];
+            for (tag_i, (_, set)) in self.tags.iter().enumerate() {
+                for grid_entry_i in set {
+                    grid_entry_tags[*grid_entry_i].as_mut().unwrap().push(tag_i);
+                }
+            }
+
+            while let Ok(HashInfo { grid_entry_i, hash }) = self.hash_rx.try_recv() {
+                self.grid_entries[grid_entry_i].hash = Some(hash);
+            }
+
+            for (i, info) in self.grid_entries.drain(..).enumerate() {
+                self.cache.entries.insert(
+                    info.path,
+                    CacheEntryInfo {
+                        image_file_name_i: info.image_file_name_i,
+                        sort_name: info.sort_name,
+                        hash: info.image_file_name_i.map(|_| info.hash).unwrap_or_default(),
+                        tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
+                    }
+                );
+            }
+
+            let cache_file = File::options()
+                .truncate(true)
+                .write(true)
+                .open(self.cache_path.as_path()).unwrap();
+            serde_json::to_writer_pretty(cache_file, &self.cache).unwrap();
+        }
+    }
+
     fn reset_grid_view(&mut self) {
         self.grid_view.clear();
         self.grid_view.extend(0..self.grid_entries.len());
@@ -1200,8 +1247,148 @@ impl<'a> MediaBrowser<'a> {
         self.sort_grid_view();
     }
 
+    fn reset_residence(&mut self, ctx: &egui::Context) -> usize {
+        let available_rect = ctx.available_rect();
+        let available_row_cell_count = (available_rect.width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
+            // content_rect.width() - (self.grid_cell_size.x * avail_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
+        let available_col_cell_count = (available_rect.height()).div(self.grid_cell_space.y).ceil() as usize;
+        let visible_cell_count = (available_row_cell_count * available_col_cell_count).clamp(1, self.grid_view.len());
+        let resident_cell_count = (visible_cell_count + self.lookahead * available_row_cell_count).min(self.grid_view.len());
+        self.residence = 0..resident_cell_count;
+
+        visible_cell_count
+    }
+
     fn sort_grid_view(&mut self) {
         sort_grid_view(&mut self.grid_view, &self.grid_entries);
+    }
+
+    fn stream(&mut self, ctx: &egui::Context, stream: &Stream) {
+        if let Some(drop) = stream.drop.as_ref() {
+            let (sx, rx) = mpsc::channel();
+
+            for grid_entry_i in drop.iter().copied() {
+                let grid_entry_info = &self.grid_entries[grid_entry_i];
+
+                if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
+                    let (_, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+
+                    image_states.ref_count = image_states.ref_count.saturating_sub(1);
+                    if image_states.ref_count == 0 {
+                        sx.send(std::mem::take(image_states)).unwrap();
+                    }
+                }
+            }
+
+            self.thread_pool.spawn_fifo(move || {
+                for image_states in rx.into_iter() {
+                    if let ImageState::Pending(rx) = image_states.grid {
+                        _ = rx.blocking_recv();
+                    }
+                    if let ImageState::Pending(rx) = image_states.details {
+                        _ = rx.blocking_recv();
+                    }
+                }
+            });
+        }
+
+        if let Some(load) = stream.load.as_ref() {
+            let ferry_image_infos = load.iter().copied()
+                .filter_map(|grid_entry_i| {
+                    let grid_entry_info = &self.grid_entries[grid_entry_i];
+
+                    if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
+                        let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+                        let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                        let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+
+                        if image_states.is_none() {
+                            image_states.grid = ImageState::Pending(grid_image_state_rx);
+                            image_states.details = ImageState::Pending(details_image_state_rx);
+
+                            return Some(FerryImageInfo {
+                                image_file_name: image_file_name.clone(),
+                                expected_hash: grid_entry_info.hash.clone(),
+                                grid_entry_i,
+                                grid_image_state_sx,
+                                details_image_state_sx,
+                                grid_wait: None
+                            })
+                        }
+                    }
+
+                    None
+                })
+                .collect::<Vec<_>>();
+
+            let ferry_images_info = FerryImagesInfo {
+                ctx,
+                thread_pool: &self.thread_pool,
+                hash_sx: &self.hash_sx,
+                image_dirs: self.image_dirs,
+                base_image_kind: BaseImageKind::Startup,
+                grid_cell_size: self.grid_cell_size,
+                force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
+                details_cell_size: self.details_cell_size,
+                force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
+                ferry_image_infos
+            };
+            ferry_images(ferry_images_info);
+        }
+    }
+
+    fn update_residence(&mut self, visible_row_range: &Range<usize>, row_cell_count: usize, max_cell_count: usize) -> Option<(Residence, Stream)> {
+        let proximity = self.proximity * row_cell_count;
+        let lookahead = self.lookahead * row_cell_count;
+        let visible_cell_range = (visible_row_range.start * row_cell_count)..(visible_row_range.end * row_cell_count);
+        let mut new_residence = self.residence.clone();
+
+        let range_starts_diff = visible_cell_range.start.saturating_sub(self.residence.start);
+        let range_ends_diff = self.residence.end.saturating_sub(visible_cell_range.end);
+
+        // Proximal end
+        if range_ends_diff <= proximity {
+            new_residence.end = visible_cell_range.end.add(lookahead).min(max_cell_count);
+        }
+        // Distal start
+        if range_starts_diff >= lookahead + proximity {
+            new_residence.start = visible_cell_range.start.saturating_sub(lookahead);
+        }
+        // Proximal start
+        if range_starts_diff <= proximity {
+            new_residence.start = visible_cell_range.start.saturating_sub(lookahead);
+        }
+        // Distal end
+        if range_ends_diff >= lookahead + proximity {
+            new_residence.end = visible_cell_range.end.add(lookahead).min(max_cell_count);
+        }
+
+        let cmp = self.residence.compare(&new_residence);
+        let stream_view = match cmp {
+            RangeCmpResult::RangeEmpty |
+            RangeCmpResult::CompletelyTheSame |
+            RangeCmpResult::CompletelyIncluded { .. } |
+            RangeCmpResult::MiddleIncluded { .. } =>
+                return None,
+            RangeCmpResult::NotIncludedBelow |
+            RangeCmpResult::NotIncludedAbove =>
+                StreamView::default().with_load(new_residence.clone()).with_drop(self.residence.clone()),
+            RangeCmpResult::EndIncluded { other_after, original_part_which_is_not_included, .. } =>
+                StreamView::default().with_load(other_after).with_drop(original_part_which_is_not_included),
+            RangeCmpResult::StartIncluded { other_before, original_part_which_is_not_included, .. } =>
+                StreamView::default().with_load(other_before).with_drop(original_part_which_is_not_included),
+            RangeCmpResult::SameStartOriginalShorter { other_after_not_included, .. } =>
+                StreamView::default().with_load(other_after_not_included),
+            RangeCmpResult::SameStartOtherShorter { original_after_not_included, .. } =>
+                StreamView::default().with_drop(original_after_not_included),
+            RangeCmpResult::SameEndOriginalShorter { other_before_not_included, .. } =>
+                StreamView::default().with_load(other_before_not_included),
+            RangeCmpResult::SameEndOtherShorter { original_before_not_included, .. } =>
+                StreamView::default().with_drop(original_before_not_included)
+        };
+        let stream = stream_view.flatten(&self.grid_view);
+
+        Some((new_residence, stream))
     }
 
     fn central_panel(&mut self, ui: &mut egui::Ui) {
@@ -1314,8 +1501,12 @@ impl<'a> MediaBrowser<'a> {
     fn tag_win_buttons(&mut self, ui: &mut egui::Ui) {
         let all_button_resp = ui.button("All");
 
-        if all_button_resp.clicked() {
+        if all_button_resp.clicked() && self.active_tag.is_some() {
             self.reset_grid_view();
+
+            self.reset_residence(ui.ctx());
+            let stream = Stream::default().with_flatten_load(self.residence.clone(), &self.grid_view);
+            self.stream(ui.ctx(), &stream);
 
             self.active_tag = None;
         }
@@ -1323,7 +1514,7 @@ impl<'a> MediaBrowser<'a> {
             all_button_resp.highlight();
         }
 
-        self.tag_win_button_menu = self.tags.iter().fold(TagWinButtonMenuInfo::default(), |mut deferred, (tag, set)| {
+        self.tag_win_button_menu = self.tags.iter().fold(TagWinButtonMenuDeferred::default(), |mut deferred, (tag, set)| {
             if !set.is_empty() {
                 let tag_button_resp = ui.button(tag.as_ref());
 
@@ -1360,7 +1551,8 @@ impl<'a> MediaBrowser<'a> {
                     self.tag_win_stamp = Some(now!());
                 }
 
-                if tag_button_resp.clicked() {
+                if tag_button_resp.clicked() && self.active_tag.as_ref().is_none_or(|active_tag| active_tag != tag) {
+                    deferred.stream = Some(Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view));
                     populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
                     self.active_tag = Some(tag.clone());
@@ -1373,138 +1565,12 @@ impl<'a> MediaBrowser<'a> {
 
             deferred
         });
-    }
 
-    fn page(&mut self, ctx: &egui::Context, residence: &Residence) {
-        if let Some(drop) = residence.drop.clone() {
-            let (sx, rx) = mpsc::channel();
-
-            for grid_view_i in drop {
-                let grid_entry_i = self.grid_view[grid_view_i];
-                let grid_entry_info = &self.grid_entries[grid_entry_i];
-
-                if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
-                    let (_, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
-
-                    image_states.ref_count = image_states.ref_count.saturating_sub(1);
-                    if image_states.ref_count == 0 {
-                        sx.send(std::mem::take(image_states)).unwrap();
-                    }
-                }
-            }
-
-            self.thread_pool.spawn_fifo(move || {
-                for image_states in rx.into_iter() {
-                    if let ImageState::Pending(rx) = image_states.grid {
-                        _ = rx.blocking_recv();
-                    }
-                    if let ImageState::Pending(rx) = image_states.details {
-                        _ = rx.blocking_recv();
-                    }
-                }
-            });
+        if let Some(stream) = self.tag_win_button_menu.stream.take() {
+            self.reset_residence(ui.ctx());
+            let stream = stream.with_flatten_load(self.residence.clone(), &self.grid_view).into_symmetric_diff();
+            self.stream(ui.ctx(), &stream);
         }
-
-        if let Some(load) = residence.load.clone() {
-            let ferry_image_infos = load
-                .filter_map(|grid_view_i| {
-                    let grid_entry_i = self.grid_view[grid_view_i];
-                    let grid_entry_info = &self.grid_entries[grid_entry_i];
-
-                    if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
-                        let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-                        let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
-                        let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
-
-                        if image_states.is_none() {
-                            image_states.grid = ImageState::Pending(grid_image_state_rx);
-                            image_states.details = ImageState::Pending(details_image_state_rx);
-
-                            return Some(FerryImageInfo {
-                                image_file_name: image_file_name.clone(),
-                                expected_hash: grid_entry_info.hash.clone(),
-                                grid_entry_i: grid_view_i,
-                                grid_image_state_sx,
-                                details_image_state_sx,
-                                grid_wait: None
-                            })
-                        }
-                    }
-
-                    None
-                })
-                .collect::<Vec<_>>();
-
-            let ferry_images_info = FerryImagesInfo {
-                ctx,
-                thread_pool: &self.thread_pool,
-                hash_sx: &self.hash_sx,
-                image_dirs: self.image_dirs,
-                base_image_kind: BaseImageKind::Startup,
-                grid_cell_size: self.grid_cell_size,
-                force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
-                details_cell_size: self.details_cell_size,
-                force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
-                ferry_image_infos
-            };
-            ferry_images(ferry_images_info);
-        }
-    }
-
-    fn get_residence(&self, visible_row_range: &Range<usize>, row_cell_count: usize, max_cell_count: usize) -> Option<Residence> {
-        let proximity = self.proximity * row_cell_count;
-        let lookahead = self.lookahead * row_cell_count;
-        let visible_cell_range = (visible_row_range.start * row_cell_count)..(visible_row_range.end * row_cell_count);
-        let mut new_resident_cell_range = self.resident_cell_range.clone();
-
-        let range_starts_diff = visible_cell_range.start.saturating_sub(self.resident_cell_range.start);
-        let range_ends_diff = self.resident_cell_range.end.saturating_sub(visible_cell_range.end);
-
-        // Proximal end
-        if range_ends_diff <= proximity {
-            new_resident_cell_range.end = visible_cell_range.end.add(lookahead).min(max_cell_count);
-        }
-        // Distal start
-        if range_starts_diff >= lookahead + proximity {
-            new_resident_cell_range.start = visible_cell_range.start.saturating_sub(lookahead);
-        }
-        // Proximal start
-        if range_starts_diff <= proximity {
-            new_resident_cell_range.start = visible_cell_range.start.saturating_sub(lookahead);
-        }
-        // Distal end
-        if range_ends_diff >= lookahead + proximity {
-            new_resident_cell_range.end = visible_cell_range.end.add(lookahead).min(max_cell_count);
-        }
-
-        let mut residence: Residence = default!();
-        residence.cell_range = new_resident_cell_range.clone();
-
-        let cmp = self.resident_cell_range.compare(&new_resident_cell_range);
-        residence = match cmp {
-            RangeCmpResult::RangeEmpty |
-            RangeCmpResult::CompletelyTheSame |
-            RangeCmpResult::CompletelyIncluded { .. } |
-            RangeCmpResult::MiddleIncluded { .. } =>
-                return None,
-            RangeCmpResult::NotIncludedBelow |
-            RangeCmpResult::NotIncludedAbove =>
-                residence.with_load(new_resident_cell_range).with_drop(self.resident_cell_range.clone()),
-            RangeCmpResult::EndIncluded { other_after, original_part_which_is_not_included, .. } =>
-                residence.with_load(other_after).with_drop(original_part_which_is_not_included),
-            RangeCmpResult::StartIncluded { other_before, original_part_which_is_not_included, .. } =>
-                residence.with_load(other_before).with_drop(original_part_which_is_not_included),
-            RangeCmpResult::SameStartOriginalShorter { other_after_not_included, .. } =>
-                residence.with_load(other_after_not_included),
-            RangeCmpResult::SameStartOtherShorter { original_after_not_included, .. } =>
-                residence.with_drop(original_after_not_included),
-            RangeCmpResult::SameEndOriginalShorter { other_before_not_included, .. } =>
-                residence.with_load(other_before_not_included),
-            RangeCmpResult::SameEndOtherShorter { original_before_not_included, .. } =>
-                residence.with_drop(original_before_not_included)
-        };
-
-        Some(residence)
     }
 
     fn grid_view(&mut self, ui: &mut egui::Ui) {
@@ -1522,10 +1588,10 @@ impl<'a> MediaBrowser<'a> {
                 .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
                 .vertical_scroll_offset(self.grid_scroll_offset)
                 .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
-                    if let Some(residence) = self.get_residence(&row_range, row_cell_count, max_cell_count) {
-                        self.page(ui.ctx(), &residence);
+                    if let Some((residence, stream)) = self.update_residence(&row_range, row_cell_count, max_cell_count) {
+                        self.stream(ui.ctx(), &stream);
 
-                        self.resident_cell_range = residence.cell_range;
+                        self.residence = residence;
                     }
 
                     let available_rect = ui.available_rect_before_wrap();
