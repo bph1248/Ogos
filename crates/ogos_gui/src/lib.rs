@@ -839,10 +839,11 @@ struct MediaBrowser<'a> {
     grid_view_i: usize,
     grid_view_selected_i: Option<usize>,
     grid_view_poll_ready: Arc<()>,
-    removed_entry_from_grid_view: bool,
+    grid_view_entry_removed: bool,
     lookahead: usize,
     proximity: usize,
     residence: Range<usize>,
+    animate: bool,
     sort_name_edit: String,
     tag_add_edit: String,
     /// Sets of indices into [`grid_entries`]
@@ -872,7 +873,7 @@ struct MediaBrowser<'a> {
     open_error_win: bool,
     error_sx: mpsc::Sender<String>,
     error_rx: mpsc::Receiver<String>,
-    error_msg: String,
+    error_msg: String
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -1066,10 +1067,11 @@ impl<'a> MediaBrowser<'a> {
             grid_view_i: default!(),
             grid_view_selected_i: default!(),
             grid_view_poll_ready: default!(),
-            removed_entry_from_grid_view: default!(),
+            grid_view_entry_removed: default!(),
             lookahead,
             proximity,
             residence: default!(),
+            animate: true,
             sort_name_edit: default!(),
             tag_add_edit: default!(),
             tags,
@@ -1253,6 +1255,7 @@ impl<'a> MediaBrowser<'a> {
         let stream = Stream::default().with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
         self.stream(ctx, &stream, true);
 
+        self.animate = false;
         self.active_tag = None;
     }
 
@@ -1406,13 +1409,24 @@ impl<'a> MediaBrowser<'a> {
     fn central_panel(&mut self, ui: &mut egui::Ui) {
         match self.view_kind {
             ViewKind::Grid => {
-                if ui.ctx().input(|state| state.pointer.button_released(egui::PointerButton::Extra1)) {
+                if ui.ctx().input(|state| state.pointer.button_released(egui::PointerButton::Extra1)) && self.active_tag.is_some() {
                     self.reset_grid_view(ui.ctx());
                 }
 
                 self.tag_win(ui);
 
                 if Arc::strong_count(&self.grid_view_poll_ready) == 1 {
+                    let opacity = match self.animate {
+                        true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, 0.3, egui::emath::easing::cubic_out),
+                        false => {
+                            self.animate = true;
+
+                            ui.ctx().clear_animations();
+                            ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, 0.3, egui::emath::easing::cubic_out)
+                        }
+                    };
+                    ui.set_opacity(opacity);
+
                     self.grid_view(ui);
                 }
             },
@@ -1575,6 +1589,7 @@ impl<'a> MediaBrowser<'a> {
                     deferred.stream = Some(Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view));
                     populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
+                    self.animate = false;
                     self.active_tag = Some(tag.clone());
                     self.grid_view_selected_i = None;
                 }
@@ -1651,10 +1666,10 @@ impl<'a> MediaBrowser<'a> {
                         });
 
                         // Cell entry might have its tag removed while view is active and table is still being updated
-                        match self.removed_entry_from_grid_view {
+                        match self.grid_view_entry_removed {
                             true => {
                                 max_cell_count -= 1;
-                                self.removed_entry_from_grid_view = false;
+                                self.grid_view_entry_removed = false;
                             },
                             false => self.grid_view_i += 1
                         }
@@ -1928,7 +1943,7 @@ impl<'a> MediaBrowser<'a> {
                                 false => {
                                     populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
-                                    self.removed_entry_from_grid_view = true;
+                                    self.grid_view_entry_removed = true;
                                 }
                             }
 
