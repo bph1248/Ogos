@@ -97,7 +97,8 @@ struct FerryImageInfo {
     grid_entry_i: usize,
     grid_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
     details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    grid_wait: Option<WaitGroup>
+    wait_ready: Option<WaitGroup>,
+    poll_ready: Option<Arc<()>>
 }
 
 struct FerryImagesInfo<'a> {
@@ -153,64 +154,62 @@ struct QueueImageInfo {
 
 #[derive(Default)]
 struct Stream {
-    load: Option<HashSet<usize>>,
-    drop: Option<HashSet<usize>>
+    load_first: HashSet<usize>,
+    load_after: HashSet<usize>,
+    drop: HashSet<usize>
 }
 impl Stream {
-    fn with_flatten_load(mut self, view_load: Range<usize>, grid_view: &[usize]) -> Self {
-        self.load = Some(view_load.map(|i| grid_view[i]).collect());
+    fn with_flatten_load(mut self, residence: Range<usize>, visible: Range<usize>, grid_view: &[usize]) -> Self {
+        for grid_view_i in residence {
+            let grid_entry_i = grid_view[grid_view_i];
+            let overlap = self.drop.remove(&grid_entry_i);
+
+            if !overlap {
+                if visible.contains(&grid_view_i) {
+                    self.load_first.insert(grid_entry_i);
+                } else {
+                    self.load_after.insert(grid_entry_i);
+                }
+            }
+        }
 
         self
     }
 
-    fn with_flatten_drop(mut self, view_drop: Range<usize>, grid_view: &[usize]) -> Self {
-        self.drop = Some(view_drop.map(|i| grid_view[i]).collect());
+    fn with_flatten_drop(mut self, drop: Range<usize>, grid_view: &[usize]) -> Self {
+        for grid_view_i in drop {
+            let grid_entry_i = grid_view[grid_view_i];
+
+            self.drop.insert(grid_entry_i);
+        }
 
         self
-    }
-
-    fn into_symmetric_diff(self) -> Self {
-        let (load, drop) = self.load.zip(self.drop)
-            .map(|(load, drop)| {
-                let new_load = load.difference(&drop).cloned().collect::<HashSet<_>>();
-                let new_drop = drop.difference(&load).cloned().collect::<HashSet<_>>();
-
-                (new_load, new_drop)
-            })
-            .unzip();
-
-        Self { load, drop }
     }
 }
 
 #[derive(Default)]
 struct StreamView {
-    load: Option<Range<usize>>,
-    drop: Option<Range<usize>>
+    load: Range<usize>,
+    drop: Range<usize>
 }
 impl StreamView {
     fn with_load(mut self, load: Range<usize>) -> Self {
-        self.load = Some(load);
+        self.load = load;
 
         self
     }
 
     fn with_drop(mut self, drop: Range<usize>) -> Self {
-        self.drop = Some(drop);
+        self.drop = drop;
 
         self
     }
 
     fn flatten(self, grid_view: &[usize]) -> Stream {
-        let load = self.load.map(|view_load| {
-            view_load.map(|i| grid_view[i]).collect::<HashSet<_>>()
-        });
+        let load = self.load.map(|grid_view_i| grid_view[grid_view_i]).collect::<HashSet<_>>();
+        let drop = self.drop.map(|grid_view_i| grid_view[grid_view_i]).collect::<HashSet<_>>();
 
-        let drop = self.drop.map(|view_drop| {
-            view_drop.map(|i| grid_view[i]).collect::<HashSet<_>>()
-        });
-
-        Stream { load, drop }
+        Stream { load_first: default!(), load_after: load, drop }
     }
 }
 
@@ -524,7 +523,8 @@ fn ferry_images(info: FerryImagesInfo) {
             grid_entry_i,
             grid_image_state_sx,
             details_image_state_sx,
-            grid_wait
+            wait_ready,
+            poll_ready
         } = info;
 
         let ctx = ctx.clone();
@@ -569,7 +569,8 @@ fn ferry_images(info: FerryImagesInfo) {
                     }
                 }
 
-                drop(grid_wait);
+                drop(wait_ready);
+                drop(poll_ready);
 
                 ctx.request_repaint();
 
@@ -837,6 +838,7 @@ struct MediaBrowser<'a> {
     grid_view: Vec<usize>,
     grid_view_i: usize,
     grid_view_selected_i: Option<usize>,
+    grid_view_poll_ready: Arc<()>,
     removed_entry_from_grid_view: bool,
     lookahead: usize,
     proximity: usize,
@@ -1063,6 +1065,7 @@ impl<'a> MediaBrowser<'a> {
             grid_view,
             grid_view_i: default!(),
             grid_view_selected_i: default!(),
+            grid_view_poll_ready: default!(),
             removed_entry_from_grid_view: default!(),
             lookahead,
             proximity,
@@ -1136,7 +1139,8 @@ impl<'a> MediaBrowser<'a> {
                             grid_entry_i,
                             grid_image_state_sx,
                             details_image_state_sx,
-                            grid_wait: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone()) // Render once visible images have loaded
+                            wait_ready: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone()),
+                            poll_ready: None
                         })
                     }
                 }
@@ -1240,11 +1244,16 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn reset_grid_view(&mut self) {
+    fn reset_grid_view(&mut self, ctx: &egui::Context) {
         self.grid_view.clear();
         self.grid_view.extend(0..self.grid_entries.len());
-
         self.sort_grid_view();
+
+        let visible_cell_count = self.reset_residence(ctx);
+        let stream = Stream::default().with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
+        self.stream(ctx, &stream, true);
+
+        self.active_tag = None;
     }
 
     fn reset_residence(&mut self, ctx: &egui::Context) -> usize {
@@ -1254,6 +1263,7 @@ impl<'a> MediaBrowser<'a> {
         let available_col_cell_count = (available_rect.height()).div(self.grid_cell_space.y).ceil() as usize;
         let visible_cell_count = (available_row_cell_count * available_col_cell_count).clamp(1, self.grid_view.len());
         let resident_cell_count = (visible_cell_count + self.lookahead * available_row_cell_count).min(self.grid_view.len());
+
         self.residence = 0..resident_cell_count;
 
         visible_cell_count
@@ -1263,11 +1273,11 @@ impl<'a> MediaBrowser<'a> {
         sort_grid_view(&mut self.grid_view, &self.grid_entries);
     }
 
-    fn stream(&mut self, ctx: &egui::Context, stream: &Stream) {
-        if let Some(drop) = stream.drop.as_ref() {
+    fn stream(&mut self, ctx: &egui::Context, stream: &Stream, poll_ready: bool) {
+        if !stream.drop.is_empty() {
             let (sx, rx) = mpsc::channel();
 
-            for grid_entry_i in drop.iter().copied() {
+            for grid_entry_i in stream.drop.iter().copied() {
                 let grid_entry_info = &self.grid_entries[grid_entry_i];
 
                 if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
@@ -1292,49 +1302,51 @@ impl<'a> MediaBrowser<'a> {
             });
         }
 
-        if let Some(load) = stream.load.as_ref() {
-            let ferry_image_infos = load.iter().copied()
-                .filter_map(|grid_entry_i| {
-                    let grid_entry_info = &self.grid_entries[grid_entry_i];
+        let ferry_image_infos = stream.load_first.iter().chain(stream.load_after.iter()).copied()
+            .enumerate()
+            .filter_map(|(enum_i, grid_entry_i)| {
+                let grid_entry_info = &self.grid_entries[grid_entry_i];
 
-                    if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
-                        let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-                        let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
-                        let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+                if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
+                    let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+                    let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                    let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
 
-                        if image_states.is_none() {
-                            image_states.grid = ImageState::Pending(grid_image_state_rx);
-                            image_states.details = ImageState::Pending(details_image_state_rx);
+                    if image_states.is_none() {
+                        image_states.grid = ImageState::Pending(grid_image_state_rx);
+                        image_states.details = ImageState::Pending(details_image_state_rx);
 
-                            return Some(FerryImageInfo {
-                                image_file_name: image_file_name.clone(),
-                                expected_hash: grid_entry_info.hash.clone(),
-                                grid_entry_i,
-                                grid_image_state_sx,
-                                details_image_state_sx,
-                                grid_wait: None
-                            })
-                        }
+                        return Some(FerryImageInfo {
+                            image_file_name: image_file_name.clone(),
+                            expected_hash: grid_entry_info.hash.clone(),
+                            grid_entry_i,
+                            grid_image_state_sx,
+                            details_image_state_sx,
+                            wait_ready: None,
+                            poll_ready: poll_ready.and_then(||
+                                enum_i.lt(&stream.load_first.len()).then_some(self.grid_view_poll_ready.clone())
+                            )
+                        })
                     }
+                }
 
-                    None
-                })
-                .collect::<Vec<_>>();
+                None
+            })
+            .collect::<Vec<_>>();
 
-            let ferry_images_info = FerryImagesInfo {
-                ctx,
-                thread_pool: &self.thread_pool,
-                hash_sx: &self.hash_sx,
-                image_dirs: self.image_dirs,
-                base_image_kind: BaseImageKind::Startup,
-                grid_cell_size: self.grid_cell_size,
-                force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
-                details_cell_size: self.details_cell_size,
-                force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
-                ferry_image_infos
-            };
-            ferry_images(ferry_images_info);
-        }
+        let ferry_images_info = FerryImagesInfo {
+            ctx,
+            thread_pool: &self.thread_pool,
+            hash_sx: &self.hash_sx,
+            image_dirs: self.image_dirs,
+            base_image_kind: BaseImageKind::Startup,
+            grid_cell_size: self.grid_cell_size,
+            force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
+            details_cell_size: self.details_cell_size,
+            force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
+            ferry_image_infos
+        };
+        ferry_images(ferry_images_info);
     }
 
     fn update_residence(&mut self, visible_row_range: &Range<usize>, row_cell_count: usize, max_cell_count: usize) -> Option<(Residence, Stream)> {
@@ -1394,10 +1406,23 @@ impl<'a> MediaBrowser<'a> {
     fn central_panel(&mut self, ui: &mut egui::Ui) {
         match self.view_kind {
             ViewKind::Grid => {
+                if ui.ctx().input(|state| state.pointer.button_released(egui::PointerButton::Extra1)) {
+                    self.reset_grid_view(ui.ctx());
+                }
+
                 self.tag_win(ui);
-                self.grid_view(ui);
+
+                if Arc::strong_count(&self.grid_view_poll_ready) == 1 {
+                    self.grid_view(ui);
+                }
             },
-            ViewKind::Details => self.details_view(ui)
+            ViewKind::Details => {
+                if ui.ctx().input(|state| state.pointer.button_released(egui::PointerButton::Extra1) || state.key_pressed(egui::Key::Escape)) {
+                    self.pop_dir();
+                };
+
+                self.details_view(ui);
+            }
         }
     }
 
@@ -1454,6 +1479,7 @@ impl<'a> MediaBrowser<'a> {
 
         if !self.tag_win_button_menu.is_open {
             let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
+
             match hover_pos {
                 Some(hover_pos) => {
                     self.tag_win_cursor_checked = false;
@@ -1502,13 +1528,7 @@ impl<'a> MediaBrowser<'a> {
         let all_button_resp = ui.button("All");
 
         if all_button_resp.clicked() && self.active_tag.is_some() {
-            self.reset_grid_view();
-
-            self.reset_residence(ui.ctx());
-            let stream = Stream::default().with_flatten_load(self.residence.clone(), &self.grid_view);
-            self.stream(ui.ctx(), &stream);
-
-            self.active_tag = None;
+            self.reset_grid_view(ui.ctx());
         }
         if self.active_tag.is_none() {
             all_button_resp.highlight();
@@ -1567,9 +1587,9 @@ impl<'a> MediaBrowser<'a> {
         });
 
         if let Some(stream) = self.tag_win_button_menu.stream.take() {
-            self.reset_residence(ui.ctx());
-            let stream = stream.with_flatten_load(self.residence.clone(), &self.grid_view).into_symmetric_diff();
-            self.stream(ui.ctx(), &stream);
+            let visible_cell_count = self.reset_residence(ui.ctx());
+            let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
+            self.stream(ui.ctx(), &stream, true);
         }
     }
 
@@ -1589,7 +1609,7 @@ impl<'a> MediaBrowser<'a> {
                 .vertical_scroll_offset(self.grid_scroll_offset)
                 .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
                     if let Some((residence, stream)) = self.update_residence(&row_range, row_cell_count, max_cell_count) {
-                        self.stream(ui.ctx(), &stream);
+                        self.stream(ui.ctx(), &stream, false);
 
                         self.residence = residence;
                     }
@@ -1607,14 +1627,6 @@ impl<'a> MediaBrowser<'a> {
                     ui.scope_builder(egui::UiBuilder::new().max_rect(table_rect), |ui| {
                         let table_row_count = row_range.end - row_range.start;
                         self.grid_table(ui, row_range.start, max_cell_count, table_row_count, row_cell_count);
-                    });
-
-                    ui.ctx().input(|state| {
-                        if state.pointer.button_released(egui::PointerButton::Extra1) {
-                            self.reset_grid_view();
-
-                            self.active_tag = None;
-                        }
                     });
                 })
                 .state.offset.y;
@@ -1812,7 +1824,8 @@ impl<'a> MediaBrowser<'a> {
                     grid_entry_i: self.grid_entry_i,
                     grid_image_state_sx,
                     details_image_state_sx,
-                    grid_wait: None
+                    wait_ready: None,
+                    poll_ready: None
                 }
             ]
         };
@@ -2008,12 +2021,6 @@ impl<'a> MediaBrowser<'a> {
         });
 
         self.details_context_menu(&total_alloc_resp);
-
-        ui.ctx().input(|state| {
-            if state.pointer.button_released(egui::PointerButton::Extra1) || state.key_pressed(egui::Key::Escape) {
-                self.pop_dir();
-            }
-        });
     }
 
     fn dir_entries(&mut self, ui: &mut egui::Ui) {
