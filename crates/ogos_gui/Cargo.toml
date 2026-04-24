@@ -14,8 +14,8 @@ concat-string = { workspace = true }
 crossbeam = "0.8.4"
 discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
-egui = { version = "0.33.0", default-features = false, features = ["serde"] }
-egui_extras = { version = "0.33.0", default-features = false }
+egui = { version = "0.34.1", default-features = false, features = ["serde"] }
+egui_extras = { version = "0.34.1", default-features = false }
 hotpath = { workspace = true }
 image = { workspace = true }
 indexmap = { version = "2.12.1", features = ["serde"] }
@@ -36,7 +36,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tap = "1.0.1"
 tokio = { workspace = true }
-wgpu = { version = "27.0.1", features = ["dx12"] }
+wgpu = { version = "29.0.1", features = ["dx12"] }
 windows = { workspace = true }
 
 [features]

@@ -766,7 +766,7 @@ struct Info {
     resized_viewport: bool
 }
 impl eframe::App for Info {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if !self.checked_background_brush && let win_hnd = frame.window_handle().unwrap() && let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
             fix_background_brush(hnd);
 
@@ -774,19 +774,19 @@ impl eframe::App for Info {
         }
 
         if !self.resized_viewport {
-            let screen_size = ctx.input(|i| i.viewport().monitor_size).unwrap();
+            let screen_size = ui.input(|i| i.viewport().monitor_size).unwrap();
             let init_win_size = screen_size.div(2.0).yx();
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(init_win_size));
+            ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(init_win_size));
 
             let content_size = egui::CentralPanel::default()
-                .show(ctx, |ui: &mut egui::Ui| {
+                .show_inside(ui, |ui: &mut egui::Ui| {
                     ui.set_max_width(init_win_size.x);
 
                     Self::central_panel(self, ui)
                 })
                 .inner;
 
-            let win_margins = ctx.style().spacing.window_margin.sum();
+            let win_margins = ui.style().spacing.window_margin.sum();
             let final_win_size = (content_size + win_margins + egui::vec2(5.0, 5.0))
                 .min(init_win_size);
 
@@ -795,8 +795,8 @@ impl eframe::App for Info {
                 (screen_size.y - final_win_size.y) / 2.0
             );
 
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(final_win_size));
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(win_pos));
+            ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(final_win_size));
+            ui.send_viewport_cmd(egui::ViewportCommand::OuterPosition(win_pos));
 
             self.resized_viewport = true;
 
@@ -804,7 +804,7 @@ impl eframe::App for Info {
         }
 
         egui::CentralPanel::default()
-            .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
+            .show_inside(ui, |ui: &mut egui::Ui| Self::central_panel(self, ui));
     }
 }
 impl Info {
@@ -883,12 +883,12 @@ struct MediaBrowser<'a> {
     error_msg: String
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if self.is_first_frame {
-            self.first_frame(ctx, frame);
-            self.continue_update(ctx);
+            self.first_frame(ui, frame);
+            self.continue_update(ui);
         } else {
-            self.continue_update(ctx);
+            self.continue_update(ui);
         }
     }
 }
@@ -1046,7 +1046,7 @@ impl<'a> MediaBrowser<'a> {
 
         drop(config);
 
-        let frame = egui::Frame::central_panel(&ctx.style()).inner_margin(
+        let frame = egui::Frame::central_panel(&ctx.global_style()).inner_margin(
             egui::Margin::symmetric(FRAME_MARGIN as i8, FRAME_MARGIN as i8)
         );
 
@@ -1184,10 +1184,10 @@ impl<'a> MediaBrowser<'a> {
     }
 
     #[hotpath::measure]
-    fn continue_update(&mut self, ctx: &egui::Context) {
+    fn continue_update(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default()
             .frame(self.frame)
-            .show(ctx, |ui: &mut egui::Ui| Self::central_panel(self, ui));
+            .show_inside(ui, |ui: &mut egui::Ui| Self::central_panel(self, ui));
 
         if !self.open_error_win &&
             let Ok(msg) = self.error_rx.try_recv()
@@ -1199,11 +1199,11 @@ impl<'a> MediaBrowser<'a> {
         egui::Window::new("Error")
             .open(&mut self.open_error_win)
             .auto_sized()
-            .show(ctx, |ui| ui.label(self.error_msg.as_str()));
+            .show(ui, |ui| ui.label(self.error_msg.as_str()));
 
         // Close and save cache to file
-        if ctx.input(|state| state.viewport().close_requested()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        if ui.input(|state| state.viewport().close_requested()) {
+            ui.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 
             for image_file_name in self.cached_images_to_remove.drain(..) {
                 let paths = [
@@ -1267,7 +1267,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn reset_residence(&mut self, ctx: &egui::Context) -> usize {
-        let available_rect = ctx.available_rect();
+        let available_rect = ctx.content_rect();
         let available_row_cell_count = (available_rect.width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
             // content_rect.width() - (self.grid_cell_size.x * avail_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
         let available_col_cell_count = (available_rect.height()).div(self.grid_cell_space.y).ceil() as usize;
@@ -2238,22 +2238,13 @@ pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
         }
     }
 
-    let dx12_backend_options = wgpu::Dx12BackendOptions {
+    let mut wgpu_setup_create_new = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    wgpu_setup_create_new.instance_descriptor.backends = wgpu::Backends::DX12;
+    wgpu_setup_create_new.instance_descriptor.backend_options.dx12 = wgpu::Dx12BackendOptions {
         presentation_system: wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual,
         ..default!()
     };
-    let wgpu_setup = egui_wgpu::WgpuSetup::CreateNew(egui_wgpu::WgpuSetupCreateNew {
-        instance_descriptor: wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::DX12,
-            backend_options: wgpu::BackendOptions {
-                dx12: dx12_backend_options,
-                ..default!()
-            },
-            ..default!()
-        },
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..default!()
-    });
+    let wgpu_setup = egui_wgpu::WgpuSetup::CreateNew(wgpu_setup_create_new);
     let native_options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
@@ -2273,7 +2264,7 @@ pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
         Box::new(|cctx| {
             cctx.egui_ctx.options_mut(|options| options.reduce_texture_memory = true);
             cctx.egui_ctx.set_pixels_per_point(1.0);
-            cctx.egui_ctx.style_mut(|style| {
+            cctx.egui_ctx.global_style_mut(|style| {
                 let factor = 1.5;
 
                 style.spacing.interact_size = (style.spacing.interact_size * factor).round();
@@ -2290,7 +2281,7 @@ pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
 
             let app: Box<dyn eframe::App> = match kind {
                 Kind::Info { msg } => {
-                    cctx.egui_ctx.style_mut(|style| style.wrap_mode = Some(egui::TextWrapMode::Wrap));
+                    cctx.egui_ctx.global_style_mut(|style| style.wrap_mode = Some(egui::TextWrapMode::Wrap));
 
                     Box::new(Info::new(msg))
                 },
