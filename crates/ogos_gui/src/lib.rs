@@ -849,6 +849,7 @@ struct MediaBrowser<'a> {
     grid_view_entry_removed: bool,
     lookahead: usize,
     proximity: usize,
+    animation: Option<AnimationInfo>,
     residence: Range<usize>,
     animate: bool,
     sort_name_edit: String,
@@ -900,7 +901,8 @@ impl<'a> MediaBrowser<'a> {
             details_cell_width,
             scroll_multiplier,
             lookahead,
-            proximity
+            proximity,
+            animation
         ) = config.media_browser.as_ref()
             .map(|media_browser_config| {
                 (
@@ -909,8 +911,8 @@ impl<'a> MediaBrowser<'a> {
                     media_browser_config.details_cell_width.next_multiple_of(2) as f32,
                     media_browser_config.scroll_multiplier,
                     media_browser_config.lookahead,
-                    media_browser_config.proximity
-
+                    media_browser_config.proximity,
+                    media_browser_config.animation
                 )
             })
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
@@ -1077,6 +1079,7 @@ impl<'a> MediaBrowser<'a> {
             grid_view_entry_removed: default!(),
             lookahead,
             proximity,
+            animation,
             residence: default!(),
             animate: true,
             sort_name_edit: default!(),
@@ -1108,6 +1111,20 @@ impl<'a> MediaBrowser<'a> {
             error_sx,
             error_rx,
             error_msg
+        })
+    }
+
+    fn get_animation_opacity(&mut self, ui: &mut egui::Ui) -> Option<f32> {
+        self.animation.as_ref().map(|animation| {
+            match self.animate {
+                true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, animation.dur.abs(), animation.kind.as_easing()),
+                false => {
+                    self.animate = true;
+
+                    ui.ctx().clear_animations();
+                    ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, animation.dur.abs(), animation.kind.as_easing())
+                }
+            }
         })
     }
 
@@ -1423,17 +1440,9 @@ impl<'a> MediaBrowser<'a> {
                 self.tag_win(ui);
 
                 if Arc::strong_count(&self.grid_view_poll_ready) == 1 {
-                    let opacity = match self.animate {
-                        true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, 0.3, egui::emath::easing::cubic_out),
-                        false => {
-                            self.animate = true;
-
-                            ui.ctx().clear_animations();
-                            ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, 0.3, egui::emath::easing::cubic_out)
-                        }
-                    };
-                    ui.set_opacity(opacity);
-
+                    if let Some(opacity) = self.get_animation_opacity(ui) {
+                        ui.set_opacity(opacity);
+                    }
                     self.grid_view(ui);
                 }
             },

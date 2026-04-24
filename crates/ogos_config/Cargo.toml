@@ -10,6 +10,7 @@ crate-type = ["lib"]
 
 [dependencies]
 const_format = { workspace = true }
+eframe = { workspace = true }
 discord-rich-presence = { workspace = true }
 ogos_common = { workspace = true }
 ogos_core = { workspace = true }
