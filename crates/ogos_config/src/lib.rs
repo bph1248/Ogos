@@ -46,6 +46,17 @@ pub trait Name {
     const NAME: &'static str;
 }
 
+fn deserialize_positive_f32<'de, D>(deserializer: D) -> Result<f32, D::Error> where
+    D: Deserializer<'de>
+{
+    let f = f32::deserialize(deserializer)?;
+    if f.is_sign_negative() {
+        Err(D::Error::custom(ErrVar::NegativeFloat))?;
+    }
+
+    Ok(f)
+}
+
 fn deserialize_key<'de, D>(deserializer: D) -> Result<Key, D::Error> where
     D: Deserializer<'de>
 {
@@ -420,11 +431,14 @@ impl AnimationKind {
 
 #[derive(Clone, Copy, Deserialize)]
 pub struct AnimationInfo {
+    #[serde(deserialize_with = "deserialize_positive_f32", rename = "dur_s")]
     pub dur: f32,
     pub kind: AnimationKind
 }
 
 const fn scroll_multiplier() -> f32 { 1.0 }
+const fn lookahead() -> usize { 2 }
+const fn proximity() -> usize { 1 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -434,9 +448,11 @@ pub struct MediaBrowser<'a> {
     pub window_inner_size: Option<Extent2dU>,
     pub grid_cell_width: u32,
     pub details_cell_width: u32,
-    #[serde(default = "scroll_multiplier")]
+    #[serde(default = "scroll_multiplier", deserialize_with = "deserialize_positive_f32")]
     pub scroll_multiplier: f32,
+    #[serde(default = "lookahead")]
     pub lookahead: usize,
+    #[serde(default = "proximity")]
     pub proximity: usize,
     pub animation: Option<AnimationInfo>
 }

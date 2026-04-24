@@ -18,7 +18,7 @@ use mime_guess::*;
 use nvapi_sys_new as nvapi_530;
 use nvapi_530::*;
 use paste::*;
-use serde::*;
+use serde::{de::*, *};
 use std::{
     borrow::*,
     fmt::{self, Display},

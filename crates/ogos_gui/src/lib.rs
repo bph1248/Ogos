@@ -1117,12 +1117,12 @@ impl<'a> MediaBrowser<'a> {
     fn get_animation_opacity(&mut self, ui: &mut egui::Ui) -> Option<f32> {
         self.animation.as_ref().map(|animation| {
             match self.animate {
-                true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, animation.dur.abs(), animation.kind.as_easing()),
+                true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, animation.dur, animation.kind.as_easing()),
                 false => {
                     self.animate = true;
 
                     ui.ctx().clear_animations();
-                    ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, animation.dur.abs(), animation.kind.as_easing())
+                    ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, animation.dur, animation.kind.as_easing())
                 }
             }
         })

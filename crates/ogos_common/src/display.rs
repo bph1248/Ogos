@@ -258,6 +258,17 @@ pub struct GammaFfi {
     pub black_output_offset: f64
 }
 
+fn deserialize_positive_f64<'de, D>(deserializer: D) -> Result<f64, D::Error> where
+    D: Deserializer<'de>
+{
+    let f = f64::deserialize(deserializer)?;
+    if f.is_sign_negative() {
+        Err(D::Error::custom(ErrVar::NegativeFloat))?;
+    }
+
+    Ok(f)
+}
+
 #[derive(Clone, Default, Deserialize, IntoStaticStr)]
 #[serde(deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]
@@ -268,7 +279,13 @@ pub enum Gamma {
     #[serde(rename = "bt_1886")]
     Bt1886,
     #[serde(rename = "custom")]
-    Custom { value: f64, black_output_offset: f64, intent: Intent },
+    Custom {
+        #[serde(deserialize_with = "deserialize_positive_f64")]
+        value: f64,
+        #[serde(deserialize_with = "deserialize_positive_f64")]
+        black_output_offset: f64,
+        intent: Intent
+    },
     #[serde(rename = "lstar")]
     Lstar
 }
