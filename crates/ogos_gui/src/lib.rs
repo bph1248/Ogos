@@ -1111,148 +1111,6 @@ impl<'a> MediaBrowser<'a> {
         })
     }
 
-    fn first_frame(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let visible_cell_count = self.reset_residence(ctx);
-
-        let wait_group = WaitGroup::new();
-        let ferry_image_infos = self.grid_view.iter().enumerate()
-            .filter_map(|(grid_view_i, &grid_entry_i)| {
-                let grid_entry_info = &self.grid_entries[grid_entry_i];
-
-                // Fill tags
-                if let Some(CacheEntryInfo { tags: tag_is, .. }) = self.cache.entries.get_mut(&grid_entry_info.path) {
-                    for tag_i in tag_is {
-                        let tag = &self.cache.tags[*tag_i];
-                        let set = self.tags.get_mut(tag);
-
-                        if let Some(set) = set {
-                            set.insert(grid_entry_i);
-                        }
-                    }
-                }
-
-                if let Some(image_file_name_i) = grid_entry_info.image_file_name_i &&
-                    grid_view_i < self.residence.end
-                {
-                    let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-                    let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
-                    let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
-
-                    if image_states.is_none() {
-                        image_states.grid = ImageState::Pending(grid_image_state_rx);
-                        image_states.details = ImageState::Pending(details_image_state_rx);
-
-                        return Some(FerryImageInfo {
-                            image_file_name: image_file_name.clone(),
-                            expected_metadata: grid_entry_info.metadata.clone(),
-                            grid_entry_i,
-                            grid_image_state_sx,
-                            details_image_state_sx,
-                            wait_ready: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone()),
-                            poll_ready: None
-                        })
-                    }
-                }
-
-                None
-            })
-            .collect::<Vec<_>>();
-
-        let ferry_images_info = FerryImagesInfo {
-            ctx,
-            thread_pool: &self.thread_pool,
-            metadata_sx: &self.metadata_sx,
-            image_dirs: self.image_dirs,
-            base_image_kind: BaseImageKind::Startup,
-            grid_cell_size: self.grid_cell_size,
-            force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
-            details_cell_size: self.details_cell_size,
-            force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
-            ferry_image_infos
-        };
-        ferry_images(ferry_images_info);
-
-        wait_group.wait();
-
-        // Match window background to egui
-        let win_hnd = frame.window_handle().unwrap();
-        if let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
-            fix_background_brush(hnd);
-        }
-
-        self.is_first_frame = false;
-    }
-
-    #[hotpath::measure]
-    fn continue_update(&mut self, ui: &mut egui::Ui) {
-        egui::CentralPanel::default()
-            .frame(self.frame)
-            .show_inside(ui, |ui: &mut egui::Ui| Self::central_panel(self, ui));
-
-        if !self.open_error_win &&
-            let Ok(msg) = self.error_rx.try_recv()
-        {
-            self.error_msg = msg;
-            self.open_error_win = true;
-        }
-
-        egui::Window::new("Error")
-            .open(&mut self.open_error_win)
-            .auto_sized()
-            .show(ui, |ui| ui.label(self.error_msg.as_str()));
-
-        // Close and save cache to file
-        if ui.input(|state| state.viewport().close_requested()) {
-            ui.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-
-            for image_file_name in self.cached_images_to_remove.drain(..) {
-                let paths = [
-                    self.image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp"),
-                    self.image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp")
-                ];
-
-                for path in paths {
-                    fs::remove_file(path.as_path()).unwrap_or_else(|err| error!("{}: failed to remove cached image: {}: {}", module_path!(), path.display(), err));
-                }
-            }
-
-            self.cache.grid_cell_size = self.grid_cell_size;
-            self.cache.details_cell_size = self.details_cell_size;
-            self.cache.tags = self.tags.keys().cloned().collect();
-            self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
-            self.cache.entries.clear();
-
-            let mut grid_entry_tags = vec![Some(Vec::with_capacity(self.tags.len())); self.grid_entries.len()];
-            for (tag_i, (_, set)) in self.tags.iter().enumerate() {
-                for grid_entry_i in set {
-                    grid_entry_tags[*grid_entry_i].as_mut().unwrap().push(tag_i);
-                }
-            }
-
-            while let Ok(MetadataInfo { grid_entry_i, metadata }) = self.metadata_rx.try_recv() {
-                self.grid_entries[grid_entry_i].metadata = Some(metadata);
-            }
-
-            for (i, info) in self.grid_entries.drain(..).enumerate() {
-                self.cache.entries.insert(
-                    info.path,
-                    CacheEntryInfo {
-                        image_file_name_i: info.image_file_name_i,
-                        sort_name: info.sort_name,
-                        metadata: info.image_file_name_i.map(|_| info.metadata).unwrap_or_default(),
-                        tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
-                    }
-                );
-            }
-
-            let cache_file = File::options()
-                .truncate(true)
-                .write(true)
-                .open(self.cache_path.as_path()).unwrap();
-            serde_json::to_writer_pretty(cache_file, &self.cache).unwrap();
-        }
-    }
-
     fn reset_grid_view(&mut self, ctx: &egui::Context) {
         self.grid_view.clear();
         self.grid_view.extend(0..self.grid_entries.len());
@@ -1411,6 +1269,148 @@ impl<'a> MediaBrowser<'a> {
         let stream = stream_view.flatten(&self.grid_view);
 
         Some((new_residence, stream))
+    }
+
+    fn first_frame(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let visible_cell_count = self.reset_residence(ctx);
+
+        let wait_group = WaitGroup::new();
+        let ferry_image_infos = self.grid_view.iter().enumerate()
+            .filter_map(|(grid_view_i, &grid_entry_i)| {
+                let grid_entry_info = &self.grid_entries[grid_entry_i];
+
+                // Fill tags
+                if let Some(CacheEntryInfo { tags: tag_is, .. }) = self.cache.entries.get_mut(&grid_entry_info.path) {
+                    for tag_i in tag_is {
+                        let tag = &self.cache.tags[*tag_i];
+                        let set = self.tags.get_mut(tag);
+
+                        if let Some(set) = set {
+                            set.insert(grid_entry_i);
+                        }
+                    }
+                }
+
+                if let Some(image_file_name_i) = grid_entry_info.image_file_name_i &&
+                    grid_view_i < self.residence.end
+                {
+                    let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
+                    let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                    let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
+
+                    if image_states.is_none() {
+                        image_states.grid = ImageState::Pending(grid_image_state_rx);
+                        image_states.details = ImageState::Pending(details_image_state_rx);
+
+                        return Some(FerryImageInfo {
+                            image_file_name: image_file_name.clone(),
+                            expected_metadata: grid_entry_info.metadata.clone(),
+                            grid_entry_i,
+                            grid_image_state_sx,
+                            details_image_state_sx,
+                            wait_ready: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone()),
+                            poll_ready: None
+                        })
+                    }
+                }
+
+                None
+            })
+            .collect::<Vec<_>>();
+
+        let ferry_images_info = FerryImagesInfo {
+            ctx,
+            thread_pool: &self.thread_pool,
+            metadata_sx: &self.metadata_sx,
+            image_dirs: self.image_dirs,
+            base_image_kind: BaseImageKind::Startup,
+            grid_cell_size: self.grid_cell_size,
+            force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
+            details_cell_size: self.details_cell_size,
+            force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
+            ferry_image_infos
+        };
+        ferry_images(ferry_images_info);
+
+        wait_group.wait();
+
+        // Match window background to egui
+        let win_hnd = frame.window_handle().unwrap();
+        if let RawWindowHandle::Win32(hnd) = win_hnd.as_raw() {
+            fix_background_brush(hnd);
+        }
+
+        self.is_first_frame = false;
+    }
+
+    #[hotpath::measure]
+    fn continue_update(&mut self, ui: &mut egui::Ui) {
+        egui::CentralPanel::default()
+            .frame(self.frame)
+            .show_inside(ui, |ui: &mut egui::Ui| Self::central_panel(self, ui));
+
+        if !self.open_error_win &&
+            let Ok(msg) = self.error_rx.try_recv()
+        {
+            self.error_msg = msg;
+            self.open_error_win = true;
+        }
+
+        egui::Window::new("Error")
+            .open(&mut self.open_error_win)
+            .auto_sized()
+            .show(ui, |ui| ui.label(self.error_msg.as_str()));
+
+        // Close and save cache to file
+        if ui.input(|state| state.viewport().close_requested()) {
+            ui.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+
+            for image_file_name in self.cached_images_to_remove.drain(..) {
+                let paths = [
+                    self.image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp"),
+                    self.image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp")
+                ];
+
+                for path in paths {
+                    fs::remove_file(path.as_path()).unwrap_or_else(|err| error!("{}: failed to remove cached image: {}: {}", module_path!(), path.display(), err));
+                }
+            }
+
+            self.cache.grid_cell_size = self.grid_cell_size;
+            self.cache.details_cell_size = self.details_cell_size;
+            self.cache.tags = self.tags.keys().cloned().collect();
+            self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
+            self.cache.entries.clear();
+
+            let mut grid_entry_tags = vec![Some(Vec::with_capacity(self.tags.len())); self.grid_entries.len()];
+            for (tag_i, (_, set)) in self.tags.iter().enumerate() {
+                for grid_entry_i in set {
+                    grid_entry_tags[*grid_entry_i].as_mut().unwrap().push(tag_i);
+                }
+            }
+
+            while let Ok(MetadataInfo { grid_entry_i, metadata }) = self.metadata_rx.try_recv() {
+                self.grid_entries[grid_entry_i].metadata = Some(metadata);
+            }
+
+            for (i, info) in self.grid_entries.drain(..).enumerate() {
+                self.cache.entries.insert(
+                    info.path,
+                    CacheEntryInfo {
+                        image_file_name_i: info.image_file_name_i,
+                        sort_name: info.sort_name,
+                        metadata: info.image_file_name_i.map(|_| info.metadata).unwrap_or_default(),
+                        tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
+                    }
+                );
+            }
+
+            let cache_file = File::options()
+                .truncate(true)
+                .write(true)
+                .open(self.cache_path.as_path()).unwrap();
+            serde_json::to_writer_pretty(cache_file, &self.cache).unwrap();
+        }
     }
 
     fn central_panel(&mut self, ui: &mut egui::Ui) {
