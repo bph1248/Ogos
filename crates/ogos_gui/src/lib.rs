@@ -25,7 +25,6 @@ use std::{
     ffi::*,
     fmt::Write,
     fs::{self, *},
-    io::Read,
     ops::*,
     path::*,
     process::*,
@@ -51,7 +50,6 @@ use windows::{
 
 const ASPECT_RATIO_3_2: f32 = 1.5;
 const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color32::from_rgb(250, 246, 235) };
-const CHUNK_BYTE_COUNT: u64 = 500 * 1024;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
 const DETAILS_ENTRY_COUNT: usize = 64;
 const FRAME_MARGIN: f32 = 15.0;
@@ -79,7 +77,7 @@ struct CacheEntryInfo {
     #[serde(rename = "image")]
     image_file_name_i: Option<usize>,
     sort_name: Option<Rc<str>>,
-    hash: Option<Arc<str>>,
+    metadata: Option<Arc<Metadata>>,
     #[serde(default)]
     tags: Vec<usize>
 }
@@ -93,7 +91,7 @@ struct DirEntryInfo {
 
 struct FerryImageInfo {
     image_file_name: Arc<str>,
-    expected_hash: Option<Arc<str>>,
+    expected_metadata: Option<Arc<Metadata>>,
     grid_entry_i: usize,
     grid_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
     details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
@@ -104,7 +102,7 @@ struct FerryImageInfo {
 struct FerryImagesInfo<'a> {
     ctx: &'a egui::Context,
     thread_pool: &'a Arc<ThreadPool>,
-    hash_sx: &'a mpsc::Sender<HashInfo>,
+    metadata_sx: &'a mpsc::Sender<MetadataInfo>,
     image_dirs: &'static ImageDirs,
     base_image_kind: BaseImageKind,
     grid_cell_size: egui::Vec2,
@@ -120,12 +118,7 @@ struct GridEntryInfo {
     sort_name: Option<Rc<str>>,
     file_kind: FileKind,
     image_file_name_i: Option<usize>,
-    hash: Option<Arc<str>>
-}
-
-struct HashInfo {
-    grid_entry_i: usize,
-    hash: Arc<str>
+    metadata: Option<Arc<Metadata>>
 }
 
 struct ImageDirs {
@@ -144,6 +137,18 @@ impl ImageStates {
     fn is_none(&self) -> bool {
         matches!((&self.grid, &self.details), (ImageState::None, ImageState::None))
     }
+}
+
+#[derive(Deserialize, Eq, PartialEq, Serialize)]
+struct Metadata {
+    created: SystemTime,
+    modified: SystemTime,
+    len: u64
+}
+
+struct MetadataInfo {
+    grid_entry_i: usize,
+    metadata: Arc<Metadata>
 }
 
 struct QueueImageInfo {
@@ -501,7 +506,7 @@ fn ferry_images(info: FerryImagesInfo) {
     let FerryImagesInfo {
         ctx,
         thread_pool,
-        hash_sx,
+        metadata_sx,
         image_dirs,
         base_image_kind,
         grid_cell_size,
@@ -519,7 +524,7 @@ fn ferry_images(info: FerryImagesInfo) {
     for info in ferry_image_infos {
         let FerryImageInfo {
             image_file_name,
-            expected_hash,
+            expected_metadata,
             grid_entry_i,
             grid_image_state_sx,
             details_image_state_sx,
@@ -528,7 +533,7 @@ fn ferry_images(info: FerryImagesInfo) {
         } = info;
 
         let ctx = ctx.clone();
-        let hash_sx = hash_sx.clone();
+        let metadata_sx = metadata_sx.clone();
         let queue_sx = queue_sx.clone();
         let base_image_kind = base_image_kind.clone();
 
@@ -541,20 +546,22 @@ fn ferry_images(info: FerryImagesInfo) {
                 let grid_image_path = image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp");
                 let details_image_path = image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp");
 
-                // Compute hash on chunk
-                let mut base_image_file = File::open(base_image_path.as_path())?;
-                let mut hasher = blake3::Hasher::new();
-                let mut chunk = [0_u8; CHUNK_BYTE_COUNT as usize];
-                _ = base_image_file.read(&mut chunk)?;
-                let hash = Arc::from(hasher.update(&chunk).finalize().to_hex().as_str());
-                let hash_mismatches = expected_hash.is_none_or(|expected_hash| expected_hash != hash);
+                // Check metadata for file changes
+                let base_image_file = File::open(base_image_path.as_path())?;
+                let metadata = base_image_file.metadata()?;
+                let metadata = Arc::new(Metadata {
+                    created: metadata.created()?,
+                    modified: metadata.modified()?,
+                    len: metadata.len()
+                });
+                let metadata_differs = expected_metadata.is_none_or(|expected_metadata| expected_metadata != metadata);
 
-                match hash_mismatches {
+                match metadata_differs {
                     true => {
-                        hash_sx.send(HashInfo { grid_entry_i, hash }).unwrap();
-
                         ferry_base_image(base_image_path.as_path(), grid_image_path, grid_cell_size, grid_image_state_sx)?;
                         queue_ferry_base_image(queue_sx, base_image_path, details_image_path, details_cell_size, details_image_state_sx);
+
+                        metadata_sx.send(MetadataInfo { grid_entry_i, metadata }).unwrap();
                     },
                     false => {
                         match force_resize_grid_images {
@@ -821,8 +828,8 @@ struct MediaBrowser<'a> {
     thread_pool: Arc<rayon::ThreadPool>,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
-    hash_sx: mpsc::Sender<HashInfo>,
-    hash_rx: mpsc::Receiver<HashInfo>,
+    metadata_sx: mpsc::Sender<MetadataInfo>,
+    metadata_rx: mpsc::Receiver<MetadataInfo>,
     cache_path: PathBuf,
     cache: Cache,
     cached_images_to_remove: Vec<Rc<str>>,
@@ -917,7 +924,7 @@ impl<'a> MediaBrowser<'a> {
         let thread_pool = Arc::new(rayon::ThreadPoolBuilder::new()
             .num_threads(thread::available_parallelism()?.get())
             .build()?);
-        let (hash_sx, hash_rx) = mpsc::channel();
+        let (metadata_sx, metadata_rx) = mpsc::channel();
 
         let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
         let base_images_dir = current_exe_dir.join("images");
@@ -1007,16 +1014,16 @@ impl<'a> MediaBrowser<'a> {
 
                                     image_file_name_i
                                 });
-                            let hash = info.hash.clone();
+                            let metadata = info.metadata.clone();
 
-                            GridEntryInfo { path, stem, sort_name, file_kind, image_file_name_i, hash }
+                            GridEntryInfo { path, stem, sort_name, file_kind, image_file_name_i, metadata }
                         },
                         None => {
                             let sort_name = None;
                             let image_file_name_i = try_get_image_file_name_i(&mut images);
-                            let hash = None;
+                            let metadata = None;
 
-                            GridEntryInfo { path, stem, sort_name, file_kind, image_file_name_i, hash }
+                            GridEntryInfo { path, stem, sort_name, file_kind, image_file_name_i, metadata }
                         }
                     };
 
@@ -1050,8 +1057,8 @@ impl<'a> MediaBrowser<'a> {
             thread_pool,
             image_dirs,
             images,
-            hash_sx,
-            hash_rx,
+            metadata_sx,
+            metadata_rx,
             cache_path,
             cache,
             cached_images_to_remove,
@@ -1137,7 +1144,7 @@ impl<'a> MediaBrowser<'a> {
 
                         return Some(FerryImageInfo {
                             image_file_name: image_file_name.clone(),
-                            expected_hash: grid_entry_info.hash.clone(),
+                            expected_metadata: grid_entry_info.metadata.clone(),
                             grid_entry_i,
                             grid_image_state_sx,
                             details_image_state_sx,
@@ -1154,7 +1161,7 @@ impl<'a> MediaBrowser<'a> {
         let ferry_images_info = FerryImagesInfo {
             ctx,
             thread_pool: &self.thread_pool,
-            hash_sx: &self.hash_sx,
+            metadata_sx: &self.metadata_sx,
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Startup,
             grid_cell_size: self.grid_cell_size,
@@ -1222,8 +1229,8 @@ impl<'a> MediaBrowser<'a> {
                 }
             }
 
-            while let Ok(HashInfo { grid_entry_i, hash }) = self.hash_rx.try_recv() {
-                self.grid_entries[grid_entry_i].hash = Some(hash);
+            while let Ok(MetadataInfo { grid_entry_i, metadata }) = self.metadata_rx.try_recv() {
+                self.grid_entries[grid_entry_i].metadata = Some(metadata);
             }
 
             for (i, info) in self.grid_entries.drain(..).enumerate() {
@@ -1232,7 +1239,7 @@ impl<'a> MediaBrowser<'a> {
                     CacheEntryInfo {
                         image_file_name_i: info.image_file_name_i,
                         sort_name: info.sort_name,
-                        hash: info.image_file_name_i.map(|_| info.hash).unwrap_or_default(),
+                        metadata: info.image_file_name_i.map(|_| info.metadata).unwrap_or_default(),
                         tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
                     }
                 );
@@ -1321,7 +1328,7 @@ impl<'a> MediaBrowser<'a> {
 
                         return Some(FerryImageInfo {
                             image_file_name: image_file_name.clone(),
-                            expected_hash: grid_entry_info.hash.clone(),
+                            expected_metadata: grid_entry_info.metadata.clone(),
                             grid_entry_i,
                             grid_image_state_sx,
                             details_image_state_sx,
@@ -1340,7 +1347,7 @@ impl<'a> MediaBrowser<'a> {
         let ferry_images_info = FerryImagesInfo {
             ctx,
             thread_pool: &self.thread_pool,
-            hash_sx: &self.hash_sx,
+            metadata_sx: &self.metadata_sx,
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Startup,
             grid_cell_size: self.grid_cell_size,
@@ -1825,7 +1832,7 @@ impl<'a> MediaBrowser<'a> {
         let ferry_images_info = FerryImagesInfo {
             ctx,
             thread_pool:  &self.thread_pool,
-            hash_sx: &self.hash_sx,
+            metadata_sx: &self.metadata_sx,
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Pick { path: path.clone() },
             grid_cell_size: self.grid_cell_size,
@@ -1835,7 +1842,7 @@ impl<'a> MediaBrowser<'a> {
             ferry_image_infos: vec![
                 FerryImageInfo {
                     image_file_name: new_image_file_name,
-                    expected_hash: None,
+                    expected_metadata: None,
                     grid_entry_i: self.grid_entry_i,
                     grid_image_state_sx,
                     details_image_state_sx,
