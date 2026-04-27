@@ -436,7 +436,7 @@ pub struct AnimationInfo {
     pub kind: AnimationKind
 }
 
-const fn scroll_multiplier() -> f32 { 1.0 }
+const fn scroll_multiplier() -> f32 { 3.0 }
 const fn lookahead() -> usize { 2 }
 const fn proximity() -> usize { 1 }
 

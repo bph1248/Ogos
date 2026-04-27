@@ -916,6 +916,12 @@ impl<'a> MediaBrowser<'a> {
                 )
             })
             .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
+
+        if media_dirs.is_empty() { Err(ErrVar::MissingDirs)?; }
+        if lookahead < 2 { Err(ErrVar::InvalidLookahead(lookahead))?; }
+        let proximity_range = 1..lookahead;
+        if !(proximity_range.contains(&proximity)) { Err(ErrVar::InvalidProximity(proximity))?; }
+
         let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
         let grid_cell_space = grid_cell_size + GRID_IMAGE_SPACING;
         let details_cell_size = egui::vec2(details_cell_width, details_cell_width * ASPECT_RATIO_3_2);
@@ -1038,9 +1044,6 @@ impl<'a> MediaBrowser<'a> {
                 })
             })
             .collect::<Vec<_>>();
-        if grid_entries.is_empty() {
-            Err(ErrVar::MissingEntries)?;
-        }
 
         let mut grid_view = Vec::with_capacity(grid_entries.len());
         grid_view.extend(0..grid_entries.len());
@@ -1288,6 +1291,7 @@ impl<'a> MediaBrowser<'a> {
         Some((new_residence, stream))
     }
 
+    #[hotpath::measure]
     fn first_frame(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let visible_cell_count = self.reset_residence(ctx);
 
@@ -2253,6 +2257,7 @@ pub fn begin(kind: Kind) -> Res<(), { loc_var!(Gui) }> {
         presentation_system: wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual,
         ..default!()
     };
+    wgpu_setup_create_new.instance_descriptor.flags = wgpu::InstanceFlags::empty();
     let wgpu_setup = egui_wgpu::WgpuSetup::CreateNew(wgpu_setup_create_new);
     let native_options = eframe::NativeOptions {
         viewport,
