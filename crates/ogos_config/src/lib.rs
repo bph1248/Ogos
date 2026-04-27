@@ -583,8 +583,8 @@ pub struct Discord<'a> {
 #[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Qmk<'a> {
-    pub layer: u8,
-    pub layout_path: &'a str
+    pub layout_path: &'a str,
+    pub layer: u8
 }
 
 #[derive(Clone, Copy, Deserialize)]

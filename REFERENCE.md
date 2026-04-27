@@ -10,55 +10,56 @@
 
 #### Apps
 
-A list of paths to apps Ogos depends on. If a path is not specified and a default path does not exist, the PATH environment variable will be searched instead.
+A list of paths to apps that Ogos depends on. If a path is not specified and a default path does not exist, the PATH environment variable will be searched instead.
 
-- `epic`: [Epic Games Launcher](https://store.epicgames.com/en-US/download) (see [Games](#games)).
-- `ffprobe`: [Ffprobe](https://ffmpeg.org/ffprobe.html) (see [Mpv](#mpv)).
-- `gog`: [GOG GALAXY](https://www.gogalaxy.com/en/) (see [Games](#games)).
-- `mpv`: [mpv](https://mpv.io/) (see [Mpv](#mpv)).
-- `novideo_srgb`: [novideo_srgb](https://github.com/ledoge/novideo_srgb) (see [Display modes](#display-modes)).
-- `skif`: [Special K Injection Frontend](https://www.special-k.info/) (see [Games](#games)).
-- `steam`: [Steam](https://store.steampowered.com/about/) (see [Games](#games)).
+- `epic`: [Epic Games Launcher](https://store.epicgames.com/en-US/download).
+- `ffprobe`: [Ffprobe](https://ffmpeg.org/ffprobe.html).
+- `gog`: [GOG GALAXY](https://www.gogalaxy.com/en/).
+- `mpv`: [mpv](https://mpv.io/).
+- `novideo_srgb`: [novideo_srgb](https://github.com/bph1248/novideo_srgb).
+- `skif`: [Special K Injection Frontend](https://www.special-k.info/).
+- `steam`: [Steam](https://store.steampowered.com/about/).
 
 #### Audio
 
-Settings used in conjunction with `ogos --endpoint` / `--eq`.
+Settings used in conjunction with `ogos --endpoint` and `--eq`.
 
 - `endpoint_apps`: A list of named apps, such that `app args` is invoked after `ogos --endpoint <name>` is called.
-- `eq_apo`
+- `eq_apo`:
     - `master_config_path`: The path to the master Equalizer APO config file.
     - `custom_config_paths`: A list of named paths to Equalizer APO config files, such that `<path>` is copied to `master_config_path` when `ogos --eq <name>` is called.
 
 #### Binds
 
-Settings related to global hotkeys and context-aware key/button maps, used in conjunction with `ogos --binds` (see [Keys & Buttons](#keys--buttons), [Tasks](#tasks)).
+Settings related to global hotkeys and dynamic key/button maps, used in conjunction with `ogos --binds` (see [Keys & Buttons](#keys--buttons), [Tasks](#tasks)).
 
-- `hotkeys`
-    - `prefix`: A list of modifier keys that must be held before pressing a trigger. Must contain at least one entry.
-    - `triggers`: A list of keys mapped to tasks, such that a task is run if all keys (prefix + trigger) are pressed and then released.
-- `maps`: A list of process names mapped to key/button maps, such that key/button maps activate only when the foreground window belongs to `<exe>`.
+- `hotkeys`:
+    - `prefix`: A list of modifier keys that must be held in conjunction with a key listed in `triggers` in order to run a task.
+    - `triggers`: A list of keys mapped to tasks, such that a task is run when all keys (prefix + trigger) are pressed and then released.
+- `maps`: A list of process names mapped to key/button maps, such that a map activates only when the foreground window belongs to `<exe>`.
 - `underscore`: A hotkey for typing an underscore.
-- `qmk`: Settings used to assign key/button maps via the QMK/VIA API. Requires a QMK compatible keyboard.
-    - `layer`: The keyboard layer to target.
-    - `layout_path`: A path to a keyboard layout file, used to identify key column/row locations. Exported from [Keychron Launcher](https://launcher.keychron.com/#/keymap).
+- `qmk`: Settings used to assign key maps via the QMK/VIA API. Requires a QMK compatible keyboard.
+    - `layout_path`: The path to a keyboard layout file, used to identify key column/row/layer coordinates. Exported from [Keychron Launcher](https://launcher.keychron.com/#/keymap).
+    - `layer`: The keyboard layer to target when assigning keys.
 
 #### Discord
 
-- `app_ids`: A list of named Discord app IDs, used to begin Rich Presence activities when launching a game or video. The names used here and by the [media browser](#media-browser) do not reflect the name displayed in Discord when an activity goes live - that is set when the application is created.
+- `app_ids`: A list of named Discord app IDs, used to begin Rich Presence activities. The names used here and in the [media browser](#media-browser) do not reflect the name displayed in Discord when an activity goes live - that is set when the application is created.
 - `display_kind`: The text to display in Discord's member list when an activity goes live.
 
 #### Display modes
 
 Nvidia-specific graphics settings, customizable per display mode.
 
-- `novideo_srgb`: Enable novideo_srgb's color space / gamma clamp. All operations occur in SDR mode, before switching to, and after switching from, HDR mode. (It's still possible to leave the clamp enabled in HDR mode, hence why this setting has a HDR variant.)
+- `novideo_srgb`: Enable novideo_srgb's color space / gamma clamp. All operations occur in SDR mode, before switching to, and after switching from, HDR mode. It's still possible to leave the clamp enabled in HDR mode, hence why this setting has a HDR variant.\
+Note that novideo_srgb has been [broken](https://github.com/ledoge/novideo_srgb/issues/121) since driver version 591.44+ due an Nvidia API change.
 
 #### Games
 
 Settings used in conjunction with `ogos --game <name>`, where `<name>` is an arbitrary reference to the following settings:
 
 - `proc`: The name of the process to monitor. Any settings applied during launch are reverted when this process terminates.
-- `url`: A launcher-specific game identifier, where the launcher is inferred from the URL. If specified, the game is launched via this launcher, else `proc` is called directly. Valid urls are:
+- `url`: A launcher-specific game identifier, where the launcher is inferred from the URL. If specified, the game is launched via the launcher, else `proc` is called directly. Valid URLs are:
     - `com.epicgames.launcher://`
     - `gog://`
     - `steam://`
@@ -71,46 +72,43 @@ Settings used in conjunction with `ogos --game <name>`, where `<name>` is an arb
 A GUI to collate files and folders into a unified view. Launch videos with `mpv` or invoke a file's default handler.
 
 - `dirs`: A list of directories to collate.
-- `window_inner_size`: The size of the window, excluding the border.
-- `grid_cell_width`: The width of 'grid view' image cells, rounded to the next multiple of 2. Images are resized using Blackman filtering to fit within these cells, maintaining aspect ratio. Cell aspect ratio is 2:3.
+- `window_inner_size`: The size of the window, excluding any border or decorations.
+- `grid_cell_width`: The width to which images in 'grid view' are scaled and displayed, rounded to the next multiple of 2. Images are placed in a 2:3 cell and are resized to fit while maintaining their aspect ratio. Scaling is performed using Blackman filtering.
 - `details_cell_width`: Same as above but for 'details view'.
 - `scroll_multiplier`: Adjusts scroll speed.
+- `lookahead`: The number of rows above and below the window of visible images that should remain resident in memory in order to avoid pop-in while scrolling.
+- `proximity`: The minimum number of rows allowed between the edge of the visible and resident windows before the resident window should be updated.
+- `animation`:
+    - `dur_s`: The duration in seconds over which to fade (ease) images from transparent to opaque.
+    - `kind`: The [easing](https://easings.net/) function used. Only 'out' versions are used.
 
-Right click a grid entry to add an image. Alternatively, place an image of the same name (sans extension) in `./images`.
-
-Add/remove tags by right clicking on a grid entry. Move the cursor to the left edge of the window to reveal the tag list, whereby you can rename/remove tags and filter the current view.
-
-Left click a grid entry to enter 'details view' and browse its contents - either  a list of files and folders (if the entry was a folder) or a single file (if the entry was a file). Right click within this view to access additional settings:
-
+Move the cursor to the left edge of the window to reveal the tag list whereby you can filter the current view.
+Left-click a grid entry to enter 'details view' and launch media. Right-click the background in 'details view' to reveal additional options:
 - __Maintain sample rate__: Prevent setting the default audio endpoint sample rate to match video metadata.
 - __Override GLSL shaders__: Pass `override_glsl_shaders` to mpv (see [Mpv](#mpv)).
 - __Discord Rich Presence__: Begin a Rich Presence activity on launch. Details of the activity depend on the type of media selected (can be overridden):
-    - __TV__: If browsing a folder, use the folder name for __Details__ and the media's file name for __State__, else use the media's file name for __Details__.
+    - __TV__: If browsing a folder, use the folder name for __Details__ and the media's file name for __State__; else use the media's file name for __Details__.
     - __Movie__/__Words__: Use the media's file name for __Details__.
 
-Press `back_button` or `esc` to the return to the previous view.
-
-Potential future improvements to the media browser include:
-- Dynamic image loading / memory management. Currently all images are loaded up front.
-- Incorporating functionality from `--game`.
+Press `back_button` or `esc` to clear the current filter or return to the previous view.
 
 #### Mpv
 
-Settings used in conjunction with `ogos [PATH]` and the media browser. [ffprobe](#apps) is required to read video metadata.
+Settings used in conjunction with `ogos [PATH]` and the media browser. Ffprobe is required to read video metadata.
 
 - `sdr_profile`: The profile name to forward to mpv when launching SDR videos. SDR videos are considered anything not HDR.
-- `hdr_profile`: Same as above but for HDR videos. HDR videos are considered anything targeting PQ or HLG transfer functions.
-- `reshade`: Inject ReShade and configure Lilium's static tone mapper for use with HDR videos. Video metadata must contain the max luminance property, else ReShade is disabled. Currently only mpv configured for `gpu-api=vulkan` is supported.
+- `hdr_profile`: Same as above but for HDR. HDR videos are considered anything targeting PQ or HLG gamma.
+- `reshade`: Settings used to configure ReShade and Lilium's static tone mapper for use with HDR videos. Video metadata must contain the max luminance property, else ReShade is disabled. Mpv must be configured to use Vulkan.
     - `profile`: Overrides `hdr_profile`.
-    - `layer_path`: The path to ReShade's Vulkan layer manifest, used to disable ReShade for SDR and non-statically tone mapped videos.
-    - `preset_path`: A path to a ReShade preset file. If video metadata contains the max luminance property then the value is written to `[lilium__tone_mapping.fx] InputLuminanceMax` on launch.
-    - `settings_path`: A path to a ReShade settings file. A symlink to this file is created in mpv's directory on launch to allow ReShade to function. If the file cannot be symlinked (developer mode is not enabled), it will be copied.
+    - `layer_path`: The path to ReShade's Vulkan layer manifest, used to disable ReShade for videos that don't support static tone mapping.
+    - `preset_path`: The path to a ReShade preset file. If video metadata contains the max luminance property then the value is written to `[lilium__tone_mapping.fx] InputLuminanceMax` on launch.
+    - `settings_path`: The path to a ReShade settings file. A symlink to this file is created in mpv's directory on launch to allow ReShade to function. If the file cannot be symlinked it will be copied.
 - `default_glsl_shaders`: A list of GLSL shaders to forward to mpv. Follows the same format as mpv's `--glsl-shaders`.
-- `override_glsl_shaders`: Overrides `default_glsl_shaders` (see [Media Browser](#media-browser)).
+- `override_glsl_shaders`: Overrides `default_glsl_shaders`.
 
 #### Pixel cleaning
 
-Asus PG32UCDM only. Whether to run `let_walk_away` before signaling the monitor to begin pixel cleaning.
+Asus PG32UCDM only. Dictates whether to run `let_walk_away` before signaling the monitor to begin pixel cleaning.
 
 #### Taskbar
 
@@ -123,7 +121,7 @@ Settings used in conjunction with `ogos --taskbar`.
 - `hitbox_exit`: The state of the hitbox when the taskbar is visible. The hitbox is positioned to cover the majority of the screen save for an area occupied by the taskbar and any additional space afforded by `taskbar_offset_px`. Cursor collisions against the hitbox hide the taskbar and move the hitbox to the 'entry' position.
     - `taskbar_offset_px`: The number of pixels by which to offset the position of the hitbox, such that it creates a space between itself and the taskbar.
     - `jump_list_offset_px`: The number of pixels by which to offset the position of the hitbox, such that it creates a space between itself and any newly created jmplist.
-    - `cursor_snap_offset_pc`: A percentage of the height of the screen (top down), used to calculate the vertical position to which the cursor will snap when it collides with the hitbox.
+    - `cursor_snap_offset_pc`: The percentage of the height of the screen (top down), used to calculate the vertical position to which the cursor will snap when it collides with the hitbox.
 
 The hitbox is disabled if the foreground window is full screen.
 
@@ -134,18 +132,18 @@ Settings used in conjunction with `ogos --window-shift`. Elevated privileges are
 - `enable_immersive_dark_mode`: Enable dark mode for window title bars that otherwise don't support it.
 - `interval_s`: The shift interval in seconds.
 - `leeway_px`: The distance in pixels a window may stray from its 'anchor'. An anchor is the initial layout (position/dimensions) of a window. Moving or resizing a window resets this anchor to the new layout (provided an anchor constraint is not in effect).
-- `stride_px`: The number of pixels to shift a window along the axes of the screen. The direction chosen is random.
+- `stride_px`: The number of pixels to shift a window along the horizontal and vertical axes of the screen. The direction chosen along these axes is random.
 
 Shift behavior can be customized with constraints. When the properties of a window belonging to `<exe>` matches the criteria of a constraint, the constraint is applied to the window.
 
-- `constraints`
+- `constraints`:
     - `anchor`: Define a window's anchor rather than infer it from the window's initial layout.
-    - `attributes`: Manage window borders and round corners.
+    - `attributes`: Manage visibility of window borders and round corners.
     - `center`: Center a window on screen.
-    - `shift`: Disable shift.
-<br>
-- `criteria`
-    - `relation`
+    - `shift`: Disable window shift.
+    <br>
+- `criteria`:
+    - `relation`:
         - `this`: Match criteria against the currently enumerated window.
         - `top_level_*`: Search for a top level window belonging to `<exe>` and match against that instead. The constraint still applies to the currently enumerated window.
     - `against`: The window property against which to match `text`. Multiple strings may be provided; only one needs to match.
@@ -153,7 +151,7 @@ Shift behavior can be customized with constraints. When the properties of a wind
         - `equals`: `text` must equal the window property.
         - `contains`: `text` may be a substring of the window property.
 
-Shift is disabled if the foreground window is full screen or `left_button`/`left_ctrl` is held.
+Window shift is disabled if the foreground window is full screen or `left_button` or `left_ctrl` is held.
 
 # Config layout
 
@@ -169,7 +167,7 @@ Shift is disabled if the foreground window is full screen or `left_button`/`left
         gog: "<path>",
         // Optional
         mpv: "<path>",
-        // Optional, default: "./novideo_srgb/novideo_srgb.dll"
+        // Optional, default: ".\novideo_srgb\novideo_srgb.dll"
         novideo_srgb: "<path>",
         // Optional
         skif: "<path>",
@@ -221,8 +219,8 @@ Shift is disabled if the foreground window is full screen or `left_button`/`left
         ),
         // Optional
         qmk: (
-            layer: <uint>,
-            layout_path: "<path>"
+            layout_path: "<path>",
+            layer: <uint>
         )
     ),
     // Optional
@@ -256,7 +254,7 @@ Shift is disabled if the foreground window is full screen or `left_button`/`left
                     srgb,
                     bt_1886,
                     lstar,
-                    custom(value: <float>, black_output_offset: <float>, intent: <absolute, relative>)
+                    custom(value: <ufloat>, black_output_offset: <ufloat>, intent: <absolute, relative>)
                 >,
                 enable_optimization: <bool>
             )
@@ -285,8 +283,14 @@ Shift is disabled if the foreground window is full screen or `left_button`/`left
         window_inner_size: (<uint>, <uint>),
         grid_cell_width: <uint>,
         details_cell_width: <uint>,
+        // Optional, default: 3.0
+        scroll_multiplier: <ufloat>,
+        // Optional, default: 2, min: 2
+        lookahead: <uint>,
+        // Optional, default: 1, min: 1, max: lookahead - 1
+        proximity: <uint>,
         // Optional
-        scroll_multiplier: <float>
+        animation: (dur_s: <ufloat>, kind: <linear, quadratic, cubic, quartic, circular>)
     ),
     // Optional
     mpv: (
@@ -333,8 +337,9 @@ Shift is disabled if the foreground window is full screen or `left_button`/`left
         // Optional
         enable_immersive_dark_mode: <bool>,
         interval_s: <uint>,
+        // Min: 1
         leeway_px: <uint>,
-        // Optional, default: (1, 1)
+        // Optional, default: (1, 1), max: (leeway_px, leeway_px)
         stride_px: (<uint>, <uint>),
         constraints: {
             "<exe>": (
@@ -436,12 +441,12 @@ forward_button, xb2, fb
 
 # Macros
 
-`click: { <wheel_up, wheel_down>: <key, button>, dur: <uint> }`: Simulate key/button presses by moving the scroll wheel. `dur` is the number of milliseconds to wait before sending a 'key release' event.
+`click: { <wheel_up, wheel_down>: <key, button>, dur_ms: <uint> }`: Simulate key/button presses by moving the scroll wheel. `dur_ms` is the number of milliseconds to wait before sending a 'key release' event.
 
 # Tasks
 
-- `begin_pixel_cleaning`: Asus PG32UCDM only. Signal the monitor to begin pixel cleaning, executing any tasks enabled in `pixel_cleaning` beforehand. Tested on firmware MCM108 only.
+- `begin_pixel_cleaning`: Asus PG32UCDM only. Run any tasks enabled in `pixel_cleaning` before signaling the monitor to begin pixel cleaning. Tested on firmware MCM108.
 - `go_to_sleep`: Suspend (sleep) the system.
 - `let_walk_away`: Minimize all windows and enable the screensaver.
-- `print_window_info`: Log properties of the foreground window and its relations, as well as all windows that are eligible to shift (see [Window shift](#window-shift)).
+- `print_window_info`: Log properties of the foreground window and the window under the cursor, as well as all windows that are eligible to shift.
 - `toggle_display_mode`: Enable/disable HDR mode and set color bit depth, dither state, and novideo_srgb state.
