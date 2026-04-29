@@ -17,6 +17,7 @@ chrono = "0.4.44"
 clap = { workspace = true }
 concat-string = { workspace = true }
 const_format = { workspace = true }
+crossbeam = { workspace = true }
 discord-rich-presence = { workspace = true }
 hidapi = { version = "*", default-features = false, features = ["windows-native"] }
 log = { workspace = true }
@@ -41,7 +42,6 @@ simplelog = { workspace = true }
 strum = { workspace = true }
 subenum = { workspace = true }
 sysinfo = { workspace = true }
-tokio = { workspace = true }
 windows = { workspace = true }
 windows_061 = { workspace = true }
 

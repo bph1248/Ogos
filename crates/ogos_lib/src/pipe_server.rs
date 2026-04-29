@@ -3,6 +3,7 @@ use ogos_common::*;
 use ogos_core::*;
 use ogos_err::*;
 
+use crossbeam::channel as mpmc;
 use log::*;
 use serde::*;
 use std::{
@@ -11,7 +12,6 @@ use std::{
     thread::{self, *}
 };
 use strum::*;
-use tokio::sync::*;
 use windows::{
     core::*,
     Win32::{
@@ -136,10 +136,10 @@ fn begin(send_ready: mpsc::Sender<ReadyMsg>, window_foreground_sx: Option<mpsc::
 
         match msg {
             Msg::ActiveGame(_) => if let Some(sx) = window_foreground_sx.as_ref() {
-                let (ack_sx, ack_rx) = oneshot::channel::<()>();
+                let (ack_sx, ack_rx) = mpmc::bounded::<()>(1);
 
                 sx.send(window_foreground::Msg::Pipe((msg, ack_sx))).unwrap();
-                ack_rx.blocking_recv().unwrap();
+                ack_rx.recv().unwrap();
 
                 ack()?;
             },

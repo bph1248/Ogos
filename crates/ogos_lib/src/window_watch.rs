@@ -10,6 +10,7 @@ use ogos_core::*;
 use ogos_display::*;
 use ogos_err::*;
 
+use crossbeam::channel as mpmc;
 use log::*;
 use std::{
     cell::*,
@@ -19,7 +20,6 @@ use std::{
     thread::{self, *}
 };
 use strum::*;
-use tokio::sync::oneshot;
 use windows::Win32::{
     Foundation::*,
     System::{
@@ -250,14 +250,14 @@ fn init_hitbox(sxs: &Senders) -> Res1<HWND> { unsafe {
     let progman_class_name = PROGMAN_CLASS_NAME.to_win_str();
     let progman_hwnd = FindWindowW(Some(&*progman_class_name), None)?;
     let progman_tpids = progman_hwnd.get_thread_proc_ids()?;
-    let (sx, progman_hook) = oneshot::channel();
+    let (sx, progman_hook) = mpmc::bounded(1);
     sx.send(Ok(vec![SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(explorer_destroy_proc), progman_tpids.proc, progman_tpids.thread, WINEVENT_OUTOFCONTEXT).win32_var_ok()?])).unwrap();
 
     // Taskbar
     let taskbar_class_name = TASKBAR_CLASS_NAME.to_win_str();
     let taskbar_hwnd = FindWindowW(Some(&*taskbar_class_name), None)?;
     let taskbar_tpids = taskbar_hwnd.get_thread_proc_ids()?;
-    let (sx, taskbar_hooks) = oneshot::channel();
+    let (sx, taskbar_hooks) = mpmc::bounded(1);
     sx.send(Ok(vec![
         SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(explorer_destroy_proc), taskbar_tpids.proc, taskbar_tpids.thread, WINEVENT_OUTOFCONTEXT).win32_var_ok()?,
         SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, None, Some(taskbar_location_change_proc), taskbar_tpids.proc, taskbar_tpids.thread, WINEVENT_OUTOFCONTEXT).win32_var_ok()?

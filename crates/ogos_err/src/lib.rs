@@ -23,7 +23,6 @@ use std::{
 };
 use strum::*;
 use thiserror::*;
-use tokio::sync::oneshot;
 use windows::{
     core::*,
     Win32::{
@@ -151,7 +150,7 @@ pub enum ErrVar {
     LogSetLogger(#[from] log::SetLoggerError),
     NvApi(#[from] nvapi::Status),
     Recv(#[from] sync::mpsc::RecvError),
-    RecvOneshot(#[from] oneshot::error::RecvError),
+    RecvCrossbeam(#[from] crossbeam::channel::RecvError),
     RecvTimeout(#[from] sync::mpsc::RecvTimeoutError),
     Resize(#[from] resize::Error),
     Ron(#[from] ron::de::SpannedError),
@@ -252,7 +251,7 @@ impl Display for ErrVar {
             LogSetLogger(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             NvApi(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Recv(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
-            RecvOneshot(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
+            RecvCrossbeam(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             RecvTimeout(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Resize(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             Ron(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),

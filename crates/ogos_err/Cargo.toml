@@ -12,6 +12,7 @@ crate-type = ["lib"]
 anyhow = { version = "1.0.92", default-features = false }
 bincode = { workspace = true }
 clap = { workspace = true }
+crossbeam = { workspace = true }
 discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
 image = { workspace = true }
@@ -30,7 +31,6 @@ serde_json = { workspace = true }
 simplelog = { workspace = true }
 strum = { workspace = true }
 thiserror = "2.0.17"
-tokio = { workspace = true }
 which = { workspace = true }
 widestring = { workspace = true }
 windows = { workspace = true }

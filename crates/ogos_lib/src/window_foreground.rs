@@ -12,6 +12,7 @@ use ogos_mki as mki;
 use mki::*;
 
 use bitflags::bitflags;
+use crossbeam::channel as mpmc;
 use log::*;
 use std::{
     collections::*,
@@ -24,7 +25,6 @@ use std::{
     time::*
 };
 use strum::*;
-use tokio::sync::oneshot;
 use windows::Win32::{
     Foundation::*,
     UI::{
@@ -91,8 +91,8 @@ pub(crate) struct HitboxPos {
     pub(crate) exit: POINT
 }
 
-pub(crate) type WinEventHooksRx = oneshot::Receiver<Res<Vec<HWINEVENTHOOK>>>;
-pub(crate) type WinEventHooksSx = oneshot::Sender<Res<Vec<HWINEVENTHOOK>>>;
+pub(crate) type WinEventHooksRx = mpmc::Receiver<Res<Vec<HWINEVENTHOOK>>>;
+pub(crate) type WinEventHooksSx = mpmc::Sender<Res<Vec<HWINEVENTHOOK>>>;
 
 #[derive(Default)]
 pub(crate) struct Senders {
@@ -208,7 +208,7 @@ pub(crate) enum HitboxState {
 #[derive(Display, IntoStaticStr)]
 pub(crate) enum Msg {
     Broadcast(BroadcastMsg),
-    Pipe((pipe_server::Msg, oneshot::Sender<()>)),
+    Pipe((pipe_server::Msg, mpmc::Sender<()>)),
     Taskbar(Box<Taskbar>),
     WinEventHookAllForeground { hwnd: usize },
     WinEventHookAllOtherForegroundDestroy { hook: usize, hwnd: usize },
@@ -242,7 +242,7 @@ fn leak_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> ResV
 } }
 
 fn request_win_event_hooks(hook_mgr_tid: u32, request: WinEventHookRequest) -> windows::core::Result<WinEventHooksRx> { unsafe {
-    let (sx, rx) = oneshot::channel::<Res<Vec<HWINEVENTHOOK>>>();
+    let (sx, rx) = mpmc::bounded::<Res<Vec<HWINEVENTHOOK>>>(1);
     let cargo = (Some(sx), request);
     let cargo = Box::into_raw(Box::new(cargo));
 
@@ -401,7 +401,7 @@ fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWND) -> R
     match hwnd {
         _ if hwnd == tb.progman_hwnd => {
             if let Some(rx) = tb.progman_hook.take() {
-                let request = WinEventUnhookRequest { hooks: rx.blocking_recv()?? };
+                let request = WinEventUnhookRequest { hooks: rx.recv()?? };
                 request_win_event_unhooks(ts.hook_mgr_tid, request)?;
             }
 
@@ -430,7 +430,7 @@ fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWND) -> R
         },
         _ if hwnd == tb.taskbar_hwnd => {
             if let Some(rx) = tb.taskbar_hooks.take() {
-                let request = WinEventUnhookRequest { hooks: rx.blocking_recv()?? };
+                let request = WinEventUnhookRequest { hooks: rx.recv()?? };
                 request_win_event_unhooks(ts.hook_mgr_tid, request)?;
             }
 
@@ -647,7 +647,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
                 // Shell experience host / jump list
                 let mut shell_experience_state = tb.shell_experience_state.take_if(|(shell_experience_hwnd, _)| *shell_experience_hwnd == hwnd);
                 if let Some((_, HookState::Pending(rx))) = shell_experience_state {
-                    _ = rx.blocking_recv()??;
+                    _ = rx.recv()??;
                     shell_experience_state = Some((hwnd, HookState::Ready()));
                 }
                 if let Some((_, HookState::Ready())) = shell_experience_state {
@@ -720,7 +720,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
                     tb.foreground_hwnd = hwnd;
 
                     if let Some(rx) = tb.loc_change_hook.take() {
-                        let request = WinEventUnhookRequest { hooks: rx.blocking_recv()?? };
+                        let request = WinEventUnhookRequest { hooks: rx.recv()?? };
                         request_win_event_unhooks(ts.hook_mgr_tid, request)?;
                     }
                     let request = WinEventHookRequest {

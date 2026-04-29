@@ -8,6 +8,7 @@ use ogos_video as video;
 
 use concat_string::*;
 use crossbeam::sync::*;
+use crossbeam::channel as mpmc;
 use discord_rich_presence::*;
 use eframe::{
     egui,
@@ -34,7 +35,6 @@ use std::{
     time::*
 };
 use tap::TapOptional;
-use tokio::sync::oneshot::{self, error::*};
 use range_compare::*;
 use windows::{
     core::PWSTR,
@@ -99,8 +99,8 @@ struct FerryImageInfo {
     image_file_name: Arc<str>,
     expected_metadata: Option<Arc<Metadata>>,
     grid_entry_i: usize,
-    grid_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    details_image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
+    grid_image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>,
+    details_image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>,
     wait_ready: Option<WaitGroup>,
     poll_ready: Option<Arc<()>>
 }
@@ -160,7 +160,7 @@ struct MetadataInfo {
 
 struct QueueImageInfo {
     src_path: PathBuf,
-    image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>,
+    image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>,
     resize: Option<ResizeImage>
 }
 
@@ -247,7 +247,7 @@ enum BaseImageKind {
 enum ImageState {
     #[default]
     None,
-    Pending(oneshot::Receiver<Result<(egui::ColorImage, Orientation), ()>>),
+    Pending(mpmc::Receiver<Result<(egui::ColorImage, Orientation), ()>>),
     Ready((egui::TextureHandle, Orientation)),
     Failed
 }
@@ -311,8 +311,8 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str
         ImageState::Pending(rx) => {
             let recvd = match rx.try_recv() {
                 Ok(res) => res,
-                Err(TryRecvError::Empty) => return alloc_hover_response(ui),
-                Err(TryRecvError::Closed) => Err(())
+                Err(mpmc::TryRecvError::Empty) => return alloc_hover_response(ui),
+                Err(mpmc::TryRecvError::Disconnected) => Err(())
             };
 
             match recvd {
@@ -396,7 +396,7 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
     })
 }
 
-fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> Res1<()> {
+fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> Res1<()> {
     fn inner(src_path: &Path, cell_size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>, AspectRatioV)> {
         use rgb::FromSlice;
 
@@ -460,7 +460,7 @@ fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, i
     Ok(())
 }
 
-fn ferry_cached_image(path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> ResVar<()> {
+fn ferry_cached_image(path: PathBuf, image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> ResVar<()> {
     fn inner(path: PathBuf) -> ResVar<(egui::ColorImage, AspectRatioV)> {
         let image = load_rgba_image(path.as_path())?;
         let (width, height) = image.dimensions();
@@ -484,7 +484,7 @@ fn ferry_cached_image(path: PathBuf, image_state_sx: oneshot::Sender<Result<(egu
     Ok(())
 }
 
-fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, dst_path: PathBuf, dst_size: egui::Vec2, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
+fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, dst_path: PathBuf, dst_size: egui::Vec2, image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
     queue_sx.send(
         QueueImageInfo {
             src_path,
@@ -498,7 +498,7 @@ fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: Path
     .unwrap();
 }
 
-fn queue_ferry_cached_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: oneshot::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
+fn queue_ferry_cached_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
     queue_sx.send(
         QueueImageInfo {
             src_path,
@@ -1194,10 +1194,10 @@ impl<'a> MediaBrowser<'a> {
             self.thread_pool.spawn_fifo(move || {
                 for image_states in rx.into_iter() {
                     if let ImageState::Pending(rx) = image_states.grid {
-                        _ = rx.blocking_recv();
+                        _ = rx.recv();
                     }
                     if let ImageState::Pending(rx) = image_states.details {
-                        _ = rx.blocking_recv();
+                        _ = rx.recv();
                     }
                 }
             });
@@ -1209,8 +1209,8 @@ impl<'a> MediaBrowser<'a> {
                 let grid_entry_info = &self.grid_entries[grid_entry_i];
 
                 if let Some(image_file_name_i) = grid_entry_info.image_file_name_i {
-                    let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-                    let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                    let (grid_image_state_sx, grid_image_state_rx) = mpmc::bounded(1);
+                    let (details_image_state_sx, details_image_state_rx) = mpmc::bounded(1);
                     let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
 
                     if image_states.is_none() {
@@ -1329,8 +1329,8 @@ impl<'a> MediaBrowser<'a> {
                 if let Some(image_file_name_i) = grid_entry_info.image_file_name_i &&
                     grid_view_i < self.residence.end
                 {
-                    let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-                    let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+                    let (grid_image_state_sx, grid_image_state_rx) = mpmc::bounded(1);
+                    let (details_image_state_sx, details_image_state_rx) = mpmc::bounded(1);
                     let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
 
                     if image_states.is_none() {
@@ -1796,8 +1796,8 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf) -> Res<()> {
-        let (grid_image_state_sx, grid_image_state_rx) = oneshot::channel();
-        let (details_image_state_sx, details_image_state_rx) = oneshot::channel();
+        let (grid_image_state_sx, grid_image_state_rx) = mpmc::bounded(1);
+        let (details_image_state_sx, details_image_state_rx) = mpmc::bounded(1);
 
         let image_file_name_i = self.grid_entries[self.grid_entry_i].image_file_name_i;
         let grid_entry_stem = self.grid_entries[self.grid_entry_i].stem.as_ref();
