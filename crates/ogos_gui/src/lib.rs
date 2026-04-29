@@ -82,6 +82,12 @@ struct CacheEntryInfo {
     tags: Vec<usize>
 }
 
+#[derive(Default)]
+struct DetailsButtonsState {
+    hovered_i: Option<usize>,
+    push_dir: Option<PathBuf>
+}
+
 #[derive(Clone)]
 struct DirEntryInfo {
     path: PathBuf,
@@ -109,7 +115,8 @@ struct FerryImagesInfo<'a> {
     force_resize_grid_images: bool,
     details_cell_size: egui::Vec2,
     force_resize_details_images: bool,
-    ferry_image_infos: Vec<FerryImageInfo>
+    ferry_image_infos: Vec<FerryImageInfo>,
+    error_sx: mpsc::Sender<String>
 }
 
 struct GridEntryInfo {
@@ -224,7 +231,7 @@ struct ResizeImage {
 }
 
 #[derive(Default)]
-struct TagWinButtonMenuDeferred {
+struct TagWinButtonMenuState {
     is_open: bool,
     tag_op: Option<(Rc<str>, TagOp)>,
     stream: Option<Stream>
@@ -513,12 +520,15 @@ fn ferry_images(info: FerryImagesInfo) {
         force_resize_grid_images,
         details_cell_size,
         force_resize_details_images,
-        ferry_image_infos
+        ferry_image_infos,
+        error_sx
     } = info;
 
-    let handle_err = |err| {
-        error!("{}: failed to ferry image: {}", module_path!(), err);
-    };
+    fn handle_err(error_sx: mpsc::Sender<String>, err: ErrLoc) {
+        let msg = format!("{}: failed to ferry image: {}", module_path!(), err);
+
+        error_sx.send(msg).unwrap();
+    }
 
     let (queue_sx, queue_rx) = mpsc::channel();
     for info in ferry_image_infos {
@@ -536,6 +546,7 @@ fn ferry_images(info: FerryImagesInfo) {
         let metadata_sx = metadata_sx.clone();
         let queue_sx = queue_sx.clone();
         let base_image_kind = base_image_kind.clone();
+        let error_sx = error_sx.clone();
 
         thread_pool.spawn_fifo(move || {
             (|| -> Res<()> {
@@ -583,7 +594,7 @@ fn ferry_images(info: FerryImagesInfo) {
 
                 Ok(())
             })()
-            .unwrap_or_else(handle_err)
+            .unwrap_or_else(|err| handle_err(error_sx, err));
         });
     }
 
@@ -596,6 +607,8 @@ fn ferry_images(info: FerryImagesInfo) {
                 image_state_sx,
                 resize
             } = info;
+
+            let error_sx = error_sx.clone();
 
             thread_pool.spawn_fifo(move || {
                 (|| -> Res<()> {
@@ -610,7 +623,7 @@ fn ferry_images(info: FerryImagesInfo) {
 
                     Ok(())
                 })()
-                .unwrap_or_else(handle_err);
+                .unwrap_or_else(|err| handle_err(error_sx, err));
             });
         }
     });
@@ -858,7 +871,7 @@ struct MediaBrowser<'a> {
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
     active_tag: Option<Rc<str>>,
     open_tag_win: bool,
-    tag_win_button_menu: TagWinButtonMenuDeferred,
+    tag_win_button_menu_state: TagWinButtonMenuState,
     tag_win_rename_edit: String,
     tag_win_stamp: Option<Instant>,
     tag_win_cursor_checked: bool,
@@ -1090,7 +1103,7 @@ impl<'a> MediaBrowser<'a> {
             tags,
             active_tag: default!(),
             open_tag_win: default!(),
-            tag_win_button_menu: default!(),
+            tag_win_button_menu_state: default!(),
             tag_win_rename_edit: default!(),
             tag_win_stamp: default!(),
             tag_win_cursor_checked: default!(),
@@ -1232,7 +1245,8 @@ impl<'a> MediaBrowser<'a> {
             force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
             details_cell_size: self.details_cell_size,
             force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
-            ferry_image_infos
+            ferry_image_infos,
+            error_sx: self.error_sx.clone()
         };
         ferry_images(ferry_images_info);
     }
@@ -1349,7 +1363,8 @@ impl<'a> MediaBrowser<'a> {
             force_resize_grid_images: self.cache.grid_cell_size != self.grid_cell_size,
             details_cell_size: self.details_cell_size,
             force_resize_details_images: self.cache.details_cell_size != self.details_cell_size,
-            ferry_image_infos
+            ferry_image_infos,
+            error_sx: self.error_sx.clone()
         };
         ferry_images(ferry_images_info);
 
@@ -1437,7 +1452,9 @@ impl<'a> MediaBrowser<'a> {
     fn central_panel(&mut self, ui: &mut egui::Ui) {
         match self.view_kind {
             ViewKind::Grid => {
-                if ui.ctx().input(|state| state.pointer.button_released(egui::PointerButton::Extra1)) && self.active_tag.is_some() {
+                if ui.ctx().input(|state| state.pointer.button_released(egui::PointerButton::Extra1) || state.key_pressed(egui::Key::Escape)) &&
+                    self.active_tag.is_some()
+                {
                     self.reset_grid_view(ui.ctx());
                 }
 
@@ -1481,7 +1498,7 @@ impl<'a> MediaBrowser<'a> {
 
                         self.tag_win_buttons(ui);
 
-                        if let Some((tag, op)) = self.tag_win_button_menu.tag_op.as_ref() {
+                        if let Some((tag, op)) = self.tag_win_button_menu_state.tag_op.as_ref() {
                             let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
 
                             match op {
@@ -1511,7 +1528,7 @@ impl<'a> MediaBrowser<'a> {
                 })
         });
 
-        if !self.tag_win_button_menu.is_open {
+        if !self.tag_win_button_menu_state.is_open {
             let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
 
             match hover_pos {
@@ -1568,7 +1585,7 @@ impl<'a> MediaBrowser<'a> {
             all_button_resp.highlight();
         }
 
-        self.tag_win_button_menu = self.tags.iter().fold(TagWinButtonMenuDeferred::default(), |mut deferred, (tag, set)| {
+        self.tag_win_button_menu_state = self.tags.iter().fold(TagWinButtonMenuState::default(), |mut state, (tag, set)| {
             if !set.is_empty() {
                 let tag_button_resp = ui.button(tag.as_ref());
 
@@ -1584,7 +1601,7 @@ impl<'a> MediaBrowser<'a> {
 
                         if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
                             if !self.tag_win_rename_edit.is_empty() {
-                                deferred.tag_op = Some((tag.clone(), TagOp::Rename));
+                                state.tag_op = Some((tag.clone(), TagOp::Rename));
 
                                 ui.close();
                             } else {
@@ -1594,19 +1611,19 @@ impl<'a> MediaBrowser<'a> {
 
                         let tag_remove_button_resp = ui.button("Remove");
                         if tag_remove_button_resp.clicked() {
-                            deferred.tag_op = Some((tag.clone(), TagOp::Remove));
+                            state.tag_op = Some((tag.clone(), TagOp::Remove));
 
                             ui.close();
                         }
                     });
 
-                deferred.is_open = tag_button_menu.is_some();
+                state.is_open = tag_button_menu.is_some();
                 if let Some(tag_button_menu) = tag_button_menu && tag_button_menu.response.should_close() {
                     self.tag_win_stamp = Some(now!());
                 }
 
                 if tag_button_resp.clicked() && self.active_tag.as_ref().is_none_or(|active_tag| active_tag != tag) {
-                    deferred.stream = Some(Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view));
+                    state.stream = Some(Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view));
                     populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
                     self.animate = false;
@@ -1618,10 +1635,10 @@ impl<'a> MediaBrowser<'a> {
                 }
             }
 
-            deferred
+            state
         });
 
-        if let Some(stream) = self.tag_win_button_menu.stream.take() {
+        if let Some(stream) = self.tag_win_button_menu_state.stream.take() {
             let visible_cell_count = self.reset_residence(ui.ctx());
             let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
             self.stream(ui.ctx(), &stream, true);
@@ -1862,7 +1879,8 @@ impl<'a> MediaBrowser<'a> {
                     wait_ready: None,
                     poll_ready: None
                 }
-            ]
+            ],
+            error_sx: self.error_sx.clone()
         };
         ferry_images(ferry_images_info);
 
@@ -2069,23 +2087,17 @@ impl<'a> MediaBrowser<'a> {
                         .map(|info| ui.button(info.stem.as_str()))
                 );
 
-                #[derive(Default)]
-                struct Deferred {
-                    hovered_i: Option<usize>,
-                    push_dir: Option<PathBuf>
-                }
-
-                let Deferred { hovered_i, push_dir } = self.details_button_resps.iter()
+                let DetailsButtonsState { hovered_i, push_dir } = self.details_button_resps.iter()
                     .zip(&self.details_dir_entries)
                     .enumerate()
-                    .fold(Deferred::default(), |mut deferred, (i, (resp, dir_entry_info))| {
+                    .fold(DetailsButtonsState::default(), |mut state, (i, (resp, dir_entry_info))| {
                         if resp.hovered() {
-                            deferred.hovered_i = Some(i);
+                            state.hovered_i = Some(i);
                         }
 
                         if resp.clicked() {
                             match dir_entry_info.file_kind {
-                                FileKind::Dir => deferred.push_dir = Some(dir_entry_info.path.clone()),
+                                FileKind::Dir => state.push_dir = Some(dir_entry_info.path.clone()),
                                 _ => {
                                     let discord_info = self.discord_enabled.then_some(self.make_discord_info(dir_entry_info));
 
@@ -2102,7 +2114,7 @@ impl<'a> MediaBrowser<'a> {
                             }
                         }
 
-                        deferred
+                        state
                     });
 
                 if let Some(i) = hovered_i { self.details_hovered_dir_entry_i = i }
