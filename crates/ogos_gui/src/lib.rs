@@ -50,9 +50,10 @@ use windows::{
 
 const ASPECT_RATIO_3_2: f32 = 1.5;
 const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color32::from_rgb(250, 246, 235) };
-const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
+const DEFAULT_FRAME_INNER_MARGIN: f32 = 8.0;
 const DETAILS_ENTRY_COUNT: usize = 64;
-const FRAME_MARGIN: f32 = 15.0;
+const FRAME_INNER_MARGIN: f32 = 15.0;
+const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const SEPARATOR_WIDTH: f32 = 2.0;
 
@@ -666,7 +667,7 @@ fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
     let path_str = PWSTR(buffer.as_mut_ptr());
     let mut path_len = buffer.len() as u32;
 
-    AssocQueryStringW(ASSOCF_INIT_DEFAULTTOSTAR, ASSOCSTR_EXECUTABLE, *ext, None, Some(path_str), &mut path_len,).ok()?;
+    AssocQueryStringW(ASSOCF_INIT_DEFAULTTOSTAR, ASSOCSTR_EXECUTABLE, *ext, None, Some(path_str), &mut path_len).ok()?;
 
     let path_str = String::from_utf16(&buffer[..path_len as usize - 1])?;
 
@@ -788,32 +789,26 @@ impl eframe::App for Info {
 
         if !self.resized_viewport {
             let screen_size = ui.input(|i| i.viewport().monitor_size).unwrap();
-            let init_win_size = screen_size.div(2.0).yx();
-            ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(init_win_size));
+            let win_size = screen_size.div(2.0).yx();
 
             let content_size = egui::CentralPanel::default()
                 .show_inside(ui, |ui: &mut egui::Ui| {
-                    ui.set_max_width(init_win_size.x);
+                    ui.set_max_width(win_size.x);
 
                     Self::central_panel(self, ui)
                 })
                 .inner;
 
-            let win_margins = ui.style().spacing.window_margin.sum();
-            let final_win_size = (content_size + win_margins + egui::vec2(5.0, 5.0))
-                .min(init_win_size);
-
+            let win_size = win_size.min(content_size) + egui::vec2(0.0, 2.0 * DEFAULT_FRAME_INNER_MARGIN);
             let win_pos = egui::pos2(
-                (screen_size.x - final_win_size.x) / 2.0,
-                (screen_size.y - final_win_size.y) / 2.0
+                (screen_size.x - win_size.x) / 2.0,
+                (screen_size.y - win_size.y).div(2.0).max(0.0)
             );
 
-            ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(final_win_size));
+            ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(win_size));
             ui.send_viewport_cmd(egui::ViewportCommand::OuterPosition(win_pos));
 
             self.resized_viewport = true;
-
-            return
         }
 
         egui::CentralPanel::default()
@@ -1065,7 +1060,7 @@ impl<'a> MediaBrowser<'a> {
         drop(config);
 
         let frame = egui::Frame::central_panel(&ctx.global_style()).inner_margin(
-            egui::Margin::symmetric(FRAME_MARGIN as i8, FRAME_MARGIN as i8)
+            egui::Margin::symmetric(FRAME_INNER_MARGIN as i8, FRAME_INNER_MARGIN as i8)
         );
 
         let (error_sx, error_rx) = mpsc::channel();
@@ -1481,7 +1476,7 @@ impl<'a> MediaBrowser<'a> {
         let max_rect = ui.max_rect();
         let tag_win_rect = egui::Rect::from_min_size(
             max_rect.min,
-            [250.0, (max_rect.height() - FRAME_MARGIN).max(0.0)].into()
+            [250.0, (max_rect.height() - FRAME_INNER_MARGIN).max(0.0)].into()
         );
 
         let tag_win = self.open_tag_win.and_then(|| {
@@ -2002,7 +1997,7 @@ impl<'a> MediaBrowser<'a> {
             .unzip();
 
         // Subdivisions
-        let middle_subd_width = 2.0 * FRAME_MARGIN + SEPARATOR_WIDTH;
+        let middle_subd_width = 2.0 * FRAME_INNER_MARGIN + SEPARATOR_WIDTH;
         let side_subd_width = ((ui.available_width() - middle_subd_width) / 2.0).floor();
         let subd_height = ui.available_height();
 
