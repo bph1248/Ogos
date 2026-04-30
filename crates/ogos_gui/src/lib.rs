@@ -1527,6 +1527,7 @@ impl<'a> MediaBrowser<'a> {
                                     self.tags.remove(tag);
 
                                     if tag_is_active {
+                                        self.reset_grid_view(ui);
                                         self.active_tag = None;
                                     }
                                 }
