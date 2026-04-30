@@ -1612,9 +1612,12 @@ impl<'a> MediaBrowser<'a> {
                         }
                     });
 
-                state.is_open = tag_button_menu.is_some();
-                if let Some(tag_button_menu) = tag_button_menu && tag_button_menu.response.should_close() {
-                    self.tag_win_stamp = Some(now!());
+                if let Some(tag_button_menu) = tag_button_menu {
+                    state.is_open = true;
+
+                    if tag_button_menu.response.should_close() {
+                        self.tag_win_stamp = Some(now!());
+                    }
                 }
 
                 if tag_button_resp.clicked() && self.active_tag.as_ref().is_none_or(|active_tag| active_tag != tag) {
