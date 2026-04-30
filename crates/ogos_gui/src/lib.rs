@@ -120,6 +120,11 @@ struct FerryImagesInfo<'a> {
     error_sx: mpsc::Sender<String>
 }
 
+#[derive(Default)]
+struct GridCellTagButtonsState {
+    reset_grid_view: bool
+}
+
 struct GridEntryInfo {
     path: PathBuf,
     stem: Rc<str>,
@@ -163,6 +168,11 @@ struct QueueImageInfo {
     src_path: PathBuf,
     image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>,
     resize: Option<ResizeImage>
+}
+
+struct ResetResidence {
+    visible_cell_count: usize,
+    row_cell_count: usize
 }
 
 #[derive(Default)]
@@ -1139,30 +1149,35 @@ impl<'a> MediaBrowser<'a> {
         })
     }
 
-    fn reset_grid_view(&mut self, ctx: &egui::Context) {
+    fn reset_grid_view(&mut self, ui: &egui::Ui) {
         self.grid_view.clear();
         self.grid_view.extend(0..self.grid_entries.len());
         self.sort_grid_view();
 
-        let visible_cell_count = self.reset_residence(ctx);
+        let visible_cell_count = self.reset_residence(ui).visible_cell_count;
         let stream = Stream::default().with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
-        self.stream(ctx, &stream, true);
+        self.stream(ui, &stream, true);
 
         self.animate = false;
         self.active_tag = None;
     }
 
-    fn reset_residence(&mut self, ctx: &egui::Context) -> usize {
-        let available_rect = ctx.content_rect();
-        let available_row_cell_count = (available_rect.width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
-            // content_rect.width() - (self.grid_cell_size.x * avail_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
-        let available_col_cell_count = (available_rect.height()).div(self.grid_cell_space.y).ceil() as usize;
-        let visible_cell_count = (available_row_cell_count * available_col_cell_count).clamp(1, self.grid_view.len());
-        let resident_cell_count = (visible_cell_count + self.lookahead * available_row_cell_count).min(self.grid_view.len());
+    fn reset_residence(&mut self, ui: &egui::Ui) -> ResetResidence {
+        let max_cell_count = self.grid_view.len();
 
+        let available_row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
+            // ui.available_width() - (self.grid_cell_size.x * avail_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
+        let available_col_cell_count = ui.available_height().div(self.grid_cell_space.y).ceil() as usize;
+        let visible_cell_count = (available_row_cell_count * available_col_cell_count).clamp(1, max_cell_count);
+        let row_cell_count = available_row_cell_count.clamp(1, max_cell_count);
+
+        let resident_cell_count = (visible_cell_count + self.lookahead * available_row_cell_count).min(max_cell_count);
         self.residence = 0..resident_cell_count;
 
-        visible_cell_count
+        ResetResidence {
+            visible_cell_count,
+            row_cell_count
+        }
     }
 
     fn sort_grid_view(&mut self) {
@@ -1301,8 +1316,8 @@ impl<'a> MediaBrowser<'a> {
     }
 
     #[hotpath::measure]
-    fn first_frame(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let visible_cell_count = self.reset_residence(ctx);
+    fn first_frame(&mut self, ui: &egui::Ui, frame: &mut eframe::Frame) {
+        let visible_cell_count = self.reset_residence(ui).visible_cell_count;
 
         let wait_group = WaitGroup::new();
         let ferry_image_infos = self.grid_view.iter().enumerate()
@@ -1349,7 +1364,7 @@ impl<'a> MediaBrowser<'a> {
             .collect::<Vec<_>>();
 
         let ferry_images_info = FerryImagesInfo {
-            ctx,
+            ctx: ui.ctx(),
             thread_pool: &self.thread_pool,
             metadata_sx: &self.metadata_sx,
             image_dirs: self.image_dirs,
@@ -1450,7 +1465,7 @@ impl<'a> MediaBrowser<'a> {
                 if ui.ctx().input(|state| state.pointer.button_released(egui::PointerButton::Extra1) || state.key_pressed(egui::Key::Escape)) &&
                     self.active_tag.is_some()
                 {
-                    self.reset_grid_view(ui.ctx());
+                    self.reset_grid_view(ui);
                 }
 
                 self.tag_win(ui);
@@ -1574,7 +1589,7 @@ impl<'a> MediaBrowser<'a> {
         let all_button_resp = ui.button("All");
 
         if all_button_resp.clicked() && self.active_tag.is_some() {
-            self.reset_grid_view(ui.ctx());
+            self.reset_grid_view(ui);
         }
         if self.active_tag.is_none() {
             all_button_resp.highlight();
@@ -1637,7 +1652,7 @@ impl<'a> MediaBrowser<'a> {
         });
 
         if let Some(stream) = self.tag_win_button_menu_state.stream.take() {
-            let visible_cell_count = self.reset_residence(ui.ctx());
+            let visible_cell_count = self.reset_residence(ui).visible_cell_count;
             let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
             self.stream(ui.ctx(), &stream, true);
         }
@@ -1647,9 +1662,25 @@ impl<'a> MediaBrowser<'a> {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
+            let row_cell_count = if self.grid_view_entry_removed {
+                let stream = Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view);
+                let set = self.tags.get(self.active_tag.as_deref().unwrap()).unwrap();
+                populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
+
+                let ResetResidence { visible_cell_count, row_cell_count } = self.reset_residence(ui);
+                let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
+                self.stream(ui.ctx(), &stream, true);
+
+                self.grid_view_entry_removed = false;
+
+                row_cell_count
+            } else {
+                let max_cell_count = self.grid_view.len();
+                let row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
+
+                row_cell_count.clamp(1, max_cell_count)
+            };
             let max_cell_count = self.grid_view.len();
-            let row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
-            let row_cell_count = row_cell_count.clamp(1, max_cell_count);
             let max_row_count = max_cell_count.div_ceil(row_cell_count);
 
             self.grid_scroll_offset = egui::ScrollArea::new([false, true])
@@ -1683,7 +1714,7 @@ impl<'a> MediaBrowser<'a> {
         });
     }
 
-    fn grid_table(&mut self, ui: &mut egui::Ui, row_start: usize, mut max_cell_count: usize, row_count: usize, row_cell_count: usize) {
+    fn grid_table(&mut self, ui: &mut egui::Ui, row_start: usize, max_cell_count: usize, row_count: usize, row_cell_count: usize) {
         egui_extras::TableBuilder::new(ui)
             .striped(false)
             .vscroll(false)
@@ -1700,14 +1731,7 @@ impl<'a> MediaBrowser<'a> {
                             });
                         });
 
-                        // Cell entry might have its tag removed while view is active and table is still being updated
-                        match self.grid_view_entry_removed {
-                            true => {
-                                max_cell_count -= 1;
-                                self.grid_view_entry_removed = false;
-                            },
-                            false => self.grid_view_i += 1
-                        }
+                        self.grid_view_i += 1
                     }
                 });
             });
@@ -1965,32 +1989,36 @@ impl<'a> MediaBrowser<'a> {
             ui.separator();
 
             // Select from existing tags
-            for (tag, set) in self.tags.iter_mut() { if !set.is_empty() {
-                let tag_button_resp = ui.button(tag.as_ref());
+            let grid_cell_tag_buttons_state = self.tags.iter_mut().fold(GridCellTagButtonsState::default(), |mut state, (tag, set)| {
+                if !set.is_empty() {
+                    let tag_button_resp = ui.button(tag.as_ref());
 
-                match (tag_button_resp.clicked(), set.contains(&self.grid_entry_i)) {
-                    (_tag_button_clicked @ true, _entry_is_tagged @ true) => {
-                        set.remove(&self.grid_entry_i);
+                    match (tag_button_resp.clicked(), set.contains(&self.grid_entry_i)) {
+                        (_tag_button_clicked @ true, _entry_is_tagged @ true) => {
+                            set.remove(&self.grid_entry_i);
 
-                        let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
-                        if tag_is_active {
-                            match set.is_empty() {
-                                true => self.active_tag = None,
-                                false => {
-                                    populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
-
-                                    self.grid_view_entry_removed = true;
+                            let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
+                            if tag_is_active {
+                                match set.is_empty() {
+                                    true => state.reset_grid_view = true,
+                                    false => self.grid_view_entry_removed = true
                                 }
-                            }
 
-                            ui.close();
-                        }
-                    },
-                    (_tag_button_clicked @ true, _entry_is_tagged @ false) => _ = set.insert(self.grid_entry_i),
-                    (_tag_button_clicked @ false, _entry_is_tagged @ true) => _ = tag_button_resp.highlight(),
-                    _ => ()
+                                ui.close();
+                            }
+                        },
+                        (_tag_button_clicked @ true, _entry_is_tagged @ false) => _ = set.insert(self.grid_entry_i),
+                        (_tag_button_clicked @ false, _entry_is_tagged @ true) => _ = tag_button_resp.highlight(),
+                        _ => ()
+                    }
                 }
-            } }
+
+                state
+            });
+
+            if grid_cell_tag_buttons_state.reset_grid_view {
+                self.reset_grid_view(ui);
+            }
         })
     }
 
