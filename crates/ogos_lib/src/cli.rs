@@ -25,7 +25,7 @@ const WINDOW_SHIFT: &str = "window-shift";
 const ALIAS_CLAMP: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CLAMP);
 const ALIAS_CURSOR: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CURSOR);
 const ALIAS_SK: &str = formatcp!("{a}: --{b}", a = ALIAS, b = SK);
-const CONFLICTS_WITH_LONG_LIVED: &str = formatcp!("{a}: <--{b}, --{c}, --{d}>", a = CONFLICTS_WITH, b = BINDS, c = TASKBAR, d = WINDOW_SHIFT);
+const CONFLICTS_WITH_LONG_LIVED: &str = formatcp!("{a}: --<{b}, {c}, {d}>", a = CONFLICTS_WITH, b = BINDS, c = TASKBAR, d = WINDOW_SHIFT);
 const POSSIBLE_VALUES_CLAMP: &str = "possible values: <on, off>";
 const REQUIRES_GAME: &str = formatcp!("requires: --{a}", a = GAME);
 
@@ -56,8 +56,8 @@ pub(crate) struct Cli {
     pub(crate) help: bool,
 
     #[arg(help =
-        "Parse an arg file for additional arguments or launch a video file with mpv.\n\
-        Arg files use the .ogos extension and list arguments one per line.\n\
+        "Parse an arg file for additional command line arguments or launch a video file with mpv.\n\
+        Arg files use the .ogos extension and follow Python's fromfile format.\n\
         Video files are inferred from their extension. On launch, set display mode, default audio endpoint sample rate, and tone mapping parameters to match video metadata."
     )]
     pub(crate) path: Option<String>,
@@ -81,7 +81,7 @@ pub(crate) struct Cli {
     #[command(flatten)]
     pub(crate) gaming: Gaming,
     //
-    #[arg(long, help = "Enable global hotkeys and dynamic keymaps.")]
+    #[arg(long, help = "Enable global hotkeys and dynamic key/button maps.")]
     pub(crate) binds: bool,
 
     #[arg(long, help =
