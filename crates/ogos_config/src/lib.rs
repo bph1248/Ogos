@@ -409,21 +409,28 @@ pub struct Mpv<'a> {
 }
 impl_name!(Mpv, 'a);
 
+fn quartic_out(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(4)
+}
+
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AnimationKind {
     Linear,
     Quadratic,
     Cubic,
+    Quartic,
     Circular
 }
 impl AnimationKind {
     pub fn as_easing(&self) -> fn(f32) -> f32 {
         use eframe::egui::emath::easing::*;
+
         match self {
             Self::Linear => linear,
             Self::Quadratic => quadratic_out,
             Self::Cubic => cubic_out,
+            Self::Quartic => quartic_out,
             Self::Circular => circular_out
         }
     }
