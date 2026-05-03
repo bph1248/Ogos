@@ -110,7 +110,7 @@ impl_BindVar! {
 
     Click,
     Default,
-    Dur
+    DurMs
 }
 impl BindVar {
     pub fn try_as_input_event(&self) -> ResVar<InputEvent> {

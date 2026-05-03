@@ -167,7 +167,7 @@ fn deserialize_click_map<'de, D>(deserializer: D) -> Result<InputEventMap, D::Er
 
             for _ in 0..2 {
                 match map.next_key::<BindVar>()? {
-                    Some(BindVar::Dur) => dur = Some(map.next_value::<u64>()?),
+                    Some(BindVar::DurMs) => dur = Some(map.next_value::<u64>()?),
                     Some(from_) => {
                         from = Some(from_);
                         to = Some(map.next_value::<BindVar>()?);
