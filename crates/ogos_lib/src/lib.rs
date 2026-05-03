@@ -391,9 +391,10 @@ fn init() -> Res<(Cli, CliPathKind)> {
     let stamp = chrono::Local::now().format("%d_%m_%Y_%H-%M-%S");
 
     let log_dir = current_exe_path.with_file_name("logs");
+    let log_archives_dir = log_dir.join("archives");
     let log_file_name = format!("{}_{}.log", prefix, stamp);
-    let log_file_link_name = format!("{}_current.log", prefix);
-    let log_path = log_dir.join(log_file_name);
+    let log_file_link_name = format!("{}.log", prefix);
+    let log_path = log_archives_dir.join(log_file_name);
     let log_link_path = log_dir.join(log_file_link_name);
 
     {
@@ -431,7 +432,7 @@ fn init() -> Res<(Cli, CliPathKind)> {
     fs::hard_link(log_path, log_link_path)?;
 
     // Delete old log files
-    let read_dir = log_dir.read_dir()?;
+    let read_dir = log_archives_dir.read_dir()?;
     std::thread::spawn(move || {
         let mut log_dir_entries = read_dir.filter_map(|dir_entry| {
             dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
