@@ -171,8 +171,8 @@ struct QueueImageInfo {
 }
 
 struct ResetResidence {
-    visible_cell_count: usize,
-    row_cell_count: usize
+    row_cell_count: usize,
+    visible_cell_count: usize
 }
 
 #[derive(Default)]
@@ -869,7 +869,7 @@ struct MediaBrowser<'a> {
     proximity: usize,
     animation: Option<AnimationInfo>,
     residence: Range<usize>,
-    animate: bool,
+    animate_bool: bool,
     sort_name_edit: String,
     tag_add_edit: String,
     /// Sets of indices into [`grid_entries`]
@@ -1102,7 +1102,7 @@ impl<'a> MediaBrowser<'a> {
             proximity,
             animation,
             residence: default!(),
-            animate: true,
+            animate_bool: true,
             sort_name_edit: default!(),
             tag_add_edit: default!(),
             tags,
@@ -1137,16 +1137,31 @@ impl<'a> MediaBrowser<'a> {
 
     fn get_animation_opacity(&mut self, ui: &mut egui::Ui) -> Option<f32> {
         self.animation.as_ref().map(|animation| {
-            match self.animate {
+            match self.animate_bool {
                 true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, animation.dur, animation.kind.as_easing()),
                 false => {
-                    self.animate = true;
+                    self.animate_bool = true;
 
                     ui.ctx().clear_animations();
                     ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, animation.dur, animation.kind.as_easing())
                 }
             }
         })
+    }
+
+    fn refresh_grid_view(&mut self, ui: &egui::Ui) -> usize {
+        let stream = Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view);
+        let set = self.tags.get(self.active_tag.as_deref().unwrap()).unwrap();
+        populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
+
+        let ResetResidence { row_cell_count, visible_cell_count } = self.reset_residence(ui);
+        let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
+        self.stream(ui.ctx(), &stream, true);
+
+        self.grid_view_entry_removed = false;
+        self.grid_view_selected_i = None;
+
+        row_cell_count
     }
 
     fn reset_grid_view(&mut self, ui: &egui::Ui) {
@@ -1158,7 +1173,7 @@ impl<'a> MediaBrowser<'a> {
         let stream = Stream::default().with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
         self.stream(ui, &stream, true);
 
-        self.animate = false;
+        self.animate_bool = false;
         self.active_tag = None;
     }
 
@@ -1528,7 +1543,6 @@ impl<'a> MediaBrowser<'a> {
 
                                     if tag_is_active {
                                         self.reset_grid_view(ui);
-                                        self.active_tag = None;
                                     }
                                 }
                             }
@@ -1640,8 +1654,8 @@ impl<'a> MediaBrowser<'a> {
                     state.stream = Some(Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view));
                     populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
-                    self.animate = false;
                     self.active_tag = Some(tag.clone());
+                    self.animate_bool = false;
                     self.grid_view_selected_i = None;
                 }
                 if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
@@ -1664,17 +1678,7 @@ impl<'a> MediaBrowser<'a> {
             ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
             let row_cell_count = if self.grid_view_entry_removed {
-                let stream = Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view);
-                let set = self.tags.get(self.active_tag.as_deref().unwrap()).unwrap();
-                populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
-
-                let ResetResidence { visible_cell_count, row_cell_count } = self.reset_residence(ui);
-                let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
-                self.stream(ui.ctx(), &stream, true);
-
-                self.grid_view_entry_removed = false;
-
-                row_cell_count
+                self.refresh_grid_view(ui)
             } else {
                 let max_cell_count = self.grid_view.len();
                 let row_cell_count = (ui.available_width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
@@ -1700,10 +1704,9 @@ impl<'a> MediaBrowser<'a> {
 
                     #[allow(clippy::cast_precision_loss)]
                     let table_width = row_cell_count as f32 * self.grid_cell_space.x - GRID_IMAGE_SPACING.x;
-                    let table_rect_min_x = (available_rect.center().x - table_width / 2.0).floor();
-                    let table_rect = egui::Rect::from_min_size(
-                        [table_rect_min_x, available_rect.top()].into(),
-                        [table_width, available_rect.height()].into(),
+                    let table_rect = egui::Rect::from_center_size(
+                        available_rect.center(),
+                        [table_width, available_rect.height()].into()
                     );
 
                     ui.scope_builder(egui::UiBuilder::new().max_rect(table_rect), |ui| {
@@ -1931,7 +1934,6 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn grid_cell_sort_menu(&mut self, ui: &mut egui::Ui) {
-        self.grid_entry_i = self.grid_view[self.grid_view_i];
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
 
         let mut sort_grid_view = false;
@@ -2030,7 +2032,7 @@ impl<'a> MediaBrowser<'a> {
 
         // Subdivisions
         let middle_subd_width = 2.0 * FRAME_INNER_MARGIN + SEPARATOR_WIDTH;
-        let side_subd_width = ((ui.available_width() - middle_subd_width) / 2.0).floor();
+        let side_subd_width = (ui.available_width() - middle_subd_width).div_euclid(2.0).max(0.0);
         let subd_height = ui.available_height();
 
         let (total_alloc_rect,
@@ -2086,7 +2088,7 @@ impl<'a> MediaBrowser<'a> {
                     let buttons_height = button_count * (button_height + button_spacing);
 
                     let remaining_space = ui.available_height() - buttons_height;
-                    let top_padding = (remaining_space / 2.0).floor().max(0.0);
+                    let top_padding = remaining_space.div_euclid(2.0).max(0.0);
 
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
                         ui.add_space(top_padding);
