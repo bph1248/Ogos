@@ -537,6 +537,7 @@ fn ferry_images(info: FerryImagesInfo) {
 
     fn handle_err(error_sx: mpsc::Sender<String>, err: ErrLoc) {
         let msg = format!("{}: failed to ferry image: {}", module_path!(), err);
+        error!("{}", msg);
 
         error_sx.send(msg).unwrap();
     }
@@ -717,6 +718,7 @@ fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, ov
         })()
         .unwrap_or_else(|err| {
             let msg = format!("{}: failure handling media: {}", module_path!(), err);
+            error!("{}", msg);
 
             error_sx.send(msg).unwrap();
         });
