@@ -71,3 +71,9 @@ windows = { version = "0.62.2", features = [
 windows_061 = { version = "0.61", package = "windows", features = [
     "Win32_Devices_FunctionDiscovery"
 ] }
+
+[profile.public]
+inherits = "release"
+codegen-units = 1
+lto = "fat"
+strip = "symbols"
