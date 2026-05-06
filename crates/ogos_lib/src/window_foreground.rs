@@ -881,7 +881,7 @@ pub(crate) fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2d) -> S
 
 fn init_binds<'a>(error_sx: &mpsc::Sender<String>) -> Res1<Binds<'a>> {
     let config = config::get().read()?;
-    let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Binds::NAME })?;
+    let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigOption { name: config::Binds::NAME })?;
 
     let (hotkeys_config, underscore_config) = binds_config.hotkeys.as_ref().zip(binds_config.underscore)
         .unzip();

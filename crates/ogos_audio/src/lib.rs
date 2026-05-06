@@ -151,7 +151,7 @@ pub fn set_eq(name: &str) -> Res<()> {
     let config = config::get().read()?;
     let eq_apo = config.audio.as_ref()
         .and_then(|audio_config| audio_config.eq_apo.as_ref())
-        .ok_or(ErrVar::MissingConfigKey { name: config::EqApo::NAME })?;
+        .ok_or(ErrVar::MissingConfigOption { name: config::EqApo::NAME })?;
 
     let custom_config_path = eq_apo.custom_config_paths.get(name).ok_or(ErrVar::UnknownEqApoConfigName)?;
 

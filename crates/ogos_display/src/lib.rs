@@ -540,7 +540,7 @@ pub fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<DisplayMode>, { loc_
 
         let (gpu_hnd, display_ids) = get_first_gpu_display_ids()?;
         let config = config::get().read()?;
-        let display_modes_config = config.display_modes.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::DisplayModes::NAME })?;
+        let display_modes_config = config.display_modes.as_ref().ok_or(ErrVar::MissingConfigOption { name: config::DisplayModes::NAME })?;
 
         match display_mode {
             DisplayMode::Sdr => {

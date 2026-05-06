@@ -56,7 +56,7 @@ pub(crate) fn launch(name: &str, cli: &Cli, mut system: System) -> Res<(), { loc
 
     let res = (|| -> Res<(), { loc_var!(Games) }> {
         let config = config::get().read()?;
-        let games_config = config.games.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Games::NAME })?;
+        let games_config = config.games.as_ref().ok_or(ErrVar::MissingConfigOption { name: config::Games::NAME })?;
         let game_info = games_config.get(name).ok_or_else(|| ErrVar::UnknownGame { name: name.into() })?;
 
         pipe_msg(pipe_server::Msg::ActiveGame(Some(game_info.proc.into())))?;

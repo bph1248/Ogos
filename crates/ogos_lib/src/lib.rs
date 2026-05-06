@@ -276,7 +276,7 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
                     ..
                 } = config.display_modes.as_ref()
                     .and_then(|display_modes| display_modes.sdr.novideo_srgb.clone())
-                    .ok_or(ErrVar::MissingConfigKey { name: NovideoSrgbInfo::NAME })?;
+                    .ok_or(ErrVar::MissingConfigOption { name: NovideoSrgbInfo::NAME })?;
 
                 let enable_clamp = match op {
                     NovideoSrgbOp::On => true,

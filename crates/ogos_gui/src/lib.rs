@@ -935,7 +935,7 @@ impl<'a> MediaBrowser<'a> {
                     media_browser_config.animation
                 )
             })
-            .ok_or(ErrVar::MissingConfigKey { name: config::MediaBrowser::NAME })?;
+            .ok_or(ErrVar::MissingConfigOption { name: config::MediaBrowser::NAME })?;
 
         if media_dirs.is_empty() { Err(ErrVar::MissingDirs)?; }
         if lookahead < 2 { Err(ErrVar::InvalidLookahead(lookahead))?; }

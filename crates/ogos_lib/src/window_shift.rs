@@ -597,7 +597,7 @@ fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
     let config = config::get().read()?;
-    let mut window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigKey { name: config::WindowShift::NAME })?;
+    let mut window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigOption { name: config::WindowShift::NAME })?;
     drop(config);
 
     window_shift_config.interval_dur = window_shift_config.interval_dur.max(1);
@@ -676,7 +676,7 @@ fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
                     ErrVar::ReloadConfig => {
                         (|| -> ResVar<()> {
                             let config = config::get().read()?;
-                            window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigKey { name: config::WindowShift::NAME })?;
+                            window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigOption { name: config::WindowShift::NAME })?;
 
                             Ok(())
                         })()

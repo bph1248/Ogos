@@ -255,7 +255,7 @@ pub fn create_maintain_sample_rate_guard() -> io::Result<()> {
 pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, override_glsl_shaders: bool) -> Res<(), { loc_var!(Mpv) }> {
     let inner = |revert_to: &mut Vec<Setting>| -> Res<(), { loc_var!(Mpv) }> {
         let config = config::get().read()?;
-        let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigKey { name: config::Mpv::NAME })?;
+        let mpv_config = config.mpv.as_ref().ok_or(ErrVar::MissingConfigOption { name: config::Mpv::NAME })?;
 
         let ffprobe_path = confirm_or_find_app(config.app_paths.ffprobe.as_ref(), App::FFPROBE)?;
         let mpv_path = confirm_or_find_app(config.app_paths.mpv.as_ref(), App::MPV)?;
