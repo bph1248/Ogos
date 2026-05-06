@@ -77,9 +77,7 @@ unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WP
 
                     match selected.0 as usize {
                         RELOAD_CONFIG => (),
-                        QUIT => {
-                            shutdown();
-                        },
+                        QUIT => shutdown(),
                         _ => ()
                     }
                 }

@@ -181,20 +181,21 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorRx, JoinHandles)> {
     thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx, error_sx.clone()));
 
     // Window foreground/shift
-    let hook_mgr_tid = receive_ready(&mut shutdown_info.to_close, ready_rx);
-    bitflags_match!(long_lived_channels.enabled, {
-        EnabledChannels::WINDOW_FOREGROUND => {
-            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap(), error_sx.clone()));
-        },
-        EnabledChannels::WINDOW_SHIFT => {
-            thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap(), error_sx.clone()));
-        },
-        EnabledChannels::all() => {
-            thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid.unwrap(), error_sx.clone()));
-            thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap(), error_sx.clone()));
-        },
-        _ => ()
-    });
+    if let Some(hook_mgr_tid) = receive_ready(&mut shutdown_info.to_close, ready_rx) {
+        bitflags_match!(long_lived_channels.enabled, {
+            EnabledChannels::WINDOW_FOREGROUND => {
+                thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid, error_sx.clone()));
+            },
+            EnabledChannels::WINDOW_SHIFT => {
+                thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap(), error_sx.clone()));
+            },
+            EnabledChannels::all() => {
+                thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid, error_sx.clone()));
+                thread_hnds.push(window_shift::spawn(long_lived_channels.rxs.window_shift.unwrap(), error_sx.clone()));
+            },
+            _ => ()
+        });
+    }
 
     // Config watch
     // let event_close = CreateEventW(None, true, false, None)?;
