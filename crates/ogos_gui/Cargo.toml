@@ -9,16 +9,15 @@ version = { workspace = true }
 crate-type = ["lib"]
 
 [dependencies]
-blake3 = { version = "1.8.2", default-features = false }
 concat-string = { workspace = true }
 crossbeam = { workspace = true }
 discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
-egui = { version = "0.34.1", default-features = false, features = ["serde"] }
-egui_extras = { version = "0.34.1", default-features = false }
+egui = { version = "0.34.2", default-features = false, features = ["serde"] }
+egui_extras = { version = "0.34.2", default-features = false }
 hotpath = { workspace = true }
 image = { workspace = true }
-indexmap = { version = "2.12.1", features = ["serde"] }
+indexmap = { version = "2.14.0", features = ["serde"] }
 log = { workspace = true }
 ogos_common = { workspace = true }
 ogos_config = { workspace = true }
@@ -35,7 +34,7 @@ rgb = "0.8.52"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tap = "1.0.1"
-wgpu = { version = "29.0.1", features = ["dx12"] }
+wgpu = { version = "29.0.3", features = ["dx12"] }
 windows = { workspace = true }
 
 [features]
