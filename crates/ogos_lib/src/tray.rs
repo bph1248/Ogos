@@ -31,7 +31,11 @@ bitflags! {
 
 unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT { unsafe {
     match msg {
-        WM_CLOSE => DefWindowProcW(hwnd, msg, wparam, lparam),
+        WM_CLOSE => {
+            shutdown();
+
+            LRESULT(0)
+        },
         WM_CREATE => LRESULT(0),
         WM_DESTROY => {
             PostQuitMessage(0);
@@ -77,7 +81,7 @@ unsafe extern "system" fn tray_notify_icon_proc(hwnd: HWND, msg: u32, wparam: WP
 
                     match selected.0 as usize {
                         RELOAD_CONFIG => (),
-                        QUIT => shutdown(),
+                        QUIT => PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).unwrap(),
                         _ => ()
                     }
                 }
@@ -143,26 +147,28 @@ pub(crate) fn add_tray_notify_icon(exe_module: HINSTANCE, class_name: PCWSTR, re
 } }
 
 fn shutdown() { unsafe {
-    info!("{}: shutdown", module_path!());
-
     let info = SHUTDOWN_INFO.get_unchecked();
-    for long_lived_task in info.to_close.iter() {
-        (|| -> Res<()> {
-            match long_lived_task {
-                LongLivedTask::_ConfigWatch(event_close) => SetEvent(*event_close)?,
-                LongLivedTask::PipeServer => pipe_msg(pipe_server::Msg::Close)?,
-                LongLivedTask::WindowWatch(tid) => PostThreadMessageW(tid.0, WM_OGOS_CLOSE, WPARAM(0), LPARAM(0))?,
-                _ => ()
-            }
+    if info.initiated.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        info!("{}: shutdown", module_path!());
 
-            Ok(())
-        })()
-        .unwrap_or_else(|err| {
-            error!("{}: failed to close long-lived task: {}", module_path!(), err);
-        });
+        for long_lived_task in info.to_close.iter() {
+            (|| -> Res<()> {
+                match long_lived_task {
+                    LongLivedTask::_ConfigWatch(event_close) => SetEvent(*event_close)?,
+                    LongLivedTask::PipeServer => pipe_msg(pipe_server::Msg::Close)?,
+                    LongLivedTask::WindowWatch(tid) => PostThreadMessageW(tid.0, WM_OGOS_CLOSE, WPARAM(0), LPARAM(0))?,
+                    _ => ()
+                }
+
+                Ok(())
+            })()
+            .unwrap_or_else(|err| {
+                error!("{}: failed to close long-lived task: {}", module_path!(), err);
+            });
+        }
+
+        PostQuitMessage(0);
     }
-
-    PostQuitMessage(0);
 } }
 
 fn begin() -> Res<()> { unsafe {
@@ -186,7 +192,9 @@ fn begin() -> Res<()> { unsafe {
     add_tray_notify_icon(exe_module, OGOS_TRAY_CLASS_NAME, Some(wnd_class))?;
 
     let mut msg = MSG::default();
-    while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+    while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+        DispatchMessageW(&msg);
+    }
 
     Ok(())
 } }

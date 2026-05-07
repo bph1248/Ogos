@@ -65,7 +65,10 @@ use std::{
     env,
     fs::{self, *},
     path::*,
-    sync::{mpsc, *},
+    sync::{
+        atomic::*,
+        *
+    },
     thread::*,
     time::*
 };
@@ -101,9 +104,10 @@ struct OnTaskbarRereateInfo {
 unsafe impl Send for OnTaskbarRereateInfo {}
 unsafe impl Sync for OnTaskbarRereateInfo {}
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct ShutdownInfo {
-    to_close: Vec<LongLivedTask>
+    to_close: Vec<LongLivedTask>,
+    initiated: AtomicBool
 }
 
 #[derive(Debug)]
@@ -163,9 +167,7 @@ fn get_window_foreground_components(cli: &Cli) -> WindowForegroundComponents {
 type ErrorRx = mpsc::Receiver<String>;
 type JoinHandles = Vec<JoinHandle<()>>;
 fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorRx, JoinHandles)> {
-    let mut shutdown_info = ShutdownInfo {
-        to_close: Vec::new()
-    };
+    let mut shutdown_info = ShutdownInfo::default();
     let mut thread_hnds = Vec::new();
     let (error_sx, error_rx) = mpsc::channel();
 
