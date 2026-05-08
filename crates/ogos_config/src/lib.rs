@@ -552,7 +552,7 @@ pub struct DisplayModes<'a> {
 }
 impl_name!(DisplayModes, 'a);
 
-#[derive(Clone, Copy, Default, Deserialize)]
+#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscordDisplayKind {
     #[default]

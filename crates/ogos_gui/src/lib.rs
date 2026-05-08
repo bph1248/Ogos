@@ -685,13 +685,13 @@ fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
     Ok(PathBuf::from(path_str))
 } }
 
-fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, override_glsl_shaders: bool, discord_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind, error_sx: mpsc::Sender<String>) {
+fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, override_glsl_shaders: bool, discord_activity_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind, error_sx: mpsc::Sender<String>) {
     thread::spawn(move || {
         (|| -> Res<()> {
-            let ipc_client = discord_info.as_ref().map(|discord_info| -> Res<_> {
-                let mut ipc_client = DiscordIpcClient::new(discord_info.app_id.as_str());
+            let ipc_client = discord_activity_info.as_ref().map(|activity_info| -> Res<_> {
+                let mut ipc_client = DiscordIpcClient::new(activity_info.app_id.as_str());
 
-                discord::begin(&mut ipc_client, &discord_info.as_view(), discord_display_kind)?;
+                discord::begin(&mut ipc_client, &activity_info.as_view(), discord_display_kind)?;
 
                 Ok(ipc_client)
             })
@@ -895,8 +895,8 @@ struct MediaBrowser<'a> {
     discord_app_ids: DiscordAppIds<'a>,
     discord_enabled: bool,
     discord_watching: Watching,
-    discord_details: String,
-    discord_state: String,
+    discord_details_edit: String,
+    discord_state_edit: String,
     discord_display_kind: DiscordDisplayKind,
     open_error_win: bool,
     error_sx: mpsc::Sender<String>,
@@ -1127,8 +1127,8 @@ impl<'a> MediaBrowser<'a> {
             discord_app_ids,
             discord_enabled: default!(),
             discord_watching: default!(),
-            discord_details: default!(),
-            discord_state: default!(),
+            discord_details_edit: default!(),
+            discord_state_edit: default!(),
             discord_display_kind,
             open_error_win: false,
             error_sx,
@@ -2130,14 +2130,14 @@ impl<'a> MediaBrowser<'a> {
                             match dir_entry_info.file_kind {
                                 FileKind::Dir => state.push_dir = Some(dir_entry_info.path.clone()),
                                 _ => {
-                                    let discord_info = self.discord_enabled.then_some(self.make_discord_info(dir_entry_info));
+                                    let discord_activity_info = self.discord_enabled.then_some(self.make_discord_activity_info(dir_entry_info));
 
                                     open_media(
                                         dir_entry_info.path.clone(),
                                         dir_entry_info.file_kind,
                                         self.maintain_sample_rate,
                                         self.override_glsl_shaders,
-                                        discord_info,
+                                        discord_activity_info,
                                         self.discord_display_kind,
                                         self.error_sx.clone()
                                     );
@@ -2178,8 +2178,22 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn make_discord_info(&self, dir_entry_info: &DirEntryInfo) -> config::DiscordActivityInfo {
-        let dir_name = &self.grid_entries[self.details_grid_entry_i].stem;
+    fn make_discord_activity_info(&self, dir_entry_info: &DirEntryInfo) -> config::DiscordActivityInfo {
+        let grid_entry_info = &self.grid_entries[self.details_grid_entry_i];
+
+        let details = match self.discord_details_edit.is_empty() {
+            true => match self.discord_watching {
+                Watching::TV => grid_entry_info.stem.to_string(),
+                _ => dir_entry_info.stem.clone()
+            },
+            false => self.discord_details_edit.clone()
+        };
+        let state = (self.discord_watching == Watching::TV && grid_entry_info.file_kind == FileKind::Dir).then(|| {
+            match self.discord_state_edit.is_empty() {
+                true => dir_entry_info.stem.clone(),
+                false => self.discord_state_edit.clone()
+            }
+        });
 
         config::DiscordActivityInfo {
             app_id: match self.discord_watching {
@@ -2188,21 +2202,10 @@ impl<'a> MediaBrowser<'a> {
                 Watching::Words => self.discord_app_ids.words.unwrap().to_string()
             },
             activity: config::DiscordActivity::Watching,
-            details: match self.discord_details.is_empty() {
-                true => match self.discord_watching {
-                    Watching::TV => dir_name.to_string(),
-                    _ => dir_entry_info.stem.clone()
-                },
-                false => self.discord_details.clone()
-            },
-            state: self.discord_watching.eq(&Watching::TV).then(|| {
-                match self.discord_state.is_empty() {
-                    true => dir_entry_info.stem.clone(),
-                    false => self.discord_state.clone()
-                }
-            }),
+            details,
+            state,
             large_image: match self.discord_watching {
-                Watching::TV => Some(to_discord_asset_name(dir_name)),
+                Watching::TV => Some(to_discord_asset_name(grid_entry_info.stem.as_ref())),
                 _ => Some(to_discord_asset_name(dir_entry_info.stem.as_str()))
             }
         }
@@ -2255,22 +2258,23 @@ impl<'a> MediaBrowser<'a> {
         grid.show(ui, |ui| {
             ui.label("Details");
 
-            let dir_entry_stem = self.details_dir_entries[self.details_hovered_dir_entry_i].stem.as_str();
+            let grid_entry_info = &self.grid_entries[self.details_grid_entry_i];
+            let dir_entry_info = &self.details_dir_entries[self.details_hovered_dir_entry_i];
 
             let details_hint_text = match self.discord_watching {
-                Watching::TV => self.grid_entries[self.details_grid_entry_i].stem.as_ref(),
-                _ => dir_entry_stem
+                Watching::TV => grid_entry_info.stem.as_ref(),
+                _ => dir_entry_info.stem.as_str()
             };
-            let details_text_edit = egui::TextEdit::singleline(&mut self.discord_details).hint_text(details_hint_text);
+            let details_text_edit = egui::TextEdit::singleline(&mut self.discord_details_edit).hint_text(details_hint_text);
 
             ui.add(details_text_edit);
 
             ui.end_row();
 
-            if self.discord_watching == Watching::TV {
+            if self.discord_watching == Watching::TV && grid_entry_info.file_kind == FileKind::Dir {
                 ui.label("State");
 
-                let state_text_edit = egui::TextEdit::singleline(&mut self.discord_state).hint_text(dir_entry_stem);
+                let state_text_edit = egui::TextEdit::singleline(&mut self.discord_state_edit).hint_text(dir_entry_info.stem.as_str());
 
                 ui.add(state_text_edit);
             }
