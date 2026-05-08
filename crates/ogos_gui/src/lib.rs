@@ -811,7 +811,7 @@ impl eframe::App for Info {
                 })
                 .inner;
 
-            let win_size = win_size.min(content_size) + egui::vec2(0.0, 2.0 * DEFAULT_FRAME_INNER_MARGIN);
+            let win_size = win_size.min(content_size) + egui::Vec2::splat(2.0 * DEFAULT_FRAME_INNER_MARGIN);
             let win_pos = egui::pos2(
                 (screen_size.x - win_size.x) / 2.0,
                 (screen_size.y - win_size.y).div(2.0).max(0.0)
