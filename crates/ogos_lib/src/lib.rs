@@ -258,6 +258,12 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
     }
 
     // Display
+    if let Some(value) = cli.set_display_brightness {
+        set_vcp_feature(VCP_FEATURE_BRIGHTNESS, value).unwrap_or_else(|err| {
+            error_alert(format!("{}: failed to set display brightness: {}", module_path!(), err));
+        });
+    }
+
     if cli.toggle_display_mode {
         _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
             error_alert(format!("{}: failed to toggle display mode: {}", module_path!(), err));

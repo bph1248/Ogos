@@ -9,6 +9,7 @@ use std::{
 
 const ALIAS: &str = "alias";
 const BINDS: &str = "binds";
+const BRIGHTNESS: &str = "brightness";
 const CLAMP: &str = "clamp";
 const CONFLICTS_WITH: &str = "conflicts with";
 const CURSOR: &str = "cursor";
@@ -16,17 +17,19 @@ const DEVICE: &str = "device";
 const ENDPOINT: &str = "endpoint";
 const EQ: &str = "eq";
 const GAME: &str = "game";
-const LONG_LIVED: [&str; 3] = [BINDS, TASKBAR, WINDOW_SHIFT];
+const LONG_LIVED: &[&str] = &[BINDS, TASKBAR, WINDOW_SHIFT];
 const SK: &str = "sk";
 const STATE: &str = "state";
 const TASKBAR: &str = "taskbar";
 const WINDOW_SHIFT: &str = "window-shift";
 
+const ALIAS_BRIGHTNESS: &str = formatcp!("{a}: --{b}", a = ALIAS, b = BRIGHTNESS);
 const ALIAS_CLAMP: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CLAMP);
 const ALIAS_CURSOR: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CURSOR);
 const ALIAS_SK: &str = formatcp!("{a}: --{b}", a = ALIAS, b = SK);
 const CONFLICTS_WITH_LONG_LIVED: &str = formatcp!("{a}: --<{b}, {c}, {d}>", a = CONFLICTS_WITH, b = BINDS, c = TASKBAR, d = WINDOW_SHIFT);
-const POSSIBLE_VALUES_CLAMP: &str = "possible values: <on, off>";
+const POSSIBLE_VALUES_DISPLAY_BRIGHTNESS: &str = "possible values: [0, 100]";
+const POSSIBLE_VALUES_NOVIDEO_SRGB_CLAMP: &str = "possible values: <on, off>";
 const REQUIRES_GAME: &str = formatcp!("requires: --{a}", a = GAME);
 
 #[derive(Clone, ValueEnum)]
@@ -71,9 +74,13 @@ pub(crate) struct Cli {
     pub(crate) set_endpoint: Option<String>,
     #[arg(long = EQ, name = EQ, help = formatcp!("Overwrite the master Equalizer APO config file, where <{a}> is a config-defined custom config path.", a = EQ))]
     pub(crate) set_eq: Option<String>,
+    #[arg(long = "display-brightness", name = BRIGHTNESS, alias = "brightness", value_parser = clap::value_parser!(u16).range(0..=100),
+        help = formatcp!("Set display brightness via VCP feature 0x10. [{a}, {b}]", a = ALIAS_BRIGHTNESS, b = POSSIBLE_VALUES_DISPLAY_BRIGHTNESS)
+    )]
+    pub(crate) set_display_brightness: Option<u16>,
     #[arg(long, help = "Enable/disable HDR mode and set color bit depth, dither state, and novideo_srgb state.")]
     pub(crate) toggle_display_mode: bool,
-    #[arg(long, name = STATE, alias = CLAMP, hide_possible_values = true, help = formatcp!("Set novideo_srgb's color space clamp. [{a}, {b}]", a = ALIAS_CLAMP, b = POSSIBLE_VALUES_CLAMP))]
+    #[arg(long, name = STATE, alias = CLAMP, hide_possible_values = true, help = formatcp!("Set novideo_srgb's color space clamp. [{a}, {b}]", a = ALIAS_CLAMP, b = POSSIBLE_VALUES_NOVIDEO_SRGB_CLAMP))]
     pub(crate) novideo_srgb: Option<NovideoSrgbOp>,
 
     #[arg(long = GAME, name = GAME, help = formatcp!("Launch a game, where <{a}> is a config-defined set of launch parameters and settings.", a = GAME))]
@@ -84,9 +91,7 @@ pub(crate) struct Cli {
     #[arg(long, help = "Enable global hotkeys and dynamic key/button maps.")]
     pub(crate) binds: bool,
 
-    #[arg(long, help =
-        "Manage taskbar visibility by monitoring cursor collisions against an invisible window or 'hitbox'."
-    )]
+    #[arg(long, help = "Manage taskbar visibility by monitoring cursor collisions against an invisible window or 'hitbox'.")]
     pub(crate) taskbar: bool,
     #[arg(long, help = "Periodically 'pixel-shift' windows about the desktop.")]
     pub(crate) window_shift: bool

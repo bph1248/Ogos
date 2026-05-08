@@ -93,16 +93,17 @@ type NvAPI_GPU_GetDitherControl_fn = unsafe extern "C" fn(
     ditherControl: *mut NV_GPU_DITHER_CONTROL
 ) -> NvAPI_Status;
 
-const DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2: DISPLAYCONFIG_DEVICE_INFO_TYPE = DISPLAYCONFIG_DEVICE_INFO_TYPE(15_i32);
-const DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE: DISPLAYCONFIG_DEVICE_INFO_TYPE = DISPLAYCONFIG_DEVICE_INFO_TYPE(16_i32);
-const MINIMIZE_ALL: usize = 419;
-const UNDO_MINIMIZE_ALL: usize = 416;
-const NV_COLOR_DATA_VER: NvU32 = make_nvapi_version::<NV_COLOR_DATA>(5);
-const NV_DITHER_CONTROL_VER: NvU32 = make_nvapi_version::<NV_GPU_DITHER_CONTROL>(1);
-const VCP_FEATURE_PIXEL_CLEANING: u8 = 0xfd;
-const VCP_VALUE_PIXEL_CLEANING_IGNITION: u16 = 0x10;
-const VCP_VALUE_PIXEL_CLEANING_OFF_SDR: u16 = 0x41;
-const VCP_VALUE_PIXEL_CLEANING_OFF_HDR: u16 = 0x01;
+    const DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2: DISPLAYCONFIG_DEVICE_INFO_TYPE = DISPLAYCONFIG_DEVICE_INFO_TYPE(15_i32);
+    const DISPLAYCONFIG_DEVICE_INFO_SET_HDR_STATE: DISPLAYCONFIG_DEVICE_INFO_TYPE = DISPLAYCONFIG_DEVICE_INFO_TYPE(16_i32);
+    const MINIMIZE_ALL: usize = 419;
+    const UNDO_MINIMIZE_ALL: usize = 416;
+    const NV_COLOR_DATA_VER: NvU32 = make_nvapi_version::<NV_COLOR_DATA>(5);
+    const NV_DITHER_CONTROL_VER: NvU32 = make_nvapi_version::<NV_GPU_DITHER_CONTROL>(1);
+pub const VCP_FEATURE_BRIGHTNESS: u8 = 0x10;
+    const VCP_FEATURE_PIXEL_CLEANING: u8 = 0xfd;
+    const VCP_VALUE_PIXEL_CLEANING_IGNITION: u16 = 0x10;
+    const VCP_VALUE_PIXEL_CLEANING_OFF_SDR: u16 = 0x41;
+    const VCP_VALUE_PIXEL_CLEANING_OFF_HDR: u16 = 0x01;
 
 #[derive(Default, PartialEq)]
 #[repr(transparent)]
@@ -209,27 +210,27 @@ pub fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>) -> Res2<()> 
     if friendly_name != u16cstr!("PG32UCDM") {
         Err(ErrVar::InvalidDisplayName)?;
     }
-    let gdi_name = get_display_gdi_name(path)?;
+    let device_name = get_display_device_name(path)?;
 
     let monitor_hnds = ddc_winapi::enumerate_monitors()?;
     let mut monitor_info = MONITORINFOEXW::default();
     monitor_info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
 
-    let droid = (|| -> windows::core::Result<_> {
+    let monitor_hnd = (|| -> windows::core::Result<_> {
         for hnd in monitor_hnds {
             let hnd = HMONITOR(hnd as *mut _); // Different Windows APIs
             GetMonitorInfoW(hnd, &mut monitor_info as *mut _ as _).ok()?;
-            let gdi_name_ = U16CString::from_ptr_truncate(&monitor_info.szDevice as _, monitor_info.szDevice.len());
+            let gdi_name = U16CString::from_ptr_truncate(&monitor_info.szDevice as _, monitor_info.szDevice.len());
 
-            if gdi_name_ == gdi_name {
-                return Ok(Some(hnd));
+            if gdi_name == device_name {
+                return Ok(hnd);
             }
         }
 
-        Ok(None)
+        unreachable!()
     })()?;
 
-    let phys_monitors = ddc_winapi::get_physical_monitors_from_hmonitor(droid.unwrap().0 as *mut _)?;
+    let phys_monitors = ddc_winapi::get_physical_monitors_from_hmonitor(monitor_hnd.0 as *mut _)?;
     let mut monitor = ddc_winapi::Monitor::new(phys_monitors[0]);
 
     let vcp_value = monitor.get_vcp_feature(VCP_FEATURE_PIXEL_CLEANING)?.value();
@@ -358,7 +359,7 @@ fn get_display_friendly_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> 
     Ok(friendly_name)
 } }
 
-fn get_display_gdi_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> { unsafe {
+fn get_display_device_name(path: DISPLAYCONFIG_PATH_INFO) -> Res1<U16CString> { unsafe {
     let mut source_device_name = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
         header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
             r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
@@ -609,4 +610,16 @@ pub fn set_screen_extent(extent: Extent2dU) -> Res1<Option<Extent2dU>> { unsafe 
     SetDisplayConfig(Some(paths.as_slice()), Some(modes.as_slice()), SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG).win32_err_ok()?;
 
     Ok(Some(prev_extent))
+} }
+
+pub fn set_vcp_feature(feature: u8, value: u16) -> Res1<()> { unsafe {
+    let monitor_hnds = ddc_winapi::enumerate_monitors()?;
+    let monitor_hnd = HMONITOR(monitor_hnds[0] as *mut _);
+
+    let phys_monitors = ddc_winapi::get_physical_monitors_from_hmonitor(monitor_hnd.0 as *mut _)?;
+    let mut monitor = ddc_winapi::Monitor::new(phys_monitors[0]);
+
+    monitor.set_vcp_feature(feature, value)?;
+
+    Ok(())
 } }
