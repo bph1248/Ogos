@@ -8,6 +8,7 @@ use log::*;
 use serde::*;
 use std::{
     ffi::*,
+    fmt,
     sync::mpsc,
     thread::{self, *}
 };
@@ -41,11 +42,19 @@ const _: () = assert!(PIPE_SIZE_CHECK <= u32::MAX as usize);
 pub(crate) const PIPE_NAME: &str = r"\\.\pipe\ogos";
 pub(crate) const PIPE_SIZE: u32 = PIPE_SIZE_CHECK as u32;
 
-#[derive(Deserialize, Display, Serialize)]
+#[derive(Deserialize, AsRefStr, Serialize)]
 pub(crate) enum Msg {
     Ack,
     ActiveGame(Option<String>),
     Close
+}
+impl fmt::Display for Msg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ActiveGame(game) => write!(f, "{}: {}", self.as_ref(), game.as_display()),
+            _ => write!(f, "{}", self.as_ref())
+        }
+    }
 }
 
 // See https://learn.microsoft.com/en-us/windows/win32/secauthz/creating-a-security-descriptor-for-a-new-object-in-c--

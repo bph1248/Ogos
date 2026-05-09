@@ -598,7 +598,9 @@ fn can_i_have_a_go(binds: &mut Binds, win_info: &WinInfo, active_game: Option<&s
                 true => { // Game was foreground
                     mki::clear();
                     mki::install_hooks();
-                    if let Some((hnd, _)) = binds.trigger_watch.take() {
+
+                    if let Some((hnd, sx)) = binds.trigger_watch.take() {
+                        sx.send(trigger_watch::Msg::Close).unwrap();
                         _ = hnd.join();
 
                         let config = config::get().read()?;
