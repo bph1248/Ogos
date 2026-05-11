@@ -778,7 +778,7 @@ fn bind_maps(binds: &mut Binds, exe: &str) {
         .unwrap();
 
     for map in maps.iter().copied() {
-        let press_mirror_action = |to: InputEvent| -> Action {
+        let make_press_mirror_action = |to: InputEvent| -> Action {
             Action {
                 callback: Box::new(move |_, state| {
                     match state {
@@ -792,14 +792,14 @@ fn bind_maps(binds: &mut Binds, exe: &str) {
                 sequencer: true
             }
         };
-        let wheel_click_action = |to: InputEvent, dur: Duration| -> Action {
+        let make_wheel_click_action = |to: InputEvent, dur: Duration, passthrough: bool| -> Action {
             Action {
                 callback: Box::new(move |_, state| {
                     if matches!(state, State::WheelUp | State::WheelDown) {
                         to.click(dur);
                     }
                 }),
-                inhibit: InhibitEvent::Yes,
+                inhibit: if passthrough { InhibitEvent::No } else { InhibitEvent::Yes },
                 defer: true,
                 sequencer: false
             }
@@ -809,11 +809,11 @@ fn bind_maps(binds: &mut Binds, exe: &str) {
             InputEventMap::PressMirror { from: InputEvent::Keyboard(from), to: InputEvent::Keyboard(to) } => {
                 match binds.qmk.as_ref() {
                     Some(qmk) => map_qmk(qmk, from, to.as_keycode()),
-                    None => from.act_on(press_mirror_action(InputEvent::Keyboard(to)))
+                    None => from.act_on(make_press_mirror_action(InputEvent::Keyboard(to)))
                 }
             },
-            InputEventMap::PressMirror { from, to } => from.act_on(press_mirror_action(to)),
-            InputEventMap::WheelClick { from, to, dur } => from.act_on(wheel_click_action(to, dur))
+            InputEventMap::PressMirror { from, to } => from.act_on(make_press_mirror_action(to)),
+            InputEventMap::WheelClick { from, to, dur, passthrough } => from.act_on(make_wheel_click_action(to, dur, passthrough))
         }
 
         binds.bound.push(map);

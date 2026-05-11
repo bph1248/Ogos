@@ -128,14 +128,14 @@ fn deserialize_tasks<'de, D>(deserializer: D) -> Result<HashMap<Key, Task>, D::E
     Ok(tasks)
 }
 
-fn make_input_event_map(from: BindVar, to: BindVar, click_dur_ms: Option<u64>) -> ResVar<InputEventMap> {
+fn make_input_event_map(from: BindVar, to: BindVar, click_dur_ms: Option<u64>, passthrough: bool) -> ResVar<InputEventMap> {
     let from = from.try_as_input_event()?;
     let to = to.try_as_input_event()?;
 
     Ok(match (from, to, click_dur_ms) {
-        (InputEvent::MouseWheel(_), InputEvent::Keyboard(_), Some(click_dur_ms)) |
-        (InputEvent::MouseWheel(_), InputEvent::MouseButton(_), Some(click_dur_ms)) => {
-            InputEventMap::WheelClick { from, to, dur: Duration::from_millis(click_dur_ms) }
+        (InputEvent::MouseWheel(_), InputEvent::Keyboard(_), click_dur_ms) |
+        (InputEvent::MouseWheel(_), InputEvent::MouseButton(_), click_dur_ms) => {
+            InputEventMap::WheelClick { from, to, dur: Duration::from_millis(click_dur_ms.unwrap_or(0)), passthrough }
         },
         (InputEvent::Keyboard(_), InputEvent::Keyboard(_), _) |
         (InputEvent::Keyboard(_), InputEvent::MouseButton(_), _) |
@@ -145,6 +145,14 @@ fn make_input_event_map(from: BindVar, to: BindVar, click_dur_ms: Option<u64>) -
         },
         _ => Err(ErrVar::InvalidInputEventMap { from, to })?
     })
+}
+
+#[derive(Default)]
+struct ClickMapParams {
+    dur: Option<u64>,
+    from: Option<BindVar>,
+    to: Option<BindVar>,
+    passthrough: bool
 }
 
 fn deserialize_click_map<'de, D>(deserializer: D) -> Result<InputEventMap, D::Error> where
@@ -162,22 +170,26 @@ fn deserialize_click_map<'de, D>(deserializer: D) -> Result<InputEventMap, D::Er
         fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where
             A: serde::de::MapAccess<'de>
         {
-            let mut dur = None;
-            let (mut from, mut to) = (None, None);
+            let ClickMapParams {
+                mut dur,
+                mut from,
+                mut to,
+                mut passthrough,
+            } = ClickMapParams::default();
 
-            for _ in 0..2 {
-                match map.next_key::<BindVar>()? {
-                    Some(BindVar::DurMs) => dur = Some(map.next_value::<u64>()?),
-                    Some(from_) => {
+            while let Some(bind_var) = map.next_key::<BindVar>()? {
+                match bind_var {
+                    BindVar::DurMs => dur = Some(map.next_value::<u64>()?),
+                    BindVar::Passthrough => passthrough = map.next_value::<bool>()?,
+                    from_ => {
                         from = Some(from_);
                         to = Some(map.next_value::<BindVar>()?);
-                    },
-                    None => Err(A::Error::custom(ErrVar::MissingClickParams))?
+                    }
                 }
             }
 
             from.zip(to).ok_or(ErrVar::MissingClickParams)
-                .and_then(|(from, to)| make_input_event_map(from, to, dur))
+                .and_then(|(from, to)| make_input_event_map(from, to, dur, passthrough))
                 .map_err(A::Error::custom)
         }
     }
@@ -214,7 +226,7 @@ fn deserialize_input_event_maps<'de, D>(deserializer: D) -> Result<Vec<InputEven
                     _ => {
                         let to = map.next_value::<BindVar>()?;
 
-                        input_event_maps.push(make_input_event_map(from, to, None).map_err(A::Error::custom)?);
+                        input_event_maps.push(make_input_event_map(from, to, None, false).map_err(A::Error::custom)?);
                     }
                 }
             }
@@ -613,7 +625,7 @@ struct ClickMap(
 #[derive(Clone, Copy)]
 pub enum InputEventMap {
     PressMirror { from: InputEvent, to: InputEvent },
-    WheelClick { from: InputEvent, to: InputEvent, dur: Duration }
+    WheelClick { from: InputEvent, to: InputEvent, dur: Duration, passthrough: bool }
 }
 impl InputEventMap {
     pub fn requires_mouse_hook(&self) -> bool {

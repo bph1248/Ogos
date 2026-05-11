@@ -441,7 +441,10 @@ forward_button, xb2, fb
 
 # Macros
 
-`click: { <wheel_up, wheel_down>: <key, button>, dur_ms: <uint> }`: Simulate key/button presses by moving the scroll wheel. `dur_ms` is the number of milliseconds to wait before sending a 'key release' event.
+`click: { <wheel_up, wheel_down>: <key, button>, dur_ms: <uint>, passthrough: <bool> }`: Simulate key/button presses by moving the scroll wheel.
+
+- `dur_ms`: The number of milliseconds to wait before sending a key release event.
+- `passthrough`: Dictates whether to send the wheel event in addition to the key/button event.
 
 # Tasks
 
