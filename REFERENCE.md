@@ -31,7 +31,7 @@ Settings used in conjunction with `ogos --endpoint` and `--eq`.
 
 #### Binds
 
-Settings related to global hotkeys and dynamic key/button maps, used in conjunction with `ogos --binds` (see [Keys & Buttons](#keys--buttons), [Tasks](#tasks)).
+Settings related to global hotkeys and dynamic key/button maps, used in conjunction with `ogos --binds` (see [Keys & Buttons](#keys--buttons), [Tasks](#tasks)). Changes to these settings are updated in real time.
 
 - `hotkeys`:
     - `prefix`: A list of modifier keys that must be held in conjunction with a key listed in `triggers` in order to run a task.
@@ -127,7 +127,7 @@ The hitbox is disabled if the foreground window is full screen.
 
 #### Window shift
 
-Settings used in conjunction with `ogos --window-shift`. Elevated privileges are recommended to be able to shift windows belonging to processes of higher integrity.
+Settings used in conjunction with `ogos --window-shift`. Elevated privileges are recommended to be able to shift windows belonging to processes of higher integrity. Changes to these settings are updated in real time.
 
 - `enable_immersive_dark_mode`: Enable dark mode for window title bars that otherwise don't support it.
 - `interval_s`: The shift interval in seconds.
