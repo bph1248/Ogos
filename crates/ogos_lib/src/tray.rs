@@ -10,10 +10,7 @@ use windows::{
     core::{w, PCWSTR},
     Win32::{
         Foundation::*,
-        System::{
-            LibraryLoader::*,
-            Threading::*
-        },
+        System::LibraryLoader::*,
         UI::{
             Shell::*,
             WindowsAndMessaging::*
@@ -151,13 +148,14 @@ fn shutdown() { unsafe {
     if info.initiated.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
         info!("{}: shutdown", module_path!());
 
-        for long_lived_task in info.to_close.iter() {
+        let to_close = &mut *info.to_close.lock().unwrap();
+        let to_close = std::mem::take(to_close);
+        for long_lived_task in to_close.into_iter() {
             (|| -> Res<()> {
                 match long_lived_task {
-                    LongLivedTask::_ConfigWatch(event_close) => SetEvent(*event_close)?,
+                    LongLivedTask::ConfigWatch(watcher) => drop(watcher),
                     LongLivedTask::PipeServer => pipe_msg(pipe_server::Msg::Close)?,
-                    LongLivedTask::WindowWatch(tid) => PostThreadMessageW(tid.0, WM_OGOS_CLOSE, WPARAM(0), LPARAM(0))?,
-                    _ => ()
+                    LongLivedTask::WindowWatch(tid) => PostThreadMessageW(tid.0, WM_OGOS_CLOSE, WPARAM(0), LPARAM(0))?
                 }
 
                 Ok(())

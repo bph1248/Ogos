@@ -26,7 +26,7 @@
 
 pub(crate) mod binds;
 pub(crate) mod cli;
-// pub(crate) mod config_watch;
+pub(crate) mod config_watch;
 pub(crate) mod cursor_watch;
 pub(crate) mod games;
 pub(crate) mod pipe_client;
@@ -52,11 +52,16 @@ use win32::*;
 use window_foreground::*;
 
 use clap::CommandFactory;
+use crossbeam::channel as mpmc;
 use log::*;
 use netcorehost::{
     pdcstr,
     hostfxr::*,
     pdcstring::PdCString
+};
+use notify_debouncer_full::{
+    self as notify_db,
+    notify
 };
 use once_cell::sync::*;
 use pipe_client::*;
@@ -72,7 +77,6 @@ use std::{
     thread::*,
     time::*
 };
-use subenum::*;
 use sysinfo::*;
 use windows::{
     core::{w, PCWSTR},
@@ -106,18 +110,14 @@ unsafe impl Sync for OnTaskbarRereateInfo {}
 
 #[derive(Debug, Default)]
 struct ShutdownInfo {
-    to_close: Vec<LongLivedTask>,
+    to_close: Mutex<Vec<LongLivedTask>>,
     initiated: AtomicBool
 }
 
 #[derive(Debug)]
-#[subenum(CanReloadConfig)]
 pub(crate) enum LongLivedTask {
-    _ConfigWatch(HANDLE),
+    ConfigWatch(notify_db::Debouncer<notify::RecommendedWatcher, notify_db::RecommendedCache>),
     PipeServer,
-    #[subenum(CanReloadConfig)]
-    StaticBinds,
-    #[subenum(CanReloadConfig)]
     WindowWatch(Tid)
 }
 unsafe impl Send for LongLivedTask {}
@@ -167,12 +167,11 @@ fn get_window_foreground_components(cli: &Cli) -> WindowForegroundComponents {
 type ErrorRx = mpsc::Receiver<String>;
 type JoinHandles = Vec<JoinHandle<()>>;
 fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorRx, JoinHandles)> {
-    let mut shutdown_info = ShutdownInfo::default();
+    let mut to_close = Vec::new();
     let mut thread_hnds = Vec::new();
-    let (error_sx, error_rx) = mpsc::channel();
 
-    // let mut can_reload_config = Vec::new();
-    let (ready_sx, ready_rx) = mpsc::channel::<ReadyMsg>();
+    let (ready_sx, ready_rx) = mpsc::channel();
+    let (error_sx, error_rx) = mpsc::channel();
     let long_lived_channels = get_long_lived_channels(cli);
     let window_foreground_comps = get_window_foreground_components(cli);
 
@@ -183,7 +182,7 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorRx, JoinHandles)> {
     thread_hnds.push(window_watch::spawn(window_foreground_comps, long_lived_channels.sxs, ready_sx, error_sx.clone()));
 
     // Window foreground/shift
-    if let Some(hook_mgr_tid) = receive_ready(&mut shutdown_info.to_close, ready_rx) {
+    if let Some(hook_mgr_tid) = receive_ready(&mut to_close, ready_rx) {
         bitflags_match!(long_lived_channels.enabled, {
             EnabledChannels::WINDOW_FOREGROUND => {
                 thread_hnds.push(window_foreground::spawn(window_foreground_comps, long_lived_channels.rxs.window_foreground.unwrap(), hook_mgr_tid, error_sx.clone()));
@@ -197,17 +196,22 @@ fn init_long_lived_tasks(cli: &Cli) -> Res<(ErrorRx, JoinHandles)> {
             },
             _ => ()
         });
+
+        // Config watch
+        let (sx, rx) = mpmc::unbounded();
+        let mut watcher = notify_db::new_debouncer(Duration::from_millis(500), None, sx)?;
+
+        let watch_path = unsafe { CURRENT_EXE_DIR.get_unchecked().join(CONFIG_FILE_NAME) };
+        watcher.watch(&watch_path, notify::RecursiveMode::NonRecursive)?;
+
+        to_close.push(LongLivedTask::ConfigWatch(watcher));
+        thread_hnds.push(config_watch::spawn(hook_mgr_tid, rx, error_sx.clone()));
     }
 
-    // Config watch
-    // let event_close = CreateEventW(None, true, false, None)?;
-    // if let Some(hook_mgr_tid) = hook_mgr_tid {
-    //     can_reload_config.push(CanReloadConfig::WindowWatch(hook_mgr_tid));
-
-    //     thread_hnds.push(config_watch::spawn(can_reload_config, event_close.0 as usize));
-    //     to_close.push(LongLivedTask::ConfigWatch(event_close));
-    // }
-
+    let shutdown_info = ShutdownInfo {
+        to_close: Mutex::new(to_close),
+        ..default!()
+    };
     SHUTDOWN_INFO.set(shutdown_info).unwrap();
 
     // Tray
