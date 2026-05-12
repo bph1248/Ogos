@@ -884,9 +884,8 @@ pub(crate) fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2d) -> S
 fn init_binds<'a>(error_sx: &mpsc::Sender<String>) -> Res1<Binds<'a>> {
     let config = config::get().read()?;
     let binds_config = config.binds.as_ref().ok_or(ErrVar::MissingConfigOption { name: config::Binds::NAME })?;
-
-    let (hotkeys_config, underscore_config) = binds_config.hotkeys.as_ref().zip(binds_config.underscore)
-        .unzip();
+    let hotkeys_config = binds_config.hotkeys.as_ref();
+    let underscore_config = binds_config.underscore;
 
     let trigger_watch = hotkeys_config.map(|hotkeys_config| {
         let (trigger_watch_sx, trigger_watch_rx) = mpsc::channel();
@@ -954,16 +953,17 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
                 }
             },
             Msg::Broadcast(BroadcastMsg::WmReloadConfig) => {
-                // if ts.binds.is_some() {
-                //     let mut binds = init_dynamic_binds(error_sx)?;
-                //     unbind_maps(&mut binds);
+                if let Some(mut binds) = ts.binds.take() {
+                    unbind_maps(&mut binds);
+                    drop(binds);
 
-                //     for (_, win_info) in ts.win_infos.iter_mut() {
-                //         win_info.has_maps = binds.has_maps(&win_info.exe);
-                //     }
+                    let new_binds = init_binds(error_sx)?;
+                    for (_, win_info) in ts.win_infos.iter_mut() {
+                        win_info.has_maps = new_binds.has_maps(&win_info.exe);
+                    }
 
-                //     ts.binds.replace(binds);
-                // }
+                    ts.binds = Some(new_binds);
+                }
             },
             Msg::Pipe((msg, ack_sx)) => if let pipe_server::Msg::ActiveGame(exe) = msg {
                 ts.active_game = exe;

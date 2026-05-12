@@ -65,6 +65,8 @@ pub(crate) mod trigger_watch {
     }
 
     pub(crate) fn begin(tasks: HashMap<Key, Task>, pixel_cleaning_prelude: Option<PixelCleaning>, rx: mpsc::Receiver<Msg>, error_sx: mpsc::Sender<String>) {
+        info!("{}: begin", module_path!());
+
         for msg in rx.iter() {
             match msg {
                 Msg::Close => break,

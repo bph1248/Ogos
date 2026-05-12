@@ -610,8 +610,6 @@ fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> Res<boo
 }
 
 fn begin(init: Init, rx: &mpsc::Receiver<Msg>) -> Res<()> { unsafe {
-    info!("{}: begin", module_path!());
-
     let Init {
         window_shift_config,
         current_desktop_hnd,
@@ -730,13 +728,15 @@ fn init<'a>() -> Res<Init<'a>> {
 fn orbit(rx: &mpsc::Receiver<Msg>) -> Res<()> {
     let mut init_ = init()?;
 
-    loop {
-        let res = begin(init_, rx);
+    info!("{}: begin", module_path!());
+    let mut res = begin(init_, rx);
 
+    loop {
         if let Err(err) = res.as_ref() && let ErrVar::ReloadConfig = *err.var {
             init_ = init()?;
 
             info!("{}: reloaded config", module_path!());
+            res = begin(init_, rx);
 
             continue
         }
