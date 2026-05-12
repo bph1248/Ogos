@@ -819,6 +819,7 @@ impl eframe::App for Info {
 
             ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(win_size));
             ui.send_viewport_cmd(egui::ViewportCommand::OuterPosition(win_pos));
+            ui.send_viewport_cmd(egui::ViewportCommand::Focus);
 
             self.resized_viewport = true;
         }
