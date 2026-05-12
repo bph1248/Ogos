@@ -378,8 +378,10 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
 fn init() -> Res<(Cli, CliPathKind)> {
     let current_exe_path = env::current_exe()?;
     let current_exe_dir = current_exe_path.get_dir()?;
+    let current_exe_file_name = current_exe_path.get_file_name()?;
+    CURRENT_EXE_DIR.set(current_exe_dir.into()).unwrap();
+    CURRENT_EXE_FILE_NAME.set(current_exe_file_name.into()).unwrap();
     env::set_current_dir(current_exe_dir)?; // For relative path lookups
-    CURRENT_EXE_DIR.set(current_exe_dir.into()).map_err(|_| ErrVar::FailedSetOnceCell)?;
 
     // Parse Cli
     let (cli, cli_path_kind) = parse_cli()?;

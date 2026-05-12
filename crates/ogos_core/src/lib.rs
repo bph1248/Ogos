@@ -10,6 +10,7 @@ use std::{
 use windows::Win32::Foundation::*;
 
 pub static CURRENT_EXE_DIR: OnceCell<PathBuf> = OnceCell::new();
+pub static CURRENT_EXE_FILE_NAME: OnceCell<String> = OnceCell::new();
 
 #[macro_export]
 macro_rules! default {

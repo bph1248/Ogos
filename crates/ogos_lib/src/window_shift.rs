@@ -16,12 +16,16 @@ use std::{
     fmt::{self, Display},
     mem::{self, *},
     ops::Sub,
+    process,
     sync::mpsc,
     thread::{self, *},
     time::*
 };
 use strum::*;
-use rand::seq::*;
+use rand::{
+    rngs::*,
+    seq::*
+};
 use windows::{
     core::*,
     Win32::{
@@ -74,6 +78,17 @@ impl Sub for Delta {
             y: self.y - rhs.y
         }
     }
+}
+
+struct Init<'a> {
+    window_shift_config: config::WindowShift<'a>,
+    current_desktop_hnd: HDESK,
+    win_infos: HashMap<usize, WinInfo>,
+    win_errored: HashMap<usize, Errored>,
+    rng: ThreadRng,
+    x_axis_choices: [i32; 2],
+    y_axis_choices: [i32; 2],
+    ts: ThreadState
 }
 
 #[derive(Default)]
@@ -416,72 +431,77 @@ fn set_win_attributes(win_info: &WinInfo, window_shift_config: &WindowShift) { u
     });
 } }
 
-fn class_is_denied(class: &str) -> bool {
-    matches!(class, TASKBAR_CLASS_NAME | window_foreground::WINDOW_WATCH_CLASS_NAME)
-}
-
 fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window_shift_config: &'a WindowShift, screen_extent: Extent2d, win_rect: RECT, hwnd: HWND) -> Res<&'a mut WinInfo> {
     let win_exe = hwnd.get_exe()?;
-    let win_text = hwnd.get_text()?;
-    let WindowShift {
-        leeway,
-        constraints,
-        ..
-    } = window_shift_config;
+    let win_tpids = hwnd.get_thread_proc_ids()?;
 
-    let win_info = match constraints.get(win_exe.as_str()) {
-        Some(constraints) => {
-            let (anchor_rel,
-                anchor_abs,
-                anchor_is_constrained
-            ) = constraints.anchor.as_ref()
-                .filter(|anchor_constraint| {
-                    criteria_text_matches(&anchor_constraint.criteria, &win_text)
-                })
-                .map(|anchor_constraint| { // Map to screen coords
-                    (
-                        Some(anchor_constraint.relative),
-                        anchor_constraint.relative.into_abs(screen_extent),
-                        true
-                    )
-                })
-                .unwrap_or_else(|| {
-                    (
-                        None,
-                        win_rect.into(),
-                        false
-                    )
-                });
+    let win_info = if win_tpids.proc == process::id() {
+        WinInfo {
+            hwnd,
+            exe: win_exe,
+            papers: Papers::Deny,
+            ..default!()
+        }
+    } else {
+        let win_text = hwnd.get_text()?;
+        let WindowShift {
+            leeway,
+            constraints,
+            ..
+        } = window_shift_config;
 
-            let delta_from_anchor = anchor_is_constrained.and_then(|| {
-                win_rect.get_congruent_delta_from_anchor(anchor_abs, *leeway)
-            })
-            .unwrap_or_default();
+        match constraints.get(win_exe.as_str()) {
+            Some(constraints) => {
+                let (anchor_rel,
+                    anchor_abs,
+                    anchor_is_constrained
+                ) = constraints.anchor.as_ref()
+                    .filter(|anchor_constraint| {
+                        criteria_text_matches(&anchor_constraint.criteria, &win_text)
+                    })
+                    .map(|anchor_constraint| { // Map to screen coords
+                        (
+                            Some(anchor_constraint.relative),
+                            anchor_constraint.relative.into_abs(screen_extent),
+                            true
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            None,
+                            win_rect.into(),
+                            false
+                        )
+                    });
 
-            let keep_centered = constraints.center.as_ref()
-                .map(|center_constraint| {
-                    criteria_text_matches(&center_constraint.criteria, &win_text)
-                })
-                .unwrap_or_default();
-
-            let (disable_border,
-                disable_round_corners
-            ) = constraints.attributes.as_ref()
-                .filter(|&attributes_constraint| {
-                    criteria_text_matches(&attributes_constraint.criteria, &win_text)
-                })
-                .map(|attributes_constraint| {
-                    (
-                        attributes_constraint.disable_border,
-                        attributes_constraint.disable_round_corners
-                    )
+                let delta_from_anchor = anchor_is_constrained.and_then(|| {
+                    win_rect.get_congruent_delta_from_anchor(anchor_abs, *leeway)
                 })
                 .unwrap_or_default();
 
-            let papers = match class_is_denied(win_text.class.as_str()) {
-                true => Papers::Deny,
-                false => {
-                    constraints.shift.as_ref()
+                let keep_centered = constraints.center.as_ref()
+                    .map(|center_constraint| {
+                        criteria_text_matches(&center_constraint.criteria, &win_text)
+                    })
+                    .unwrap_or(false);
+
+                let (disable_border,
+                    disable_round_corners
+                ) = constraints.attributes.as_ref()
+                    .filter(|&attributes_constraint| {
+                        criteria_text_matches(&attributes_constraint.criteria, &win_text)
+                    })
+                    .map(|attributes_constraint| {
+                        (
+                            attributes_constraint.disable_border,
+                            attributes_constraint.disable_round_corners
+                        )
+                    })
+                    .unwrap_or((false, false));
+
+                let papers = match win_text.class == TASKBAR_CLASS_NAME {
+                    true => Papers::Deny,
+                    false => constraints.shift.as_ref()
                         .map(|shift_constraint| {
                             match shift_constraint.criteria.relation {
                                 WindowRelation::This => match criteria_text_matches(&shift_constraint.criteria, &win_text) {
@@ -491,32 +511,28 @@ fn garner_win_info<'a>(win_infos: &'a mut HashMap<usize, WinInfo>, window_shift_
                                 _ => Papers::CheckConstraint
                             }
                         })
-                        .unwrap_or_default()
-                }
-            };
+                        .unwrap_or(Papers::Waive)
+                };
 
-            WinInfo {
+                WinInfo {
+                    hwnd,
+                    exe: win_exe,
+                    anchor_rel,
+                    anchor_abs,
+                    anchor_is_constrained,
+                    delta_from_anchor,
+                    keep_centered,
+                    disable_border,
+                    disable_round_corners,
+                    papers
+                }
+            },
+            None => WinInfo {
                 hwnd,
                 exe: win_exe,
-                anchor_rel,
-                anchor_abs,
-                anchor_is_constrained,
-                delta_from_anchor,
-                keep_centered,
-                disable_border,
-                disable_round_corners,
-                papers
+                anchor_abs: hwnd.get_rect()?.into(),
+                ..default!()
             }
-        },
-        None => WinInfo {
-            hwnd,
-            exe: win_exe,
-            papers: match class_is_denied(win_text.class.as_str()) {
-                true => Papers::Deny,
-                _ => Papers::Waive
-            },
-            anchor_abs: hwnd.get_rect()?.into(),
-            ..default!()
         }
     };
 
@@ -593,34 +609,23 @@ fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> Res<boo
     Ok(false)
 }
 
-fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
+fn begin(init: Init, rx: &mpsc::Receiver<Msg>) -> Res<()> { unsafe {
     info!("{}: begin", module_path!());
 
-    let config = config::get().read()?;
-    let mut window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigOption { name: config::WindowShift::NAME })?;
-    drop(config);
+    let Init {
+        window_shift_config,
+        current_desktop_hnd,
+        mut win_infos,
+        mut win_errored,
+        mut rng,
+        x_axis_choices,
+        y_axis_choices,
+        mut ts,
+    } = init;
 
-    window_shift_config.interval_dur = window_shift_config.interval_dur.max(1);
-    window_shift_config.leeway = window_shift_config.leeway.max(1);
-
-    let current_desktop_hnd = get_current_thread_desktop()?;
-    let mut win_infos: HashMap<usize, WinInfo> = HashMap::new();
-    let mut win_errored: HashMap<usize, Errored> = HashMap::new();
-
-    let mut rng = rand::rng();
-    let config::WindowShift { stride, .. } = window_shift_config;
-    let stride_x = stride.x.min(window_shift_config.leeway) as i32;
-    let stride_y = stride.y.min(window_shift_config.leeway) as i32;
-    let x_axis_choices = [stride_x, -stride_x];
-    let y_axis_choices = [stride_y, -stride_y];
-
-    let mut ts = ThreadState {
-        screen_extent: get_screen_extent()?,
-        ..default!()
-    };
     loop {
         // Listen for messages until timeout, then look to shift windows. Rinse and repeat
-        match smaug(&mut ts, &mut win_infos, &mut win_errored, &window_shift_config, &rx) {
+        match smaug(&mut ts, &mut win_infos, &mut win_errored, &window_shift_config, rx) {
             Ok(_) => {
                 let fg_hwnd = GetForegroundWindow();
 
@@ -673,22 +678,7 @@ fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
             Err(err) => {
                 match *err.var {
                     ErrVar::Close => break,
-                    ErrVar::ReloadConfig => {
-                        (|| -> ResVar<()> {
-                            let config = config::get().read()?;
-                            window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigOption { name: config::WindowShift::NAME })?;
-
-                            Ok(())
-                        })()
-                        .unwrap_or_else(|err| {
-                            error!("{}: failed to reload config: {}", module_path!(), err);
-                        });
-                    },
-                    _ => {
-                        error!("{}: failed to process message: {}", module_path!(), err);
-
-                        break
-                    }
+                    _ => Err(err)?
                 }
             }
         }
@@ -699,9 +689,65 @@ fn begin(rx: mpsc::Receiver<Msg>) -> Res<()> { unsafe {
     Ok(())
 } }
 
+fn init<'a>() -> Res<Init<'a>> {
+    let config = config::get().read()?;
+    let mut window_shift_config = config.window_shift.clone().ok_or(ErrVar::MissingConfigOption { name: config::WindowShift::NAME })?;
+    drop(config);
+
+    window_shift_config.interval_dur = window_shift_config.interval_dur.max(1);
+    window_shift_config.leeway = window_shift_config.leeway.max(1);
+
+    let current_desktop_hnd = get_current_thread_desktop()?;
+    let win_infos: HashMap<usize, WinInfo> = HashMap::new();
+    let win_errored: HashMap<usize, Errored> = HashMap::new();
+
+    let rng = rand::rng();
+    let config::WindowShift { stride, .. } = window_shift_config;
+    let stride_x = stride.x.min(window_shift_config.leeway) as i32;
+    let stride_y = stride.y.min(window_shift_config.leeway) as i32;
+    let x_axis_choices = [stride_x, -stride_x];
+    let y_axis_choices = [stride_y, -stride_y];
+
+    let ts = ThreadState {
+        screen_extent: get_screen_extent()?,
+        ..default!()
+    };
+
+    let init = Init {
+        window_shift_config,
+        current_desktop_hnd,
+        win_infos,
+        win_errored,
+        rng,
+        x_axis_choices,
+        y_axis_choices,
+        ts
+    };
+
+    Ok(init)
+}
+
+fn orbit(rx: &mpsc::Receiver<Msg>) -> Res<()> {
+    let mut init_ = init()?;
+
+    loop {
+        let res = begin(init_, rx);
+
+        if let Err(err) = res.as_ref() && let ErrVar::ReloadConfig = *err.var {
+            init_ = init()?;
+
+            info!("{}: reloaded config", module_path!());
+
+            continue
+        }
+
+        break res
+    }
+}
+
 pub(crate) fn spawn(rx: mpsc::Receiver<Msg>, error_sx: mpsc::Sender<String>) -> JoinHandle<()> {
     thread::spawn(move || {
-        begin(rx).unwrap_or_else(|err| {
+        orbit(&rx).unwrap_or_else(|err| {
             error_sx.send(format!("{}: terminated: {}", module_path!(), err)).unwrap();
         });
     })
