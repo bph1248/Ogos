@@ -1438,7 +1438,7 @@ impl<'a> MediaBrowser<'a> {
             .auto_sized()
             .show(ui, |ui| ui.label(self.error_msg.as_str()));
 
-        // Close and save cache to file
+        // Close and save cache
         if ui.input(|state| state.viewport().close_requested()) {
             ui.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 
@@ -1455,14 +1455,15 @@ impl<'a> MediaBrowser<'a> {
 
             self.cache.grid_cell_size = self.grid_cell_size;
             self.cache.details_cell_size = self.details_cell_size;
+            self.tags.retain(|_, set| !set.is_empty());
             self.cache.tags = self.tags.keys().cloned().collect();
             self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
             self.cache.entries.clear();
 
-            let mut grid_entry_tags = vec![Some(Vec::with_capacity(self.tags.len())); self.grid_entries.len()];
+            let mut grid_entry_tags = vec![Vec::with_capacity(self.tags.len()); self.grid_entries.len()];
             for (tag_i, (_, set)) in self.tags.iter().enumerate() {
                 for grid_entry_i in set {
-                    grid_entry_tags[*grid_entry_i].as_mut().unwrap().push(tag_i);
+                    grid_entry_tags[*grid_entry_i].push(tag_i);
                 }
             }
 
@@ -1477,7 +1478,7 @@ impl<'a> MediaBrowser<'a> {
                         image_file_name_i: info.image_file_name_i,
                         sort_name: info.sort_name,
                         metadata: info.image_file_name_i.map(|_| info.metadata).unwrap_or_default(),
-                        tags: std::mem::take(&mut grid_entry_tags[i]).unwrap()
+                        tags: std::mem::take(&mut grid_entry_tags[i])
                     }
                 );
             }
