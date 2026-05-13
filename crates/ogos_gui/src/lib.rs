@@ -109,7 +109,7 @@ struct FerryImageInfo {
 struct FerryImagesInfo<'a> {
     ctx: &'a egui::Context,
     thread_pool: &'a Arc<ThreadPool>,
-    metadata_sx: &'a mpsc::Sender<MetadataInfo>,
+    metadata_sx: &'a mpmc::Sender<MetadataInfo>,
     image_dirs: &'static ImageDirs,
     base_image_kind: BaseImageKind,
     grid_cell_size: egui::Vec2,
@@ -849,8 +849,10 @@ struct MediaBrowser<'a> {
     thread_pool: Arc<rayon::ThreadPool>,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
-    metadata_sx: mpsc::Sender<MetadataInfo>,
-    metadata_rx: mpsc::Receiver<MetadataInfo>,
+    deferred_metadata_sx: mpmc::Sender<MetadataInfo>,
+    deferred_metadata_rx: mpmc::Receiver<MetadataInfo>,
+    pick_image_metadata_sx: mpmc::Sender<MetadataInfo>,
+    pick_image_metadata_rx: mpmc::Receiver<MetadataInfo>,
     cache_path: PathBuf,
     cache: Cache,
     cached_images_to_remove: Vec<Rc<str>>,
@@ -953,7 +955,8 @@ impl<'a> MediaBrowser<'a> {
         let thread_pool = Arc::new(rayon::ThreadPoolBuilder::new()
             .num_threads(thread::available_parallelism()?.get())
             .build()?);
-        let (metadata_sx, metadata_rx) = mpsc::channel();
+        let (deferred_metadata_sx, deferred_metadata_rx) = mpmc::unbounded();
+        let (pick_image_metadata_sx, pick_image_metadata_rx) = mpmc::bounded(1);
 
         let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
         let base_images_dir = current_exe_dir.join("images");
@@ -1083,8 +1086,10 @@ impl<'a> MediaBrowser<'a> {
             thread_pool,
             image_dirs,
             images,
-            metadata_sx,
-            metadata_rx,
+            deferred_metadata_sx,
+            deferred_metadata_rx,
+            pick_image_metadata_sx,
+            pick_image_metadata_rx,
             cache_path,
             cache,
             cached_images_to_remove,
@@ -1266,7 +1271,7 @@ impl<'a> MediaBrowser<'a> {
         let ferry_images_info = FerryImagesInfo {
             ctx,
             thread_pool: &self.thread_pool,
-            metadata_sx: &self.metadata_sx,
+            metadata_sx: &self.deferred_metadata_sx,
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Startup,
             grid_cell_size: self.grid_cell_size,
@@ -1384,7 +1389,7 @@ impl<'a> MediaBrowser<'a> {
         let ferry_images_info = FerryImagesInfo {
             ctx: ui.ctx(),
             thread_pool: &self.thread_pool,
-            metadata_sx: &self.metadata_sx,
+            metadata_sx: &self.deferred_metadata_sx,
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Startup,
             grid_cell_size: self.grid_cell_size,
@@ -1409,6 +1414,14 @@ impl<'a> MediaBrowser<'a> {
 
     #[hotpath::measure]
     fn continue_update(&mut self, ui: &mut egui::Ui) {
+        if self.pick_image_metadata_rx.try_recv().is_ok() {
+            for MetadataInfo { grid_entry_i, metadata } in self.pick_image_metadata_rx.try_iter() {
+                let grid_entry_info = &mut self.grid_entries[grid_entry_i];
+
+                grid_entry_info.metadata = Some(metadata);
+            }
+        }
+
         egui::CentralPanel::default()
             .frame(self.frame)
             .show_inside(ui, |ui: &mut egui::Ui| Self::central_panel(self, ui));
@@ -1453,7 +1466,7 @@ impl<'a> MediaBrowser<'a> {
                 }
             }
 
-            while let Ok(MetadataInfo { grid_entry_i, metadata }) = self.metadata_rx.try_recv() {
+            while let Ok(MetadataInfo { grid_entry_i, metadata }) = self.deferred_metadata_rx.try_recv() {
                 self.grid_entries[grid_entry_i].metadata = Some(metadata);
             }
 
@@ -1828,12 +1841,14 @@ impl<'a> MediaBrowser<'a> {
         let (grid_image_state_sx, grid_image_state_rx) = mpmc::bounded(1);
         let (details_image_state_sx, details_image_state_rx) = mpmc::bounded(1);
 
-        let image_file_name_i = self.grid_entries[self.grid_entry_i].image_file_name_i;
-        let grid_entry_stem = self.grid_entries[self.grid_entry_i].stem.as_ref();
+        let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
+        let grid_entry_stem = grid_entry_info.stem.as_ref();
         let pick_image_ext = path.get_file_ext()?;
 
-        let (new_image_file_name, prev_image_file_name) = match image_file_name_i {
-            Some(image_file_name_i) => {
+        let (new_image_file_name,
+            prev_image_file_name
+        ) = match grid_entry_info.image_file_name_i {
+            Some(image_file_name_i) => { // Entry already references an image
                 let (prev_image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
 
                 match &mut image_states.ref_count { // Multiple entries reference the image
@@ -1884,14 +1899,14 @@ impl<'a> MediaBrowser<'a> {
             }
         };
         let (image_file_name_i, _) = self.images.insert_full(new_image_file_name.clone(), ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx), ref_count: 1 });
-        self.grid_entries[self.grid_entry_i].image_file_name_i = Some(image_file_name_i);
+        grid_entry_info.image_file_name_i = Some(image_file_name_i);
 
         let base_image_path = self.image_dirs.base.join(new_image_file_name.as_ref());
 
         let ferry_images_info = FerryImagesInfo {
             ctx,
             thread_pool:  &self.thread_pool,
-            metadata_sx: &self.metadata_sx,
+            metadata_sx: &self.pick_image_metadata_sx,
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Pick { path: path.clone() },
             grid_cell_size: self.grid_cell_size,
