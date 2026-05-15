@@ -26,6 +26,7 @@ use std::{
     ffi::*,
     fmt::Write,
     fs::{self, *},
+    mem,
     ops::*,
     path::*,
     process::*,
@@ -58,6 +59,8 @@ const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const SEPARATOR_WIDTH: f32 = 2.0;
 
 type AspectRatioV = f32;
+type CacheReady = Option<WaitGroup>;
+type ColorImageResult = Result<ColorImageInfo, ()>;
 type Residence = Range<usize>;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -83,6 +86,23 @@ struct CacheEntryInfo {
     tags: Vec<usize>
 }
 
+struct CacheReadies {
+    grid: CacheReady,
+    details: CacheReady
+}
+impl CacheReadies {
+    const NONE: Self = Self { grid: None, details: None };
+
+    fn new() -> Self {
+        Self { grid: Some(WaitGroup::new()), details: Some(WaitGroup::new()) }
+    }
+}
+
+struct ColorImageInfo {
+    image: egui::ColorImage,
+    orientation: Orientation
+}
+
 #[derive(Default)]
 struct DetailsButtonsState {
     hovered_i: Option<usize>,
@@ -100,16 +120,18 @@ struct FerryImageInfo {
     image_file_name: Arc<str>,
     expected_metadata: Option<Arc<Metadata>>,
     grid_entry_i: usize,
-    grid_image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    details_image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    wait_ready: Option<WaitGroup>,
-    poll_ready: Option<Arc<()>>
+    grid_image_state_sx: mpmc::Sender<ColorImageResult>,
+    details_image_state_sx: mpmc::Sender<ColorImageResult>,
+    signal_cache_readies: CacheReadies,
+    wait_cache_readies: CacheReadies,
+    signal_wait_ready: Option<WaitGroup>,
+    signal_poll_ready: Option<Arc<()>>
 }
 
 struct FerryImagesInfo<'a> {
     ctx: &'a egui::Context,
     thread_pool: &'a Arc<ThreadPool>,
-    metadata_sx: &'a mpmc::Sender<MetadataInfo>,
+    metadata_sx: Option<&'a mpmc::Sender<MetadataInfo>>,
     image_dirs: &'static ImageDirs,
     base_image_kind: BaseImageKind,
     grid_cell_size: egui::Vec2,
@@ -148,7 +170,21 @@ struct ImageStates {
 }
 impl ImageStates {
     fn is_none(&self) -> bool {
-        matches!((&self.grid, &self.details), (ImageState::None, ImageState::None))
+        matches!(self,
+            Self { grid: ImageState::None, details: ImageState::None, .. } |
+            Self { grid: ImageState::NoneCheckCache { .. }, details: ImageState::NoneCheckCache { .. }, .. }
+        )
+    }
+
+    fn take_cache_readies(&mut self) -> CacheReadies {
+        CacheReadies {
+            grid: self.grid.take_cache_ready(),
+            details: self.details.take_cache_ready()
+        }
+    }
+
+    fn take_cache_readies_on_none(&mut self) -> Option<CacheReadies> {
+        self.is_none().and_then(|| Some(self.take_cache_readies()))
     }
 }
 
@@ -166,8 +202,9 @@ struct MetadataInfo {
 
 struct QueueImageInfo {
     src_path: PathBuf,
-    image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>,
-    resize: Option<ResizeImage>
+    image_state_sx: mpmc::Sender<ColorImageResult>,
+    resize: Option<ResizeImage>,
+    cache_ready: CacheReady
 }
 
 struct ResetResidence {
@@ -258,9 +295,21 @@ enum BaseImageKind {
 enum ImageState {
     #[default]
     None,
-    Pending(mpmc::Receiver<Result<(egui::ColorImage, Orientation), ()>>),
-    Ready((egui::TextureHandle, Orientation)),
+    NoneCheckCache { cache_ready: CacheReady },
+    Pending { rx: mpmc::Receiver<ColorImageResult>, cache_ready: CacheReady },
+    Ready { tex: egui::TextureHandle, orientation: Orientation, cache_ready: CacheReady },
     Failed
+}
+impl ImageState {
+    fn take_cache_ready(&mut self) -> CacheReady {
+        match self {
+            Self::NoneCheckCache { cache_ready } |
+            Self::Pending{ cache_ready, .. } |
+            Self::Ready { cache_ready, .. } =>
+                mem::take(cache_ready),
+            _ => None
+        }
+    }
 }
 
 pub enum Kind {
@@ -318,23 +367,18 @@ fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle, orientation: Orientat
 
 fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str, label: &str) -> egui::Response {
     match image_state {
-        ImageState::Ready((tex, orientation)) => add_image(ui, tex, *orientation),
-        ImageState::Pending(rx) => {
-            let recvd = match rx.try_recv() {
-                Ok(res) => res,
-                Err(mpmc::TryRecvError::Empty) => return alloc_hover_response(ui),
-                Err(mpmc::TryRecvError::Disconnected) => Err(())
-            };
-
-            match recvd {
-                Ok((color_image, orientation)) => {
-                    let tex = ui.ctx().load_texture(tex_name, color_image, default!());
+        ImageState::Ready { tex, orientation, .. } => add_image(ui, tex, *orientation),
+        ImageState::Pending{ rx, cache_ready } => {
+            match rx.try_recv() {
+                Ok(Ok(ColorImageInfo { image, orientation })) => {
+                    let tex = ui.ctx().load_texture(tex_name, image, default!());
                     let resp = add_image(ui, &tex, orientation);
-                    *image_state = ImageState::Ready((tex, orientation));
+                    *image_state = ImageState::Ready { tex, orientation, cache_ready: mem::take(cache_ready) };
 
                     resp
                 },
-                Err(_) => {
+                Err(mpmc::TryRecvError::Empty) => alloc_hover_response(ui),
+                _ => {
                     let resp = add_label(ui, label);
                     *image_state = ImageState::Failed;
 
@@ -407,7 +451,7 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
     })
 }
 
-fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> Res1<()> {
+fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, image_state_sx: mpmc::Sender<ColorImageResult>, signal_cache_ready: CacheReady) -> Res1<()> {
     fn inner(src_path: &Path, cell_size: egui::Vec2) -> Res1<(egui::ColorImage, Vec<u8>, AspectRatioV)> {
         use rgb::FromSlice;
 
@@ -455,11 +499,13 @@ fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, i
     match inner(src_path, cell_size) {
         Ok((image, pixels, aspect_ratio)) => {
             let image_size = image.size;
-            image_state_sx.send(Ok((image, aspect_ratio.as_orientation()))).unwrap();
+            image_state_sx.send(Ok(ColorImageInfo { image, orientation: aspect_ratio.as_orientation() })).unwrap();
 
             let image_file = fs::File::create(dst_path)?;
             let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
             encoder.encode(pixels.as_slice(), image_size[0] as u32, image_size[1] as u32, image::ExtendedColorType::Rgba8)?;
+
+            drop(signal_cache_ready)
         },
         Err(err) => {
             image_state_sx.send(Err(())).unwrap();
@@ -471,7 +517,7 @@ fn ferry_base_image(src_path: &Path, dst_path: PathBuf, cell_size: egui::Vec2, i
     Ok(())
 }
 
-fn ferry_cached_image(path: PathBuf, image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>) -> ResVar<()> {
+fn ferry_cached_image(path: PathBuf, image_state_sx: mpmc::Sender<ColorImageResult>, wait_cache_ready: CacheReady) -> ResVar<()> {
     fn inner(path: PathBuf) -> ResVar<(egui::ColorImage, AspectRatioV)> {
         let image = load_rgba_image(path.as_path())?;
         let (width, height) = image.dimensions();
@@ -483,8 +529,12 @@ fn ferry_cached_image(path: PathBuf, image_state_sx: mpmc::Sender<Result<(egui::
         Ok((color_image, aspect_ratio_v))
     }
 
+    if let Some(wait_cache_ready) = wait_cache_ready {
+        wait_cache_ready.wait();
+    }
+
     match inner(path) {
-        Ok((image, aspect_ratio_v)) => image_state_sx.send(Ok((image, aspect_ratio_v.as_orientation()))).unwrap(),
+        Ok((image, aspect_ratio_v)) => image_state_sx.send(Ok(ColorImageInfo { image, orientation: aspect_ratio_v.as_orientation() })).unwrap(),
         Err(err) => {
             image_state_sx.send(Err(())).unwrap();
 
@@ -495,7 +545,7 @@ fn ferry_cached_image(path: PathBuf, image_state_sx: mpmc::Sender<Result<(egui::
     Ok(())
 }
 
-fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, dst_path: PathBuf, dst_size: egui::Vec2, image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
+fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, dst_path: PathBuf, dst_size: egui::Vec2, image_state_sx: mpmc::Sender<ColorImageResult>, signal_cache_ready: CacheReady) {
     queue_sx.send(
         QueueImageInfo {
             src_path,
@@ -503,18 +553,20 @@ fn queue_ferry_base_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: Path
             resize: Some(ResizeImage {
                 dst_path,
                 dst_size
-            })
+            }),
+            cache_ready: signal_cache_ready
         }
     )
     .unwrap();
 }
 
-fn queue_ferry_cached_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: mpmc::Sender<Result<(egui::ColorImage, Orientation), ()>>) {
+fn queue_ferry_cached_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: PathBuf, image_state_sx: mpmc::Sender<ColorImageResult>, wait_cache_ready: CacheReady) {
     queue_sx.send(
         QueueImageInfo {
             src_path,
             image_state_sx,
-            resize: None
+            resize: None,
+            cache_ready: wait_cache_ready
         }
     )
     .unwrap();
@@ -550,12 +602,14 @@ fn ferry_images(info: FerryImagesInfo) {
             grid_entry_i,
             grid_image_state_sx,
             details_image_state_sx,
-            wait_ready,
-            poll_ready
+            signal_cache_readies,
+            wait_cache_readies,
+            signal_wait_ready,
+            signal_poll_ready
         } = info;
 
         let ctx = ctx.clone();
-        let metadata_sx = metadata_sx.clone();
+        let metadata_sx = metadata_sx.cloned();
         let queue_sx = queue_sx.clone();
         let base_image_kind = base_image_kind.clone();
         let error_sx = error_sx.clone();
@@ -581,26 +635,34 @@ fn ferry_images(info: FerryImagesInfo) {
 
                 match metadata_differs {
                     true => {
-                        ferry_base_image(base_image_path.as_path(), grid_image_path, grid_cell_size, grid_image_state_sx)?;
-                        queue_ferry_base_image(queue_sx, base_image_path, details_image_path, details_cell_size, details_image_state_sx);
+                        ferry_base_image(base_image_path.as_path(), grid_image_path, grid_cell_size, grid_image_state_sx, signal_cache_readies.grid)?;
+                        queue_ferry_base_image(queue_sx, base_image_path, details_image_path, details_cell_size, details_image_state_sx, signal_cache_readies.details);
 
-                        metadata_sx.send(MetadataInfo { grid_entry_i, metadata }).unwrap();
+                        if let Some(metadata_sx) = metadata_sx {
+                            metadata_sx.send(MetadataInfo { grid_entry_i, metadata }).unwrap();
+                        }
                     },
                     false => {
                         match force_resize_grid_images {
-                            true => ferry_base_image(base_image_path.as_path(), grid_image_path, grid_cell_size, grid_image_state_sx)?,
-                            false => ferry_cached_image(grid_image_path, grid_image_state_sx)?
+                            true => ferry_base_image(base_image_path.as_path(), grid_image_path, grid_cell_size, grid_image_state_sx, signal_cache_readies.grid)?,
+                            false => {
+                                drop(signal_cache_readies.grid);
+                                ferry_cached_image(grid_image_path, grid_image_state_sx, wait_cache_readies.grid)?;
+                            }
                         }
 
                         match force_resize_details_images {
-                            true => queue_ferry_base_image(queue_sx, base_image_path, details_image_path, details_cell_size, details_image_state_sx),
-                            false => queue_ferry_cached_image(queue_sx, details_image_path, details_image_state_sx)
+                            true => queue_ferry_base_image(queue_sx, base_image_path, details_image_path, details_cell_size, details_image_state_sx, signal_cache_readies.details),
+                            false => {
+                                drop(signal_cache_readies.details);
+                                queue_ferry_cached_image(queue_sx, details_image_path, details_image_state_sx, wait_cache_readies.details)
+                            }
                         }
                     }
                 }
 
-                drop(wait_ready);
-                drop(poll_ready);
+                drop(signal_wait_ready);
+                drop(signal_poll_ready);
 
                 ctx.request_repaint();
 
@@ -617,7 +679,8 @@ fn ferry_images(info: FerryImagesInfo) {
             let QueueImageInfo {
                 src_path,
                 image_state_sx,
-                resize
+                resize,
+                cache_ready
             } = info;
 
             let error_sx = error_sx.clone();
@@ -628,9 +691,9 @@ fn ferry_images(info: FerryImagesInfo) {
                         Some(resize) => {
                             let ResizeImage { dst_path, dst_size } = resize;
 
-                            ferry_base_image(src_path.as_path(), dst_path, dst_size, image_state_sx)?;
+                            ferry_base_image(src_path.as_path(), dst_path, dst_size, image_state_sx, cache_ready)?;
                         },
-                        None => ferry_cached_image(src_path, image_state_sx)?
+                        None => ferry_cached_image(src_path, image_state_sx, cache_ready)?
                     }
 
                     Ok(())
@@ -1209,7 +1272,7 @@ impl<'a> MediaBrowser<'a> {
 
     fn stream(&mut self, ctx: &egui::Context, stream: &Stream, poll_ready: bool) {
         if !stream.drop.is_empty() {
-            let (sx, rx) = mpsc::channel();
+            let (drain_sx, drain_rx) = mpsc::channel();
 
             for grid_entry_i in stream.drop.iter().copied() {
                 let grid_entry_info = &self.grid_entries[grid_entry_i];
@@ -1219,19 +1282,26 @@ impl<'a> MediaBrowser<'a> {
 
                     image_states.ref_count = image_states.ref_count.saturating_sub(1);
                     if image_states.ref_count == 0 {
-                        sx.send(std::mem::take(image_states)).unwrap();
+                        let cache_readies = image_states.take_cache_readies(); // Future loads may still need to wait on these
+
+                        // Reset image states to drop ready textures. Drain any pending receivers to allow worker threads to finish
+                        let old_image_states = mem::replace(
+                            image_states,
+                            ImageStates {
+                                grid: ImageState::NoneCheckCache { cache_ready: cache_readies.grid },
+                                details: ImageState::NoneCheckCache { cache_ready: cache_readies.details },
+                                ..default!()
+                            }
+                        );
+                        if let ImageState::Pending{ rx, .. } = old_image_states.grid { drain_sx.send(rx).unwrap(); }
+                        if let ImageState::Pending{ rx, .. } = old_image_states.details { drain_sx.send(rx).unwrap(); }
                     }
                 }
             }
 
             self.thread_pool.spawn_fifo(move || {
-                for image_states in rx.into_iter() {
-                    if let ImageState::Pending(rx) = image_states.grid {
-                        _ = rx.recv();
-                    }
-                    if let ImageState::Pending(rx) = image_states.details {
-                        _ = rx.recv();
-                    }
+                for rx in drain_rx.into_iter() {
+                    _ = rx.recv();
                 }
             });
         }
@@ -1246,9 +1316,9 @@ impl<'a> MediaBrowser<'a> {
                     let (details_image_state_sx, details_image_state_rx) = mpmc::bounded(1);
                     let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
 
-                    if image_states.is_none() {
-                        image_states.grid = ImageState::Pending(grid_image_state_rx);
-                        image_states.details = ImageState::Pending(details_image_state_rx);
+                    if let Some(wait_cache_readies) = image_states.take_cache_readies_on_none() {
+                        image_states.grid = ImageState::Pending{ rx: grid_image_state_rx, cache_ready: None };
+                        image_states.details = ImageState::Pending{ rx: details_image_state_rx, cache_ready: None };
 
                         return Some(FerryImageInfo {
                             image_file_name: image_file_name.clone(),
@@ -1256,8 +1326,10 @@ impl<'a> MediaBrowser<'a> {
                             grid_entry_i,
                             grid_image_state_sx,
                             details_image_state_sx,
-                            wait_ready: None,
-                            poll_ready: poll_ready.and_then(||
+                            signal_cache_readies: CacheReadies::NONE,
+                            wait_cache_readies,
+                            signal_wait_ready: None,
+                            signal_poll_ready: poll_ready.and_then(||
                                 enum_i.lt(&stream.load_first.len()).then_some(self.grid_view_poll_ready.clone())
                             )
                         })
@@ -1271,7 +1343,7 @@ impl<'a> MediaBrowser<'a> {
         let ferry_images_info = FerryImagesInfo {
             ctx,
             thread_pool: &self.thread_pool,
-            metadata_sx: &self.deferred_metadata_sx,
+            metadata_sx: Some(&self.deferred_metadata_sx),
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Startup,
             grid_cell_size: self.grid_cell_size,
@@ -1367,8 +1439,8 @@ impl<'a> MediaBrowser<'a> {
                     let (image_file_name, image_states) = self.images.get_index_mut(image_file_name_i).unwrap();
 
                     if image_states.is_none() {
-                        image_states.grid = ImageState::Pending(grid_image_state_rx);
-                        image_states.details = ImageState::Pending(details_image_state_rx);
+                        image_states.grid = ImageState::Pending{ rx: grid_image_state_rx, cache_ready: None };
+                        image_states.details = ImageState::Pending{ rx: details_image_state_rx, cache_ready: None };
 
                         return Some(FerryImageInfo {
                             image_file_name: image_file_name.clone(),
@@ -1376,8 +1448,10 @@ impl<'a> MediaBrowser<'a> {
                             grid_entry_i,
                             grid_image_state_sx,
                             details_image_state_sx,
-                            wait_ready: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone()),
-                            poll_ready: None
+                            signal_cache_readies: CacheReadies::NONE,
+                            wait_cache_readies: CacheReadies::NONE, // Assume the cache exists
+                            signal_wait_ready: grid_entry_i.lt(&visible_cell_count).then_some(wait_group.clone()),
+                            signal_poll_ready: None
                         })
                     }
                 }
@@ -1389,7 +1463,7 @@ impl<'a> MediaBrowser<'a> {
         let ferry_images_info = FerryImagesInfo {
             ctx: ui.ctx(),
             thread_pool: &self.thread_pool,
-            metadata_sx: &self.deferred_metadata_sx,
+            metadata_sx: Some(&self.deferred_metadata_sx),
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Startup,
             grid_cell_size: self.grid_cell_size,
@@ -1414,12 +1488,9 @@ impl<'a> MediaBrowser<'a> {
 
     #[hotpath::measure]
     fn continue_update(&mut self, ui: &mut egui::Ui) {
-        if self.pick_image_metadata_rx.try_recv().is_ok() {
-            for MetadataInfo { grid_entry_i, metadata } in self.pick_image_metadata_rx.try_iter() {
-                let grid_entry_info = &mut self.grid_entries[grid_entry_i];
-
-                grid_entry_info.metadata = Some(metadata);
-            }
+        for MetadataInfo { grid_entry_i, metadata } in self.pick_image_metadata_rx.try_iter() {
+            let grid_entry_info = &mut self.grid_entries[grid_entry_i];
+            grid_entry_info.metadata = Some(metadata);
         }
 
         egui::CentralPanel::default()
@@ -1478,7 +1549,7 @@ impl<'a> MediaBrowser<'a> {
                         image_file_name_i: info.image_file_name_i,
                         sort_name: info.sort_name,
                         metadata: info.image_file_name_i.map(|_| info.metadata).unwrap_or_default(),
-                        tags: std::mem::take(&mut grid_entry_tags[i])
+                        tags: mem::take(&mut grid_entry_tags[i])
                     }
                 );
             }
@@ -1899,15 +1970,23 @@ impl<'a> MediaBrowser<'a> {
                 (new_image_file_name, None)
             }
         };
-        let (image_file_name_i, _) = self.images.insert_full(new_image_file_name.clone(), ImageStates { grid: ImageState::Pending(grid_image_state_rx), details: ImageState::Pending(details_image_state_rx), ref_count: 1 });
+        let cache_readies = CacheReadies::new();
+        let (image_file_name_i, _) = self.images.insert_full(
+            new_image_file_name.clone(),
+            ImageStates {
+                grid: ImageState::Pending { rx: grid_image_state_rx, cache_ready: cache_readies.grid.clone() },
+                details: ImageState::Pending { rx: details_image_state_rx, cache_ready: cache_readies.details.clone() },
+                ref_count: 1
+            }
+        );
         grid_entry_info.image_file_name_i = Some(image_file_name_i);
 
         let base_image_path = self.image_dirs.base.join(new_image_file_name.as_ref());
 
         let ferry_images_info = FerryImagesInfo {
             ctx,
-            thread_pool:  &self.thread_pool,
-            metadata_sx: &self.pick_image_metadata_sx,
+            thread_pool: &self.thread_pool,
+            metadata_sx: None,
             image_dirs: self.image_dirs,
             base_image_kind: BaseImageKind::Pick { path: path.clone() },
             grid_cell_size: self.grid_cell_size,
@@ -1921,32 +2000,46 @@ impl<'a> MediaBrowser<'a> {
                     grid_entry_i: self.grid_entry_i,
                     grid_image_state_sx,
                     details_image_state_sx,
-                    wait_ready: None,
-                    poll_ready: None
+                    signal_cache_readies: cache_readies,
+                    wait_cache_readies: CacheReadies::NONE,
+                    signal_wait_ready: None,
+                    signal_poll_ready: None
                 }
             ],
             error_sx: self.error_sx.clone()
         };
         ferry_images(ferry_images_info);
 
+        let grid_entry_i = self.grid_entry_i;
+        let pick_image_metadata_sx = self.pick_image_metadata_sx.clone();
         let image_dirs = self.image_dirs;
-        self.thread_pool.spawn(move || {
-            _ = fs::copy(&path, &base_image_path).inspect_err(|err| {
-                error!("{}: failed to copy image to cache: {}: {}", module_path!(), path.display(), err);
-            });
+        self.thread_pool.spawn_fifo(move || {
+            (|| -> Res<_> {
+                fs::copy(&path, &base_image_path)?;
 
-            if let Some(prev_image_file_name) = prev_image_file_name {
-                let paths = [
-                    image_dirs.base.join(prev_image_file_name.as_ref()),
-                    image_dirs.grid.join(prev_image_file_name.as_ref()).with_added_extension("webp"),
-                    image_dirs.details.join(prev_image_file_name.as_ref()).with_added_extension("webp")
-                ];
-                for path in paths {
-                    _ = fs::remove_file(&path).inspect_err(|err| {
-                        error!("{}: failed to remove image: {}: {}", module_path!(), path.display(), err);
-                    });
+                let base_image_file = File::open(base_image_path.as_path())?;
+                let metadata = base_image_file.metadata()?;
+                let metadata = Arc::new(Metadata {
+                    created: metadata.created()?,
+                    modified: metadata.modified()?,
+                    len: metadata.len()
+                });
+                pick_image_metadata_sx.send(MetadataInfo { grid_entry_i, metadata }).unwrap();
+
+                if let Some(prev_image_file_name) = prev_image_file_name {
+                    let paths = [
+                        image_dirs.base.join(prev_image_file_name.as_ref()),
+                        image_dirs.grid.join(prev_image_file_name.as_ref()).with_added_extension("webp"),
+                        image_dirs.details.join(prev_image_file_name.as_ref()).with_added_extension("webp")
+                    ];
+                    for path in paths {
+                        fs::remove_file(&path)?;
+                    }
                 }
-            }
+
+                Ok(())
+            })()
+            .unwrap_or_else(|err| error!("{}: failure caching picked image: {}", module_path!(), err));
         });
 
         Ok(())

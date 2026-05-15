@@ -121,7 +121,8 @@ fn begin(send_ready: mpsc::Sender<ReadyMsg>, window_foreground_sx: Option<mpsc::
         PIPE_SIZE,
         0,
         Some(&security_attributes)
-    ).win32_core_ok()?;
+    )
+    .win32_core_ok()?;
 
     send_ready.send(ReadyMsg::PipeServer)?;
     drop(send_ready);

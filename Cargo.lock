@@ -3053,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "ogos"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "hotpath",
  "ogos_err",
@@ -3063,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_audio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "com-policy-config",
  "log",
@@ -3075,7 +3075,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_common"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "const_format",
  "log",
@@ -3095,7 +3095,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "const_format",
  "discord-rich-presence",
@@ -3111,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "once_cell",
  "serde",
@@ -3120,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_discord"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "concat-string",
  "discord-rich-presence",
@@ -3137,7 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_display"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ddc",
  "ddc-winapi",
@@ -3158,7 +3158,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_err"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3191,7 +3191,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_gui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "concat-string",
  "crossbeam",
@@ -3224,7 +3224,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_lib"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "argfile",
  "bincode",
@@ -3267,7 +3267,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_mki"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lazy_static",
  "log",
@@ -3276,7 +3276,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_proc_macros"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3285,7 +3285,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_video"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "concat-string",
  "log",
