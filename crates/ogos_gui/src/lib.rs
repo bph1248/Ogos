@@ -2085,7 +2085,7 @@ impl<'a> MediaBrowser<'a> {
         ui.menu_button("Tags", |ui| {
             // Add tag
             let tag_add_edit_resp = egui::TextEdit::singleline(&mut self.tag_add_edit)
-                .hint_text("Add")
+                .hint_text("New")
                 .show(ui)
                 .response;
 
@@ -2104,32 +2104,33 @@ impl<'a> MediaBrowser<'a> {
             ui.separator();
 
             // Select from existing tags
-            let grid_cell_tag_buttons_state = self.tags.iter_mut().fold(GridCellTagButtonsState::default(), |mut state, (tag, set)| {
-                if !set.is_empty() {
-                    let tag_button_resp = ui.button(tag.as_ref());
+            let grid_cell_tag_buttons_state = self.tags.iter_mut()
+                .fold(GridCellTagButtonsState::default(), |mut state, (tag, set)| {
+                    if !set.is_empty() {
+                        let mut entry_is_tagged = set.contains(&self.grid_entry_i);
+                        let tag_checkbox_resp = ui.checkbox(&mut entry_is_tagged, tag.as_ref());
 
-                    match (tag_button_resp.clicked(), set.contains(&self.grid_entry_i)) {
-                        (_tag_button_clicked @ true, _entry_is_tagged @ true) => {
-                            set.remove(&self.grid_entry_i);
+                        match tag_checkbox_resp.clicked() {
+                            true if !entry_is_tagged => {
+                                set.remove(&self.grid_entry_i);
 
-                            let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
-                            if tag_is_active {
-                                match set.is_empty() {
-                                    true => state.reset_grid_view = true,
-                                    false => self.grid_view_entry_removed = true
+                                let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == tag).unwrap_or(false);
+                                if tag_is_active {
+                                    match set.is_empty() {
+                                        true => state.reset_grid_view = true,
+                                        false => self.grid_view_entry_removed = true
+                                    }
+
+                                    ui.close();
                                 }
-
-                                ui.close();
-                            }
-                        },
-                        (_tag_button_clicked @ true, _entry_is_tagged @ false) => _ = set.insert(self.grid_entry_i),
-                        (_tag_button_clicked @ false, _entry_is_tagged @ true) => _ = tag_button_resp.highlight(),
-                        _ => ()
+                            },
+                            true if entry_is_tagged => _ = set.insert(self.grid_entry_i),
+                            _ => ()
+                        }
                     }
-                }
 
-                state
-            });
+                    state
+                });
 
             if grid_cell_tag_buttons_state.reset_grid_view {
                 self.reset_grid_view(ui);
