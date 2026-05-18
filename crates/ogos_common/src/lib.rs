@@ -22,6 +22,7 @@ use serde::{de::*, *};
 use std::{
     borrow::*,
     fmt::{self, Display},
+    mem,
     ops::*,
     path::*,
     process::*,
@@ -156,6 +157,7 @@ pub trait BoolExt {
     fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T>;
     fn _as_str(&self) -> &'static str;
     fn as_win32_bool(&self) -> BOOL;
+    fn take(&mut self) -> bool;
 }
 impl BoolExt for bool {
     fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T> {
@@ -177,6 +179,10 @@ impl BoolExt for bool {
             true => BOOL(1),
             false => BOOL(0)
         }
+    }
+
+    fn take(&mut self) -> bool {
+        mem::replace(self, false)
     }
 }
 
