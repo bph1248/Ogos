@@ -825,6 +825,10 @@ fn replace_dir_entries(entries: &mut Vec<DirEntryInfo>, dir: &Path) {
     .unwrap_or_else(|err| error!("{}: failed to read dir: {}: {}", module_path!(), dir.display(), err));
 }
 
+fn requested_clear_selection(ui: &mut egui::Ui) -> bool {
+    ui.ctx().input(|state| state.modifiers.ctrl && state.key_released(egui::Key::D))
+}
+
 fn requested_go_back(ui: &egui::Ui) -> bool {
     ui.ctx().input(|state|
         state.pointer.button_released(egui::PointerButton::Extra1) || state.key_released(egui::Key::Escape))
@@ -1587,6 +1591,9 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn central_panel_grid(&mut self, ui: &mut egui::Ui) {
+        if requested_clear_selection(ui) && !egui::Popup::is_any_open(ui) {
+            self.reset_grid_entries_selection();
+        }
         if requested_go_back(ui) && self.active_tag.is_some() {
             self.reset_grid_view(ui);
         }
@@ -1658,6 +1665,10 @@ impl<'a> MediaBrowser<'a> {
                                 self.tag_win_time_stamp = None;
                                 self.tag_win_should_open = false;
                             }
+                        }
+
+                        if resp.clicked() {
+                            self.reset_grid_entries_selection();
                         }
                     }
                 }
@@ -1764,8 +1775,8 @@ impl<'a> MediaBrowser<'a> {
                         self.tag_win_button_menu_is_open = false;
                     });
 
+                // Switch tag view
                 if tag_button_resp.clicked() && self.active_tag.as_ref().is_none_or(|active_tag| active_tag != tag) {
-                    self.reset_grid_entries_selection();
                     let mut stream = Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view);
                     populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
@@ -1773,6 +1784,7 @@ impl<'a> MediaBrowser<'a> {
                     stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
                     self.stream(ui.ctx(), &stream, true);
 
+                    self.reset_grid_entries_selection();
                     self.active_tag = Some(tag.clone());
                     self.animate_bool = false;
                 }
@@ -1877,6 +1889,7 @@ impl<'a> MediaBrowser<'a> {
             None => add_label(ui, grid_entry_info.stem.as_ref())
         };
 
+        // Select cell or switch view
         let ctrl_held = ui.input(|state| state.modifiers.ctrl);
         if cell_resp.clicked() {
             match ctrl_held {
@@ -1892,7 +1905,6 @@ impl<'a> MediaBrowser<'a> {
                         _ => Some(SelectionKind::Multi)
                     }
                 },
-                // Switch view
                 false => {
                     self.details_grid_entry_i = self.grid_entry_i;
                     self.details_dir_entries.clear();

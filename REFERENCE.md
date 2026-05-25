@@ -90,7 +90,8 @@ Left-click a grid entry to enter 'details view' and launch media. Right-click th
     - __TV__: If browsing a folder, use the folder name for __Details__ and the media's file name for __State__; else use the media's file name for __Details__.
     - __Movie__/__Words__: Use the media's file name for __Details__.
 
-Press `back_button` or `esc` to clear the current filter or return to the previous view.
+Hold `ctrl` to select multiple grid entries. Press `ctrl-d` or click the background to clear the current selection.
+Press `back_button` or `esc` to return to the previous view.
 
 #### Mpv
 
