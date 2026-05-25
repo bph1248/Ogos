@@ -35,6 +35,16 @@ macro_rules! into {
     };
 }
 #[macro_export]
+macro_rules! loan {
+    ($src:expr, $dst:ident => $body:expr) => {
+        let $dst = std::mem::take(&mut $src);
+
+        $body
+
+        $src = $dst;
+    };
+}
+#[macro_export]
 macro_rules! now {
     () => {
         std::time::Instant::now()

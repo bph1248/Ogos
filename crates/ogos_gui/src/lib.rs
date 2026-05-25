@@ -279,13 +279,6 @@ struct ResizeImage {
     dst_size: egui::Vec2
 }
 
-#[derive(Default)]
-struct TagWinButtonMenuState {
-    reset_grid_entries_selection: bool,
-    tag_op: Option<(Rc<str>, TagOp)>,
-    stream: Option<Stream>
-}
-
 #[derive(Clone)]
 enum BaseImageKind {
     Pick { path: PathBuf },
@@ -956,9 +949,10 @@ struct MediaBrowser<'a> {
     new_tag_edit: String,
     /// Sets of indices into [`grid_entries`]
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
-    tags_pending_modification: HashSet<Rc<str>>,
     active_tag: Option<Rc<str>>,
-    open_tag_win: bool,
+    pending_tag: Option<(Rc<str>, TagOp)>,
+    selected_tags: HashSet<Rc<str>>,
+    tag_win_should_open: bool,
     tag_win_button_menu_is_open: bool,
     tag_win_rename_edit: String,
     tag_win_time_stamp: Option<Instant>,
@@ -1194,9 +1188,10 @@ impl<'a> MediaBrowser<'a> {
             sort_name_edit: default!(),
             new_tag_edit: default!(),
             tags,
-            tags_pending_modification: default!(),
             active_tag: default!(),
-            open_tag_win: default!(),
+            pending_tag: default!(),
+            selected_tags: default!(),
+            tag_win_should_open: default!(),
             tag_win_button_menu_is_open: default!(),
             tag_win_rename_edit: default!(),
             tag_win_time_stamp: default!(),
@@ -1239,7 +1234,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn reset_grid_entries_selection(&mut self) {
-        self.tags_pending_modification.clear();
+        self.selected_tags.clear();
         self.grid_entries_selection.clear();
         self.grid_entries_selection_kind = None;
     }
@@ -1629,7 +1624,7 @@ impl<'a> MediaBrowser<'a> {
             [250.0, (max_rect.height() - FRAME_INNER_MARGIN).max(0.0)].into()
         );
 
-        let (tag_win_button_menu_state, tag_win_resp) = self.open_tag_win.and_then(|| {
+        let tag_win_resp = self.tag_win_should_open.and_then(|| {
             egui::Window::new("tag_win")
                 .fixed_rect(tag_win_rect)
                 .title_bar(false)
@@ -1641,17 +1636,13 @@ impl<'a> MediaBrowser<'a> {
 
                         ui.separator();
 
-                        let button_menu_state = self.tag_win_buttons(ui);
+                        self.tag_win_buttons(ui);
 
                         ui.take_available_space();
-
-                        button_menu_state
-                    })
-                    .inner
+                    });
                 })
         })
-        .map(|shown| (shown.inner, shown.response))
-        .unzip();
+        .map(|shown| shown.response);
 
         if !self.tag_win_button_menu_is_open {
             let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
@@ -1665,7 +1656,7 @@ impl<'a> MediaBrowser<'a> {
                             true => self.tag_win_time_stamp = Some(now!()),
                             false => if hover_pos.x > resp.rect.right() {
                                 self.tag_win_time_stamp = None;
-                                self.open_tag_win = false;
+                                self.tag_win_should_open = false;
                             }
                         }
                     }
@@ -1684,7 +1675,7 @@ impl<'a> MediaBrowser<'a> {
 
                             if cursor_catch_rect.contains(cursor_pos) {
                                 self.tag_win_time_stamp = Some(now!());
-                                self.open_tag_win = true;
+                                self.tag_win_should_open = true;
                             }
 
                             self.tag_win_cursor_checked = true;
@@ -1695,49 +1686,37 @@ impl<'a> MediaBrowser<'a> {
 
             if let Some(tag_win_time_stamp) = self.tag_win_time_stamp && tag_win_time_stamp.elapsed() > Duration::from_secs(3) {
                 self.tag_win_time_stamp = None;
-                self.open_tag_win = false;
+                self.tag_win_should_open = false;
             }
         }
 
-        if let Some(tag_win_button_menu_state) = tag_win_button_menu_state.flatten() {
-            if tag_win_button_menu_state.reset_grid_entries_selection {
-                self.reset_grid_entries_selection();
-            }
+        if let Some((tag, op)) = self.pending_tag.take() {
+            let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == &tag).unwrap_or(false);
 
-            if let Some((tag, op)) = tag_win_button_menu_state.tag_op {
-                let tag_is_active = self.active_tag.as_ref().map(|active_tag| active_tag == &tag).unwrap_or(false);
+            match op {
+                TagOp::Rename => {
+                    let set = self.tags.remove(&tag).unwrap();
+                    let tag: Rc<str> = Rc::from(self.tag_win_rename_edit.as_str());
 
-                match op {
-                    TagOp::Rename => {
-                        let set = self.tags.remove(&tag).unwrap();
-                        let tag: Rc<str> = Rc::from(self.tag_win_rename_edit.as_str());
+                    if tag_is_active {
+                        self.active_tag = Some(tag.clone());
+                    }
+                    self.tags.insert(tag, set);
 
-                        if tag_is_active {
-                            self.active_tag = Some(tag.clone());
-                        }
-                        self.tags.insert(tag, set);
+                    self.tag_win_rename_edit.clear();
+                },
+                TagOp::Remove => {
+                    self.tags.remove(&tag);
 
-                        self.tag_win_rename_edit.clear();
-                    },
-                    TagOp::Remove => {
-                        self.tags.remove(&tag);
-
-                        if tag_is_active {
-                            self.reset_grid_view(ui);
-                        }
+                    if tag_is_active {
+                        self.reset_grid_view(ui);
                     }
                 }
-            }
-
-            if let Some(stream) = tag_win_button_menu_state.stream {
-                let visible_cell_count = self.reset_residence(ui).visible_cell_count;
-                let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
-                self.stream(ui.ctx(), &stream, true);
             }
         }
     }
 
-    fn tag_win_buttons(&mut self, ui: &mut egui::Ui) -> TagWinButtonMenuState {
+    fn tag_win_buttons(&mut self, ui: &mut egui::Ui) {
         let all_button_resp = ui.button("All");
 
         if all_button_resp.clicked() && self.active_tag.is_some() {
@@ -1747,58 +1726,62 @@ impl<'a> MediaBrowser<'a> {
             all_button_resp.highlight();
         }
 
-        let mut button_menu_state = TagWinButtonMenuState::default();
-        for (tag, set) in self.tags.iter() { if !set.is_empty() {
-            let tag_button_resp = ui.button(tag.as_ref());
+        loan!(self.tags, tags => {
+            for (tag, set) in tags.iter() { if !set.is_empty() {
+                let tag_button_resp = ui.button(tag.as_ref());
 
-            egui::Popup::context_menu(&tag_button_resp)
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    self.tag_win_button_menu_is_open = true;
+                egui::Popup::context_menu(&tag_button_resp)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        self.tag_win_button_menu_is_open = true;
 
-                    let tag_rename_edit_resp = egui::TextEdit::singleline(&mut self.tag_win_rename_edit)
-                        .hint_text("Rename")
-                        .show(ui)
-                        .response;
+                        let tag_rename_edit_resp = egui::TextEdit::singleline(&mut self.tag_win_rename_edit)
+                            .hint_text("Rename")
+                            .show(ui)
+                            .response;
 
-                    tag_rename_edit_resp.request_focus();
+                        tag_rename_edit_resp.request_focus();
 
-                    if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
-                        if !self.tag_win_rename_edit.is_empty() {
-                            button_menu_state.tag_op = Some((tag.clone(), TagOp::Rename));
+                        if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
+                            if !self.tag_win_rename_edit.is_empty() {
+                                self.pending_tag = Some((tag.clone(), TagOp::Rename));
+
+                                ui.close();
+                            } else {
+                                tag_rename_edit_resp.request_focus();
+                            }
+                        }
+
+                        let tag_remove_button_resp = ui.button("Remove");
+                        if tag_remove_button_resp.clicked() {
+                            self.pending_tag = Some((tag.clone(), TagOp::Remove));
 
                             ui.close();
-                        } else {
-                            tag_rename_edit_resp.request_focus();
                         }
-                    }
+                    })
+                    .inspect(|tag_button_menu| if tag_button_menu.response.should_close() {
+                        self.tag_win_time_stamp = Some(now!());
+                        self.tag_win_button_menu_is_open = false;
+                    });
 
-                    let tag_remove_button_resp = ui.button("Remove");
-                    if tag_remove_button_resp.clicked() {
-                        button_menu_state.tag_op = Some((tag.clone(), TagOp::Remove));
+                if tag_button_resp.clicked() && self.active_tag.as_ref().is_none_or(|active_tag| active_tag != tag) {
+                    self.reset_grid_entries_selection();
+                    let mut stream = Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view);
+                    populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
 
-                        ui.close();
-                    }
-                })
-                .inspect(|tag_button_menu| if tag_button_menu.response.should_close() {
-                    self.tag_win_time_stamp = Some(now!());
-                    self.tag_win_button_menu_is_open = false;
-                });
+                    let visible_cell_count = self.reset_residence(ui).visible_cell_count;
+                    stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
+                    self.stream(ui.ctx(), &stream, true);
 
-            if tag_button_resp.clicked() && self.active_tag.as_ref().is_none_or(|active_tag| active_tag != tag) {
-                button_menu_state.reset_grid_entries_selection = true;
-                button_menu_state.stream = Some(Stream::default().with_flatten_drop(self.residence.clone(), &self.grid_view));
-                populate_grid_view(&mut self.grid_view, &self.grid_entries, set);
+                    self.active_tag = Some(tag.clone());
+                    self.animate_bool = false;
+                }
 
-                self.active_tag = Some(tag.clone());
-                self.animate_bool = false;
-            }
-            if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
-                tag_button_resp.highlight();
-            }
-        } }
-
-        button_menu_state
+                if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
+                    tag_button_resp.highlight();
+                }
+            } }
+        });
     }
 
     fn grid_view(&mut self, ui: &mut egui::Ui) {
@@ -1947,7 +1930,7 @@ impl<'a> MediaBrowser<'a> {
                 Some(SelectionKind::Multi) if self.grid_entries_selection.contains(&self.grid_entry_i) =>
                     (None, Some(egui::SetOpenCommand::Bool(true))),
                 Some(SelectionKind::Multi) => {
-                    self.tags_pending_modification.clear();
+                    self.selected_tags.clear();
                     self.grid_entries_selection.clear();
                     self.grid_entries_selection.insert(self.grid_entry_i);
                     self.grid_entries_selection_kind = Some(SelectionKind::Single);
@@ -2256,19 +2239,19 @@ impl<'a> MediaBrowser<'a> {
         ui.separator();
 
         for (tag, set) in self.tags.iter() { if !set.is_empty() {
-            let mut tag_checked = self.tags_pending_modification.contains(tag);
+            let mut tag_checked = self.selected_tags.contains(tag);
             let tag_checkbox_resp = ui.checkbox(&mut tag_checked, tag.as_ref());
 
             if tag_checkbox_resp.clicked() {
                 match tag_checked {
-                    true => self.tags_pending_modification.insert(tag.clone()),
-                    false => self.tags_pending_modification.remove(tag)
+                    true => self.selected_tags.insert(tag.clone()),
+                    false => self.selected_tags.remove(tag)
                 };
             }
         } }
 
         if add_button_resp.clicked() {
-            for tag in self.tags_pending_modification.drain() {
+            for tag in self.selected_tags.drain() {
                 let set = self.tags.get_mut(&tag).unwrap();
 
                 set.extend(self.grid_entries_selection.iter());
@@ -2276,7 +2259,7 @@ impl<'a> MediaBrowser<'a> {
         }
 
         if remove_button_resp.clicked() {
-            for tag in self.tags_pending_modification.drain() {
+            for tag in self.selected_tags.drain() {
                 let set = self.tags.get_mut(&tag).unwrap();
 
                 for grid_entry_i in self.grid_entries_selection.iter() {
