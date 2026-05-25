@@ -43,6 +43,14 @@ macro_rules! loan {
 
         $src = $dst;
     };
+
+    ($src:expr, mut $dst:ident => $body:expr) => {
+        let mut $dst = std::mem::take(&mut $src);
+
+        $body
+
+        $src = $dst;
+    };
 }
 #[macro_export]
 macro_rules! now {
