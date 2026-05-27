@@ -2,7 +2,7 @@
 
 use ogos_err::*;
 
-#[hotpath::main]
+#[hotpath::main(percentiles = [95, 99.99])]
 fn main() -> Res<()> {
     ogos_lib::entry()
 }

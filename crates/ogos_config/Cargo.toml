@@ -19,3 +19,4 @@ ogos_mki = { workspace = true }
 once_cell = { workspace = true }
 ron = { workspace = true }
 serde = { workspace = true }
+wgpu = { workspace = true }

@@ -9,6 +9,8 @@ version = { workspace = true }
 crate-type = ["lib"]
 
 [dependencies]
+eframe = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true }
 windows = { workspace = true }
+zune-png = { workspace = true }

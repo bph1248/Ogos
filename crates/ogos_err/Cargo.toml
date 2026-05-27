@@ -15,6 +15,7 @@ clap = { workspace = true }
 crossbeam = { workspace = true }
 discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
+fast_image_resize = { workspace = true }
 image = { workspace = true }
 log = { workspace = true }
 netcorehost = { workspace = true }
@@ -36,3 +37,6 @@ which = { workspace = true }
 widestring = { workspace = true }
 windows = { workspace = true }
 windows_061 = { workspace = true }
+zenwebp = { workspace = true }
+zip = { workspace = true }
+zune-png = { workspace = true }

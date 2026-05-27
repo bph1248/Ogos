@@ -16,7 +16,8 @@ concat-string = "1.0.1"
 const_format = { version = "0.2.34", default-features = false }
 crossbeam = "0.8.4"
 discord-rich-presence = "1.0.0"
-eframe = { version = "0.34.3", default-features = false, features = ["default_fonts", "wgpu"] }
+eframe = { path = "B:/dev/egui/crates/eframe", default-features = false, features = ["default_fonts", "wgpu"] }
+fast_image_resize = { version = "6.0.0", features = ["image"] }
 hotpath = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 log = "0.4.17"
@@ -45,6 +46,7 @@ simplelog = "0.12.1"
 strum = { version = "0.27.1", features = ["derive"] }
 subenum = { version = "1.1.2", default-features = false }
 sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "system"] }
+wgpu = "29.0.3"
 which = "8.0.0"
 widestring = { version = "1.2.0", default-features = false, features = ["std"] }
 windows = { version = "0.62.2", features = [
@@ -72,6 +74,9 @@ windows = { version = "0.62.2", features = [
 windows_061 = { version = "0.61", package = "windows", features = [
     "Win32_Devices_FunctionDiscovery"
 ] }
+zenwebp = { version = "0.4.4", default-features = false }
+zip = "8.6.0"
+zune-png = "0.5.2"
 
 [profile.public]
 inherits = "release"

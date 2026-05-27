@@ -126,7 +126,7 @@ unsafe impl Sync for LongLivedTask {}
 fn error_alert(msg: String) {
     error!("{}", &msg);
 
-    _ = gui::begin(gui::Kind::Info { msg });
+    _ = gui::begin(gui::GuiKind::Info { msg });
 }
 
 fn confirm_novideo_srgb_deps(path: &Path) -> Res1<()> {
@@ -353,7 +353,7 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
     }
 
     if cli.media_browser {
-        gui::begin(gui::Kind::MediaBrowser).unwrap_or_else(|err| {
+        gui::begin(gui::GuiKind::MediaBrowser).unwrap_or_else(|err| {
             error_alert(format!("{}: failed to launch media browser: {}", module_path!(), err));
         });
     }
@@ -540,7 +540,7 @@ pub fn entry() -> Res<()> {
                 let long_help = cli::Cli::command().render_long_help();
                 let long_help = long_help.to_string();
 
-                gui::begin(gui::Kind::Info { msg: long_help })?;
+                gui::begin(gui::GuiKind::Info { msg: long_help })?;
 
                 return Ok(())
             }

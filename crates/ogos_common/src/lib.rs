@@ -330,9 +330,10 @@ pub fn confirm_or_find_app<'a, P>(confirm: Option<&'a P>, app: &'static str) -> 
 pub fn get_file_kind(ext: &str) -> FileKind {
     let guess = mime_guess::from_ext(ext).first();
 
-    guess.as_ref().map(|mime| match mime.type_() {
-        mime::IMAGE => FileKind::Image,
-        mime::VIDEO => FileKind::Vid,
+    guess.map(|mime| match (mime.type_(), mime.subtype().as_str()) {
+        (mime::APPLICATION, "x-cbr") => FileKind::Manga,
+        (mime::IMAGE, _) => FileKind::Image,
+        (mime::VIDEO, _) => FileKind::Vid,
         _ => FileKind::Other
     })
     .unwrap_or(FileKind::Unknown)

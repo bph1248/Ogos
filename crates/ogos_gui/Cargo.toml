@@ -10,14 +10,17 @@ crate-type = ["lib"]
 
 [dependencies]
 concat-string = { workspace = true }
+const_format = { workspace = true }
 crossbeam = { workspace = true }
 discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
-egui = { version = "0.34.3", default-features = false, features = ["serde"] }
-egui_extras = { version = "0.34.3", default-features = false }
+egui = { path = "B:/dev/egui/crates/egui", default-features = false, features = ["serde"] }
+egui_extras = { path = "B:/dev/egui/crates/egui_extras", default-features = false }
+fast_image_resize = { workspace = true }
 hotpath = { workspace = true }
 image = { workspace = true }
 indexmap = { version = "2.14.0", features = ["serde"] }
+jpeg-decoder = "0.3.2"
 log = { workspace = true }
 ogos_common = { workspace = true }
 ogos_config = { workspace = true }
@@ -34,9 +37,14 @@ rgb = "0.8.52"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tap = "1.0.1"
-wgpu = { version = "29.0.3", features = ["dx12"] }
+wgpu = { workspace = true }
 windows = { workspace = true }
+zenwebp = { workspace = true }
+zip = { workspace = true }
+zune-jpeg = "0.5.15"
+zune-png = { workspace = true }
 
 [features]
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
+resize = []
