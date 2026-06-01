@@ -370,7 +370,7 @@ impl AsOrientation for f32 {
 }
 
 fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle, orientation: Orientation) -> egui::Response {
-    let image = egui::Image::new(tex).sense(egui::Sense::click_and_drag()).fit_to_exact_size(tex.size_vec2());
+    let image = egui::Image::new(tex).sense(egui::Sense::click());
 
     match orientation {
         Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)),
@@ -388,6 +388,8 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, tex_name: &str
                     let tex = ui.ctx().load_texture(tex_name, image, default!());
                     let resp = add_image(ui, &tex, orientation);
                     *image_state = ImageState::Ready { tex, orientation, cache_ready: mem::take(cache_ready) };
+
+                    ui.request_repaint();
 
                     resp
                 },
@@ -677,8 +679,6 @@ fn ferry_images(info: FerryImagesInfo) {
 
                 drop(signal_wait_ready);
                 drop(signal_poll_ready);
-
-                ctx.request_repaint();
 
                 Ok(())
             })()
