@@ -383,13 +383,13 @@ fn add_image(ui: &mut egui::Ui, tex: &egui::TextureHandle, orientation: Orientat
 fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, label: &str) -> egui::Response {
     match image_state {
         ImageState::Ready { tex, orientation, .. } => add_image(ui, tex, *orientation),
-        ImageState::Pending{ rx, cache_ready } => {
+        ImageState::Pending { rx, cache_ready } => {
+            ui.request_repaint(); // Avoid stalling until image has been added
+
             match rx.try_recv() {
                 Ok(Ok(TexInfo { tex, orientation })) => {
                     let resp = add_image(ui, &tex, orientation);
                     *image_state = ImageState::Ready { tex, orientation, cache_ready: mem::take(cache_ready) };
-
-                    ui.request_repaint();
 
                     resp
                 },
@@ -1615,6 +1615,8 @@ impl<'a> MediaBrowser<'a> {
             if background_resp.clicked() {
                 self.reset_grid_entries_selection();
             }
+        } else {
+            ui.request_repaint();
         }
     }
 
