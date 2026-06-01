@@ -129,7 +129,6 @@ struct FerryImageInfo {
 }
 
 struct FerryImagesInfo<'a> {
-    ctx: &'a egui::Context,
     thread_pool: &'a Arc<ThreadPool>,
     metadata_sx: Option<&'a mpmc::Sender<MetadataInfo>>,
     image_dirs: &'static ImageDirs,
@@ -590,7 +589,6 @@ fn queue_ferry_cached_image(queue_sx: mpsc::Sender<QueueImageInfo>, src_path: Pa
 
 fn ferry_images(info: FerryImagesInfo) {
     let FerryImagesInfo {
-        ctx,
         thread_pool,
         metadata_sx,
         image_dirs,
@@ -624,7 +622,6 @@ fn ferry_images(info: FerryImagesInfo) {
             signal_poll_ready
         } = info;
 
-        let ctx = ctx.clone();
         let metadata_sx = metadata_sx.cloned();
         let queue_sx = queue_sx.clone();
         let base_image_kind = base_image_kind.clone();
@@ -1261,7 +1258,7 @@ impl<'a> MediaBrowser<'a> {
 
         let ResetResidence { row_cell_count, visible_cell_count } = self.reset_residence(ui);
         let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
-        self.stream(ui.ctx(), &stream, true);
+        self.stream(&stream, true);
 
         self.reset_grid_entries_selection();
 
@@ -1275,7 +1272,7 @@ impl<'a> MediaBrowser<'a> {
 
         let ResetResidence { row_cell_count, visible_cell_count } = self.reset_residence(ui);
         let stream = Stream::default().with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
-        self.stream(ui, &stream, true);
+        self.stream(&stream, true);
 
         self.reset_grid_entries_selection();
         self.animate_bool = false;
@@ -1306,7 +1303,7 @@ impl<'a> MediaBrowser<'a> {
         sort_grid_view(&mut self.grid_view, &self.grid_entries);
     }
 
-    fn stream(&mut self, ctx: &egui::Context, stream: &Stream, poll_ready: bool) {
+    fn stream(&mut self, stream: &Stream, poll_ready: bool) {
         if !stream.drop.is_empty() {
             let (drain_sx, drain_rx) = mpsc::channel();
 
@@ -1377,7 +1374,6 @@ impl<'a> MediaBrowser<'a> {
             .collect::<Vec<_>>();
 
         let ferry_images_info = FerryImagesInfo {
-            ctx,
             thread_pool: &self.thread_pool,
             metadata_sx: Some(&self.deferred_metadata_sx),
             image_dirs: self.image_dirs,
@@ -1497,7 +1493,6 @@ impl<'a> MediaBrowser<'a> {
             .collect::<Vec<_>>();
 
         let ferry_images_info = FerryImagesInfo {
-            ctx: ui.ctx(),
             thread_pool: &self.thread_pool,
             metadata_sx: Some(&self.deferred_metadata_sx),
             image_dirs: self.image_dirs,
@@ -1785,7 +1780,7 @@ impl<'a> MediaBrowser<'a> {
 
                     let visible_cell_count = self.reset_residence(ui).visible_cell_count;
                     let stream = stream.with_flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
-                    self.stream(ui.ctx(), &stream, true);
+                    self.stream(&stream, true);
 
                     self.reset_grid_entries_selection();
                     self.active_tag = Some(tag.clone());
@@ -1829,7 +1824,7 @@ impl<'a> MediaBrowser<'a> {
                 .vertical_scroll_offset(self.grid_scroll_offset)
                 .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
                     if let Some((residence, stream)) = self.update_residence(&row_range, row_cell_count, max_cell_count) {
-                        self.stream(ui.ctx(), &stream, false);
+                        self.stream(&stream, false);
 
                         self.residence = residence;
                     }
@@ -1993,7 +1988,7 @@ impl<'a> MediaBrowser<'a> {
                         .pick_file();
 
                     if let Some(path) = pick_image_file {
-                        self.pick_image(ui.ctx(), path).unwrap_or_else(|err| {
+                        self.pick_image(path).unwrap_or_else(|err| {
                             error!("{}: failed to pick image: {}", module_path!(), err);
                         });
                     }
@@ -2013,7 +2008,7 @@ impl<'a> MediaBrowser<'a> {
             .show(|ui| self.grid_cell_tags_menus(ui));
     }
 
-    fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf) -> Res<()> {
+    fn pick_image(&mut self, path: PathBuf) -> Res<()> {
         let (grid_image_state_sx, grid_image_state_rx) = mpmc::bounded(1);
         let (details_image_state_sx, details_image_state_rx) = mpmc::bounded(1);
 
@@ -2088,7 +2083,6 @@ impl<'a> MediaBrowser<'a> {
         let base_image_path = self.image_dirs.base.join(new_image_file_name.as_ref());
 
         let ferry_images_info = FerryImagesInfo {
-            ctx,
             thread_pool: &self.thread_pool,
             metadata_sx: None,
             image_dirs: self.image_dirs,
