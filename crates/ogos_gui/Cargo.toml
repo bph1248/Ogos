@@ -13,8 +13,8 @@ concat-string = { workspace = true }
 crossbeam = { workspace = true }
 discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
-egui = { version = "0.34.2", default-features = false, features = ["serde"] }
-egui_extras = { version = "0.34.2", default-features = false }
+egui = { version = "0.34.3", default-features = false, features = ["serde"] }
+egui_extras = { version = "0.34.3", default-features = false }
 hotpath = { workspace = true }
 image = { workspace = true }
 indexmap = { version = "2.14.0", features = ["serde"] }
