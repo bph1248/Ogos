@@ -581,7 +581,7 @@ struct ScaleImageManga {
 struct ScrollAreaInfo {
     scroll_source: ScrollSource,
     drag_by: egui::PointerButton,
-    stop: bool,
+    stop_kinesis: bool,
     scroll_offset: egui::Vec2,
     scroll_multiplier: egui::Vec2
 }
@@ -3212,7 +3212,8 @@ impl<'a> MediaBrowser<'a> {
                     ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
                 }
                 let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
-                    ScrollKind::EaseInOut => (ScrollSource::ALL, self.scroll_multiplier),
+                    ScrollKind::EaseInOut =>
+                        (ScrollSource::ALL, self.scroll_multiplier),
                     ScrollKind::SpringDamper => {
                         self.manga.spring_damper.step(ui);
 
@@ -3224,6 +3225,7 @@ impl<'a> MediaBrowser<'a> {
                 ScrollAreaInfo {
                     scroll_source,
                     drag_by: egui::PointerButton::Primary,
+                    stop_kinesis: false,
                     scroll_offset: [scroll_offset_x_centered, scroll_offset_y + self.manga.spring_damper.delta].into(),
                     scroll_multiplier: [1.0, scroll_multiplier].into()
                 }
@@ -3232,13 +3234,14 @@ impl<'a> MediaBrowser<'a> {
                 if dragging {
                     ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
                 }
+                let stop_kinesis = !self.manga.secondary_was_down;
                 let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
-                    ScrollKind::EaseInOut => (ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL, self.scroll_multiplier),
+                    ScrollKind::EaseInOut =>
+                        (ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL, self.scroll_multiplier),
                     ScrollKind::SpringDamper => {
-                        if !self.manga.secondary_was_down {
-                            self.manga.spring_damper.stop();
-                        } else {
-                            self.manga.spring_damper.step(ui);
+                        match stop_kinesis {
+                            true => self.manga.spring_damper.stop(),
+                            false => self.manga.spring_damper.step(ui)
                         }
 
                         (ScrollSource::DRAG, self.manga.spring_damper.multiplier)
@@ -3250,16 +3253,18 @@ impl<'a> MediaBrowser<'a> {
                 ScrollAreaInfo {
                     scroll_source,
                     drag_by: egui::PointerButton::Secondary,
+                    stop_kinesis,
                     scroll_offset: self.manga.scroll_offset + [0., self.manga.spring_damper.delta].into(),
                     scroll_multiplier: [1.0, scroll_multiplier].into()
                 }
             }
         };
-        let ScrollAreaInfo { scroll_source, drag_by, scroll_offset, scroll_multiplier } = scroll_area_info;
+        let ScrollAreaInfo { scroll_source, drag_by, stop_kinesis, scroll_offset, scroll_multiplier } = scroll_area_info;
         let new_scroll_offset = egui::ScrollArea::both()
             .auto_shrink(false)
             .scroll_source(scroll_source)
             .drag_by(drag_by)
+            .stop_kinesis(stop_kinesis)
             .scroll_offset(scroll_offset)
             .horizontal_scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
             .wheel_scroll_multiplier(scroll_multiplier)
@@ -3486,7 +3491,7 @@ impl<'a> MediaBrowser<'a> {
                             .response;
                         if stiffness_edit_resp.lost_focus() && let Ok(omega) = self.manga.spring_damper.stiffness_edit.parse::<f32>() {
                             self.manga.spring_damper.stiffness_edit.clear();
-                            self.manga.spring_damper.update_omega(omega);
+                            self.manga.spring_damper.update_stiffness(omega);
                         }
                         ui.end_row();
 
@@ -3497,7 +3502,7 @@ impl<'a> MediaBrowser<'a> {
                             .response;
                         if bounce_edit_resp.lost_focus() && let Ok(bounce) = self.manga.spring_damper.bounce_edit.parse::<f32>() {
                             self.manga.spring_damper.bounce_edit.clear();
-                            self.manga.spring_damper.update_zeta(bounce);
+                            self.manga.spring_damper.update_bounce(bounce);
                         }
                         ui.end_row();
                     }
