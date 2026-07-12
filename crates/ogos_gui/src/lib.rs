@@ -30,7 +30,6 @@ use raw_window_handle::*;
 use rayon::*;
 use serde::*;
 use std::{
-    cmp,
     collections::*,
     f64::consts::PI,
     ffi::*,
@@ -462,7 +461,7 @@ impl Default for Manga {
             scroll_kind: default!(),
             scroll_offset: default!(),
             scroll_offset_y_anchor: default!(),
-            spring_damper: default!(),
+            spring_damper: SpringDamper { smoothed: true, ..default!() },
             prev_viewport_top: default!(),
             some_prev_delta: default!(),
             secondary_was_down: default!(),
@@ -613,6 +612,7 @@ struct SpringDamper {
     vel_pos_coef: f32,
     vel_vel_coef: f32,
 
+    smoothed: bool,
     multiplier_edit: String,
     stiffness_edit: String,
     bounce_edit: String,
@@ -625,10 +625,26 @@ impl SpringDamper {
         const EPSILON: f32 = 0.0001;
         const TOLERANCE: f32 = 0.5;
 
-        let (dt, smooth_scroll_delta) = ui.input(|i| {
-            (i.unstable_dt.min(1. / 240.), i.smooth_scroll_delta) //$ Hardcoded min
+        let (dt, delta) = ui.input(|i| {
+            let dt = i.unstable_dt.min(1. / 240.); //$ Hardcoded min
+
+            let delta = match self.smoothed {
+                true => i.smooth_scroll_delta,
+                false => {
+                    let mut delta_ = egui::Vec2::default();
+                    for event in i.events.iter() {
+                        if let egui::Event::MouseWheel { delta, .. } = event {
+                            delta_ += *delta;
+                        }
+                    }
+
+                    delta_ * 40.
+                }
+            };
+
+            (dt, delta)
         });
-        self.equilibrium_pos -= smooth_scroll_delta.y * self.multiplier;
+        self.equilibrium_pos -= delta.y * self.multiplier;
 
         // Force values into legal range
         let angular_frequency = self.angular_frequency.max(0.);
@@ -755,6 +771,7 @@ impl Default for SpringDamper {
             pos_vel_coef: default!(),
             vel_pos_coef: default!(),
             vel_vel_coef: default!(),
+            smoothed: default!(),
             multiplier_edit: default!(),
             stiffness_edit: default!(),
             bounce_edit: default!(),
@@ -3452,13 +3469,15 @@ impl<'a> MediaBrowser<'a> {
             self.manga.scroll_kind = ScrollKind::SpringDamper;
         }
 
+        ui.separator();
+
         egui::Grid::new("grid")
             .num_columns(2)
             .show(ui, |ui| {
-                ui.label("Distance:");
-
                 match self.manga.scroll_kind {
                     ScrollKind::EaseInOut => {
+                        ui.label("Distance:");
+
                         self.scroll_multiplier_display.clear();
                         write!(self.scroll_multiplier_display, "{}", self.scroll_multiplier).unwrap();
                         let multiplier_edit_resp = egui::TextEdit::singleline(&mut self.scroll_multiplier_edit)
@@ -3474,6 +3493,10 @@ impl<'a> MediaBrowser<'a> {
                     ScrollKind::SpringDamper => {
                         self.manga.spring_damper.update_display();
 
+                        ui.checkbox(&mut self.manga.spring_damper.smoothed, "Smooth");
+                        ui.end_row();
+
+                        ui.label("Distance:");
                         let multiplier_edit_resp = egui::TextEdit::singleline(&mut self.manga.spring_damper.multiplier_edit)
                             .hint_text(&self.manga.spring_damper.multiplier_display)
                             .show(ui)
