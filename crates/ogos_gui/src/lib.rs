@@ -461,7 +461,7 @@ impl Manga {
         }
     }
 
-    fn clear(&mut self) {
+    fn reset(&mut self) {
         let view = mem::take(&mut self.view);
         for page_info in view {
             if let ImageStateManga::Ready { .. } = page_info.image_state {
@@ -469,7 +469,10 @@ impl Manga {
             }
         }
 
-        *self = default!();
+        *self = Manga {
+            spring_damper: mem::take(&mut self.spring_damper),
+            ..default!()
+        }
     }
 
     fn flag_scale(&mut self, ui: &mut egui::Ui, scale: f32, viewport: egui::Rect) {
@@ -3164,7 +3167,7 @@ impl<'a> MediaBrowser<'a> {
     #[hotpath::measure]
     fn central_panel_manga(&mut self, ui: &mut egui::Ui) {
         if requested_go_back(ui) {
-            self.manga.clear();
+            self.manga.reset();
             self.view_kind = ViewKind::Details;
 
             return
