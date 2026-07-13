@@ -77,15 +77,32 @@ type ShouldStream = bool;
 type VisiblePageCount = usize;
 type WrittenSize = usize;
 
-#[derive(Default, Serialize, Deserialize)]
+const fn spring_damper() -> SpringDamperCache {
+    SpringDamperCache {
+        multiplier: 5.,
+        angular_frequency: 50.,
+        damping_ratio: 1. / 0.6,
+        should_smooth: false
+    }
+}
+const fn spring_damper_manga() -> SpringDamperCache {
+     SpringDamperCache {
+        multiplier: 9.,
+        angular_frequency: 40.,
+        damping_ratio: 1. / 0.4,
+        should_smooth: true
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct Cache {
-    #[serde(default)]
     grid_cell_size: egui::Vec2,
-    #[serde(default)]
     details_cell_size: egui::Vec2,
-    #[serde(default)]
+    #[serde(default = "spring_damper")]
+    spring_damper: SpringDamperCache,
+    #[serde(default = "spring_damper_manga")]
+    spring_damper_manga: SpringDamperCache,
     images: IndexSet<Rc<str>>,
-    #[serde(default)]
     tags: Vec<Rc<str>>,
     entries: HashMap<PathBuf, CacheEntryInfo>
 }
@@ -410,6 +427,7 @@ impl<T> Deref for LateInit<T> {
     }
 }
 
+#[derive(Default)]
 struct Manga {
     archive: LateInit<zip::ZipArchive<io::BufReader<fs::File>>>,
     archive_path: LateInit<Arc<PathBuf>>,
@@ -434,6 +452,26 @@ struct Manga {
     to_thanatos: LateInit<mpmc::Sender<Soul>>
 }
 impl Manga {
+    fn new(spring_damper: SpringDamper) -> Self {
+        Self {
+            scale: 100.,
+            filter: fir::FilterType::Custom(blackman_filter_fir()),
+            spring_damper,
+            ..default!()
+        }
+    }
+
+    fn clear(&mut self) {
+        let view = mem::take(&mut self.view);
+        for page_info in view {
+            if let ImageStateManga::Ready { .. } = page_info.image_state {
+                self.to_thanatos.send(Soul::ImageState(page_info.image_state.into())).unwrap();
+            }
+        }
+
+        *self = default!();
+    }
+
     fn flag_scale(&mut self, ui: &mut egui::Ui, scale: f32, viewport: egui::Rect) {
         if scale == 100. && self.scale == 100. {
             return
@@ -443,43 +481,6 @@ impl Manga {
         self.flagged_scale = Some(viewport);
 
         ui.close();
-    }
-}
-impl Default for Manga {
-    fn default() -> Self {
-        Self {
-            archive: default!(),
-            archive_path: default!(),
-            archive_pages: default!(),
-            archive_pages_width: default!(),
-            view: default!(),
-            view_extent: default!(),
-            scale: 100.,
-            scale_drag_anchor: default!(),
-            flagged_scale: default!(),
-            filter: fir::FilterType::Custom(blackman_filter_fir()),
-            scroll_kind: default!(),
-            scroll_offset: default!(),
-            scroll_offset_y_anchor: default!(),
-            spring_damper: SpringDamper { smoothed: true, ..default!() },
-            prev_viewport_top: default!(),
-            some_prev_delta: default!(),
-            secondary_was_down: default!(),
-            residence: default!(),
-            visible_view: default!(),
-            stream: default!(),
-            to_thanatos: default!()
-        }
-    }
-}
-impl Drop for Manga {
-    fn drop(&mut self) {
-        let view = mem::take(&mut self.view);
-        for page_info in view {
-            if let ImageStateManga::Ready { .. } = page_info.image_state {
-                self.to_thanatos.send(Soul::ImageState(page_info.image_state.into())).unwrap();
-            }
-        }
     }
 }
 
@@ -597,6 +598,7 @@ impl ShouldScale {
 }
 
 //$ Attribute: https://www.ryanjuckett.com/damped-springs/
+#[derive(Default)]
 struct SpringDamper {
     multiplier: f32,
     pos: f32,
@@ -612,7 +614,7 @@ struct SpringDamper {
     vel_pos_coef: f32,
     vel_vel_coef: f32,
 
-    smoothed: bool,
+    should_smooth: bool,
     multiplier_edit: String,
     stiffness_edit: String,
     bounce_edit: String,
@@ -628,7 +630,7 @@ impl SpringDamper {
         let (dt, delta) = ui.input(|i| {
             let dt = i.unstable_dt.min(1. / 240.); //$ Hardcoded min
 
-            let delta = match self.smoothed {
+            let delta = match self.should_smooth {
                 true => i.smooth_scroll_delta,
                 false => {
                     let mut delta_ = egui::Vec2::default();
@@ -757,27 +759,40 @@ impl SpringDamper {
         write!(self.bounce_display, "{}", self.damping_ratio.recip()).unwrap();
     }
 }
-impl Default for SpringDamper {
-    fn default() -> Self {
+impl AsRef<Self> for SpringDamper {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+impl From<SpringDamperCache> for SpringDamper {
+    fn from(value: SpringDamperCache) -> Self {
         Self {
-            multiplier: 9.,
-            pos: default!(),
-            vel: default!(),
-            equilibrium_pos: default!(),
-            delta: default!(),
-            angular_frequency: 40.,
-            damping_ratio: 2.5,
-            pos_pos_coef: default!(),
-            pos_vel_coef: default!(),
-            vel_pos_coef: default!(),
-            vel_vel_coef: default!(),
-            smoothed: default!(),
-            multiplier_edit: default!(),
-            stiffness_edit: default!(),
-            bounce_edit: default!(),
-            multiplier_display: default!(),
-            stiffness_display: default!(),
-            bounce_display: default!()
+            multiplier: value.multiplier,
+            angular_frequency: value.angular_frequency,
+            damping_ratio: value.damping_ratio,
+            should_smooth: value.should_smooth,
+            multiplier_display: format!("{}", value.multiplier),
+            stiffness_display: format!("{}", value.angular_frequency),
+            bounce_display: format!("{}", value.damping_ratio.recip()),
+            ..default!()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+struct SpringDamperCache {
+    multiplier: f32,
+    angular_frequency: f32,
+    damping_ratio: f32,
+    should_smooth: bool
+}
+impl From<&SpringDamper> for SpringDamperCache {
+    fn from(value: &SpringDamper) -> Self {
+        Self {
+            multiplier: value.multiplier,
+            angular_frequency: value.angular_frequency,
+            damping_ratio: value.damping_ratio,
+            should_smooth: value.should_smooth
         }
     }
 }
@@ -981,8 +996,8 @@ enum SelectionKind {
 
 #[derive(Default, PartialEq)]
 enum ScrollKind {
-    #[default]
     EaseInOut,
+    #[default]
     SpringDamper
 }
 
@@ -2094,9 +2109,11 @@ struct MediaBrowser<'a> {
     details_cell_size: egui::Vec2,
     details_hovered_dir_entry_i: usize,
     details_levels: Vec<PathBuf>,
+    scroll_kind: ScrollKind,
     scroll_multiplier: f32,
     scroll_multiplier_display: String,
     scroll_multiplier_edit: String,
+    spring_damper: SpringDamper,
     maintain_sample_rate: bool,
     override_glsl_shaders: bool,
     enable_override_glsl_shaders_checkbox: bool,
@@ -2178,6 +2195,8 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 
         self.cache.grid_cell_size = self.grid_cell_size;
         self.cache.details_cell_size = self.details_cell_size;
+        self.cache.spring_damper = self.spring_damper.as_ref().into();
+        self.cache.spring_damper_manga = self.manga.spring_damper.as_ref().into();
         self.cache.tags = self.tags.keys().cloned().collect();
         self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
         self.cache.entries.clear();
@@ -2275,6 +2294,9 @@ impl<'a> MediaBrowser<'a> {
         let cache_slc = fs::read(&cache_path)?;
         let mut cache: Cache = serde_json::from_slice(&cache_slc)?;
         let mut missing_base_images = Vec::new();
+
+        let spring_damper = cache.spring_damper.into();
+        let spring_damper_manga = cache.spring_damper_manga.into();
 
         let frame = egui::Frame::central_panel(&ctx.global_style()).inner_margin(
             egui::Margin::symmetric(FRAME_INNER_MARGIN as i8, FRAME_INNER_MARGIN as i8)
@@ -2532,9 +2554,11 @@ impl<'a> MediaBrowser<'a> {
             details_cell_size,
             details_hovered_dir_entry_i: default!(),
             details_levels: Vec::with_capacity(16),
+            scroll_kind: default!(),
             scroll_multiplier,
             scroll_multiplier_display: default!(),
             scroll_multiplier_edit: default!(),
+            spring_damper,
             maintain_sample_rate: default!(),
             override_glsl_shaders: default!(),
             enable_override_glsl_shaders_checkbox,
@@ -2554,7 +2578,7 @@ impl<'a> MediaBrowser<'a> {
             to_demeter_stash: default!(),
             chunk_size,
             poll_ready: PollReady::new(),
-            manga: default!(),
+            manga: Manga::new(spring_damper_manga),
             open_error_win: default!(),
             error_sx,
             error_rx,
@@ -3140,7 +3164,7 @@ impl<'a> MediaBrowser<'a> {
     #[hotpath::measure]
     fn central_panel_manga(&mut self, ui: &mut egui::Ui) {
         if requested_go_back(ui) {
-            self.manga = default!();
+            self.manga.clear();
             self.view_kind = ViewKind::Details;
 
             return
@@ -3365,13 +3389,13 @@ impl<'a> MediaBrowser<'a> {
         egui::Popup::context_menu(resp)
             .close_behavior(close_behaviour)
             .show(|ui| {
-                ui.menu_button("Scale", |ui| self.context_menu_manga_scale(ui, viewport));
-                ui.menu_button("Filter", |ui| self.context_menu_manga_filter(ui));
-                ui.menu_button("Scroll", |ui| self.context_menu_manga_scroll(ui));
+                ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
+                ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
+                ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Manga));
             });
     }
 
-    fn context_menu_manga_scale(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
+    fn scale_submenu_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
         const SCALE_MIN: f32 = 50.;
         const SCALE_MAX: f32 = 300.;
         const SCALE_STEP: f32 = 25.;
@@ -3430,7 +3454,7 @@ impl<'a> MediaBrowser<'a> {
         });
     }
 
-    fn context_menu_manga_filter(&mut self, ui: &mut egui::Ui) {
+    fn filter_submenu_manga(&mut self, ui: &mut egui::Ui) {
         ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
 
         if ui.radio(self.manga.filter == fir::FilterType::Box, "Box").clicked() {
@@ -3459,14 +3483,19 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn context_menu_manga_scroll(&mut self, ui: &mut egui::Ui) {
+    fn scroll_submenu_common(&mut self, ui: &mut egui::Ui, stage: Stage) {
+        let (scroll_kind, spring_damper) = match stage {
+            Stage::Grid | Stage::Details => (&mut self.scroll_kind, &mut self.spring_damper),
+            Stage::Manga => (&mut self.manga.scroll_kind, &mut self.manga.spring_damper)
+        };
+
         ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
 
-        if ui.radio(self.manga.scroll_kind == ScrollKind::EaseInOut, "Ease In-Out").clicked() {
-            self.manga.scroll_kind = ScrollKind::EaseInOut;
+        if ui.radio(*scroll_kind == ScrollKind::SpringDamper, "Spring-Damper").clicked() {
+            *scroll_kind = ScrollKind::SpringDamper;
         }
-        if ui.radio(self.manga.scroll_kind == ScrollKind::SpringDamper, "Spring-Damper").clicked() {
-            self.manga.scroll_kind = ScrollKind::SpringDamper;
+        if ui.radio(*scroll_kind == ScrollKind::EaseInOut, "Ease In-Out").clicked() {
+            *scroll_kind = ScrollKind::EaseInOut;
         }
 
         ui.separator();
@@ -3474,7 +3503,7 @@ impl<'a> MediaBrowser<'a> {
         egui::Grid::new("grid")
             .num_columns(2)
             .show(ui, |ui| {
-                match self.manga.scroll_kind {
+                match scroll_kind {
                     ScrollKind::EaseInOut => {
                         ui.label("Distance:");
 
@@ -3491,41 +3520,41 @@ impl<'a> MediaBrowser<'a> {
                         ui.end_row();
                     },
                     ScrollKind::SpringDamper => {
-                        self.manga.spring_damper.update_display();
+                        spring_damper.update_display();
 
-                        ui.checkbox(&mut self.manga.spring_damper.smoothed, "Smooth");
+                        ui.checkbox(&mut spring_damper.should_smooth, "Smooth");
                         ui.end_row();
 
                         ui.label("Distance:");
-                        let multiplier_edit_resp = egui::TextEdit::singleline(&mut self.manga.spring_damper.multiplier_edit)
-                            .hint_text(&self.manga.spring_damper.multiplier_display)
+                        let multiplier_edit_resp = egui::TextEdit::singleline(&mut spring_damper.multiplier_edit)
+                            .hint_text(&spring_damper.multiplier_display)
                             .show(ui)
                             .response;
-                        if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = self.manga.spring_damper.multiplier_edit.parse::<f32>() {
-                            self.manga.spring_damper.multiplier_edit.clear();
-                            self.manga.spring_damper.multiplier = multiplier;
+                        if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = spring_damper.multiplier_edit.parse::<f32>() {
+                            spring_damper.multiplier_edit.clear();
+                            spring_damper.multiplier = multiplier;
                         }
                         ui.end_row();
 
                         ui.label("Stiffness:");
-                        let stiffness_edit_resp = egui::TextEdit::singleline(&mut self.manga.spring_damper.stiffness_edit)
-                            .hint_text(&self.manga.spring_damper.stiffness_display)
+                        let stiffness_edit_resp = egui::TextEdit::singleline(&mut spring_damper.stiffness_edit)
+                            .hint_text(&spring_damper.stiffness_display)
                             .show(ui)
                             .response;
-                        if stiffness_edit_resp.lost_focus() && let Ok(omega) = self.manga.spring_damper.stiffness_edit.parse::<f32>() {
-                            self.manga.spring_damper.stiffness_edit.clear();
-                            self.manga.spring_damper.update_stiffness(omega);
+                        if stiffness_edit_resp.lost_focus() && let Ok(omega) = spring_damper.stiffness_edit.parse::<f32>() {
+                            spring_damper.stiffness_edit.clear();
+                            spring_damper.update_stiffness(omega);
                         }
                         ui.end_row();
 
                         ui.label("Bounce:");
-                        let bounce_edit_resp = egui::TextEdit::singleline(&mut self.manga.spring_damper.bounce_edit)
-                            .hint_text(&self.manga.spring_damper.bounce_display)
+                        let bounce_edit_resp = egui::TextEdit::singleline(&mut spring_damper.bounce_edit)
+                            .hint_text(&spring_damper.bounce_display)
                             .show(ui)
                             .response;
-                        if bounce_edit_resp.lost_focus() && let Ok(bounce) = self.manga.spring_damper.bounce_edit.parse::<f32>() {
-                            self.manga.spring_damper.bounce_edit.clear();
-                            self.manga.spring_damper.update_bounce(bounce);
+                        if bounce_edit_resp.lost_focus() && let Ok(bounce) = spring_damper.bounce_edit.parse::<f32>() {
+                            spring_damper.bounce_edit.clear();
+                            spring_damper.update_bounce(bounce);
                         }
                         ui.end_row();
                     }
@@ -3733,9 +3762,19 @@ impl<'a> MediaBrowser<'a> {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
+                let scroll_source = match self.scroll_kind {
+                    ScrollKind::EaseInOut => ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL,
+                    ScrollKind::SpringDamper => {
+                        self.spring_damper.step(ui);
+                        self.grid_scroll_offset += self.spring_damper.delta;
+
+                        ScrollSource::SCROLL_BAR
+                    }
+                };
+
                 let grid_scroll_offset = egui::ScrollArea::new([false, true])
                     .auto_shrink(false)
-                    .scroll_source(egui::scroll_area::ScrollSource::SCROLL_BAR | egui::scroll_area::ScrollSource::MOUSE_WHEEL)
+                    .scroll_source(scroll_source)
                     .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
                     .vertical_scroll_offset(self.grid_scroll_offset)
                     .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
@@ -3909,8 +3948,9 @@ impl<'a> MediaBrowser<'a> {
                     }
                 }
 
-                self.grid_cell_sort_menu(ui);
-                self.grid_cell_tags_menus(ui);
+                self.grid_cell_sort_submenu(ui);
+                self.grid_cell_tag_submenus(ui);
+                self.grid_cell_scroll_submenu(ui);
             });
 
         egui::Popup::new(ui.make_persistent_id("multi"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
@@ -3920,7 +3960,7 @@ impl<'a> MediaBrowser<'a> {
             .gap(0.0)
             .open_memory(multi_open_memory)
             .close_behavior(close_behaviour)
-            .show(|ui| self.grid_cell_tags_menus(ui));
+            .show(|ui| self.grid_cell_tag_submenus(ui));
     }
 
     fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf) -> Res<()> {
@@ -4044,7 +4084,7 @@ impl<'a> MediaBrowser<'a> {
         Ok(())
     }
 
-    fn grid_cell_sort_menu(&mut self, ui: &mut egui::Ui) {
+    fn grid_cell_sort_submenu(&mut self, ui: &mut egui::Ui) {
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
 
         let mut sort_grid_view = false;
@@ -4080,7 +4120,7 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn grid_cell_tags_menus(&mut self, ui: &mut egui::Ui) {
+    fn grid_cell_tag_submenus(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Tags", |ui| {
             // Add tag
             let new_tag_edit_resp = egui::TextEdit::singleline(&mut self.new_tag_edit)
@@ -4111,14 +4151,18 @@ impl<'a> MediaBrowser<'a> {
             ui.separator();
 
             match self.grid_entries_selection_kind {
-                Some(SelectionKind::Single) => self.grid_cell_single_selection_tags_menu(ui),
-                Some(SelectionKind::Multi) => self.grid_cell_multi_selection_tags_menu(ui),
+                Some(SelectionKind::Single) => self.grid_cell_single_selection_tags_submenu(ui),
+                Some(SelectionKind::Multi) => self.grid_cell_multi_selection_tags_submenu(ui),
                 _ => ()
             }
         });
     }
 
-    fn grid_cell_single_selection_tags_menu(&mut self, ui: &mut egui::Ui) {
+    fn grid_cell_scroll_submenu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Grid));
+    }
+
+    fn grid_cell_single_selection_tags_submenu(&mut self, ui: &mut egui::Ui) {
         loan!(self.tags, mut tags => {
             for (tag, set) in tags.iter_mut() { if !set.is_empty() {
                 let mut tag_checked = set.contains(&self.grid_entry_i);
@@ -4153,7 +4197,7 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn grid_cell_multi_selection_tags_menu(&mut self, ui: &mut egui::Ui) {
+    fn grid_cell_multi_selection_tags_submenu(&mut self, ui: &mut egui::Ui) {
         let add_button_resp = ui.button("Add");
         let remove_button_resp = ui.button("Remove");
 
