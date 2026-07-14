@@ -3756,6 +3756,7 @@ impl<'a> MediaBrowser<'a> {
             }
         };
         let max_row_count = max_cell_count.div_ceil(row_cell_count);
+        let scroll_area_height = max_row_count as f32 * self.grid_cell_space.y - GRID_IMAGE_SPACING.y;
 
         if self.poll_ready.is_ready() {
             if let Some(opacity) = self.get_animation_opacity(ui) {
@@ -3770,6 +3771,7 @@ impl<'a> MediaBrowser<'a> {
                     ScrollKind::SpringDamper => {
                         self.spring_damper.step(ui);
                         self.grid_scroll_offset += self.spring_damper.delta;
+                        self.grid_scroll_offset = self.grid_scroll_offset.clamp(0., scroll_area_height - self.central_rect.height());
 
                         ScrollSource::SCROLL_BAR
                     }
