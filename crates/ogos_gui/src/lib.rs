@@ -61,14 +61,14 @@ use windows::{
 
 const ASPECT_RATIO_3_2: f32 = 1.5;
 const BLACKMAN_SUPPORT: f64 = 3.;
-const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color32::from_rgb(250, 246, 235) };
-const DEFAULT_FRAME_INNER_MARGIN: f32 = 8.0;
+const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3., color: egui::Color32::from_rgb(250, 246, 235) };
+const DEFAULT_FRAME_INNER_MARGIN: f32 = 8.;
 const DETAILS_ENTRY_COUNT: usize = 64;
-const FRAME_INNER_MARGIN: f32 = 15.0;
-const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30.0, 30.0);
+const FRAME_INNER_MARGIN: f32 = 15.;
+const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const MANGA_CONTEXT_MENU_MIN_WIDTH: f32 = 201.;
-const SEPARATOR_WIDTH: f32 = 2.0;
+const SEPARATOR_WIDTH: f32 = 2.;
 
 type CacheReady = Option<WaitGroup>;
 type ImageResult = Result<ImageInfo, (Stage, usize)>;
@@ -301,7 +301,7 @@ struct QueueFerryCachedImageInfo<'a> {
 }
 
 #[derive(Default)]
-struct GridCellHighlights {
+struct GridCellStrokes {
     selected: Vec<egui::Rect>,
     hovered: Option<egui::Rect>
 }
@@ -1891,7 +1891,7 @@ fn get_image_states_from_grid_entry_mut<'a>(images: &'a mut IndexMap<Arc<str>, I
     image_states
 }
 
-fn highlight_rect(ui: &mut egui::Ui, rect: egui::Rect) {
+fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect) {
     ui.painter().rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
 }
 
@@ -2083,7 +2083,7 @@ struct MediaBrowser<'a> {
     grid_entries_selection_kind: Option<SelectionKind>,
     grid_cell_size: egui::Vec2,
     grid_cell_space: egui::Vec2,
-    grid_cell_highlights: GridCellHighlights,
+    grid_cell_strokes: GridCellStrokes,
     grid_cell_tags_menu_selection: HashSet<Rc<str>>,
     grid_scroll_offset: f32,
     /// Indices into [`grid_entries`]
@@ -2530,7 +2530,7 @@ impl<'a> MediaBrowser<'a> {
             grid_entries_selection_kind: default!(),
             grid_cell_size,
             grid_cell_space,
-            grid_cell_highlights: default!(),
+            grid_cell_strokes: default!(),
             grid_cell_tags_menu_selection: default!(),
             grid_scroll_offset: default!(),
             grid_view,
@@ -3800,15 +3800,15 @@ impl<'a> MediaBrowser<'a> {
                             let table_row_count = row_range.end - row_range.start;
                             self.grid_table(ui, row_range.start, max_cell_count, table_row_count, row_cell_count);
                         });
-
-                        for rect in self.grid_cell_highlights.selected.drain(..) {
-                            highlight_rect(ui, rect);
-                        }
-                        if let Some(rect) = self.grid_cell_highlights.hovered.take() {
-                            highlight_rect(ui, rect);
-                        }
                     })
                     .state.offset.y;
+
+                for rect in self.grid_cell_strokes.selected.drain(..) {
+                    stroke_rect(ui, rect);
+                }
+                if let Some(rect) = self.grid_cell_strokes.hovered.take() {
+                    stroke_rect(ui, rect);
+                }
 
                 if grid_scroll_offset != self.grid_scroll_offset {
                     egui::Popup::close_all(ui);
@@ -3891,7 +3891,7 @@ impl<'a> MediaBrowser<'a> {
         if self.grid_entries_selection.contains(&self.grid_entry_i) ||
             cell_resp.hovered() && self.grid_entries_selection.is_empty()
         {
-            self.grid_cell_highlights.selected.push(cell_resp.rect)
+            self.grid_cell_strokes.selected.push(cell_resp.rect)
         }
     }
 
