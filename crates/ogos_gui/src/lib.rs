@@ -3769,14 +3769,22 @@ impl<'a> MediaBrowser<'a> {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
-                let scroll_source = match self.scroll_kind {
-                    ScrollKind::EaseInOut => ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL,
+                let (scroll_source, scroll_offset) = match self.scroll_kind {
+                    ScrollKind::EaseInOut => {
+                        (
+                            ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL,
+                            self.grid_scroll_offset
+                        )
+                    },
                     ScrollKind::SpringDamper => {
                         self.spring_damper.step(ui);
-                        self.grid_scroll_offset += self.spring_damper.delta;
-                        self.grid_scroll_offset = self.grid_scroll_offset.clamp(0., max_scroll_offset);
+                        let scroll_offset = self.grid_scroll_offset + self.spring_damper.delta;
+                        let scroll_offset = scroll_offset.clamp(0., max_scroll_offset);
 
-                        ScrollSource::SCROLL_BAR
+                        (
+                            ScrollSource::SCROLL_BAR,
+                            scroll_offset
+                        )
                     }
                 };
 
@@ -3784,7 +3792,7 @@ impl<'a> MediaBrowser<'a> {
                     .auto_shrink(false)
                     .scroll_source(scroll_source)
                     .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
-                    .vertical_scroll_offset(self.grid_scroll_offset)
+                    .vertical_scroll_offset(scroll_offset)
                     .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
                         if self.update_residence(&row_range, row_cell_count, max_cell_count) {
                             self.stream(ui);
