@@ -61,7 +61,8 @@ use windows::{
 
 const ASPECT_RATIO_3_2: f32 = 1.5;
 const BLACKMAN_SUPPORT: f64 = 3.;
-const CELL_STROKE: egui::Stroke = egui::Stroke { width: 3., color: egui::Color32::from_rgb(250, 246, 235) };
+const CELL_STROKE: egui::Stroke = egui::Stroke { width: CELL_STROKE_WIDTH, color: egui::Color32::from_rgb(250, 246, 235) };
+const CELL_STROKE_WIDTH: f32 = 3.;
 const DEFAULT_FRAME_INNER_MARGIN: f32 = 8.;
 const DETAILS_ENTRY_COUNT: usize = 64;
 const FRAME_INNER_MARGIN: f32 = 15.;
@@ -298,12 +299,6 @@ struct QueueFerryCachedImageInfo<'a> {
     grid_entry_i: usize,
     relay: mpmc::Sender<ImageResult>,
     wait_cache_ready: CacheReady
-}
-
-#[derive(Default)]
-struct GridCellStrokes {
-    selected: Vec<egui::Rect>,
-    hovered: Option<egui::Rect>
 }
 
 struct GridEntryInfo {
@@ -607,6 +602,7 @@ struct SpringDamper {
     pos: f32,
     vel: f32,
     equilibrium_pos: f32, // Target
+    displacement: f32,
     delta: f32,
 
     angular_frequency: f32, // Omega, ω, stiffness
@@ -628,7 +624,6 @@ struct SpringDamper {
 impl SpringDamper {
     fn step(&mut self, ui: &mut egui::Ui) {
         const EPSILON: f32 = 0.0001;
-        const TOLERANCE: f32 = 0.5;
 
         let (dt, delta) = ui.input(|i| {
             let dt = i.unstable_dt.min(1. / 240.); //$ Hardcoded min
@@ -719,18 +714,20 @@ impl SpringDamper {
 
         let old_pos = self.pos;
         let old_vel = self.vel;
-        let displacement = self.pos - self.equilibrium_pos; // Update in equilibrium relative space
+        self.displacement = self.pos - self.equilibrium_pos; // Update in equilibrium relative space
 
-        self.pos = self.pos_pos_coef * displacement + self.pos_vel_coef * old_vel + self.equilibrium_pos;
-        self.vel = self.vel_pos_coef * displacement + self.vel_vel_coef * old_vel;
+        self.pos = self.pos_pos_coef * self.displacement + self.pos_vel_coef * old_vel + self.equilibrium_pos;
+        self.vel = self.vel_pos_coef * self.displacement + self.vel_vel_coef * old_vel;
 
         self.delta = self.pos - old_pos;
+    }
 
-        let settled = displacement.abs() < TOLERANCE && self.vel.abs() < TOLERANCE;
-        if settled {
-            self.pos = self.equilibrium_pos;
-            self.vel = 0.;
-            self.delta = 0.;
+    fn check_settled(&mut self, ui: &mut egui::Ui, scroll_offset: &mut f32) {
+        const TOLERANCE: f32 = 0.5;
+
+        if self.displacement.abs() < TOLERANCE && self.vel.abs() < TOLERANCE {
+            self.stop();
+            *scroll_offset = scroll_offset.round();
         } else {
             ui.request_repaint();
         }
@@ -1891,8 +1888,12 @@ fn get_image_states_from_grid_entry_mut<'a>(images: &'a mut IndexMap<Arc<str>, I
     image_states
 }
 
-fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect) {
-    ui.painter().rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
+fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect, clip_rect: Option<egui::Rect>) {
+    let mut painter = ui.layer_painter(ui.layer_id());
+    if let Some(clip_rect) = clip_rect {
+        painter.set_clip_rect(clip_rect);
+    }
+    painter.rect_stroke(rect, 0.0, CELL_STROKE, egui::StrokeKind::Outside);
 }
 
 fn init_residence(max_cell_count: usize, central_size: egui::Vec2, grid_cell_size: egui::Vec2, grid_cell_space: egui::Vec2, lookahead: usize) -> Residence {
@@ -2083,7 +2084,7 @@ struct MediaBrowser<'a> {
     grid_entries_selection_kind: Option<SelectionKind>,
     grid_cell_size: egui::Vec2,
     grid_cell_space: egui::Vec2,
-    grid_cell_strokes: GridCellStrokes,
+    grid_cell_strokes: Vec<egui::Rect>,
     grid_cell_tags_menu_selection: HashSet<Rc<str>>,
     grid_scroll_offset: f32,
     /// Indices into [`grid_entries`]
@@ -3304,7 +3305,7 @@ impl<'a> MediaBrowser<'a> {
             }
         };
         let ScrollAreaInfo { scroll_source, drag_by, stop_kinesis, scroll_offset, scroll_multiplier } = scroll_area_info;
-        let new_scroll_offset = egui::ScrollArea::both()
+        let mut new_scroll_offset = egui::ScrollArea::both()
             .auto_shrink(false)
             .scroll_source(scroll_source)
             .drag_by(drag_by)
@@ -3318,6 +3319,7 @@ impl<'a> MediaBrowser<'a> {
                 self.show_viewport_manga(ui, viewport)
             })
             .state.offset;
+        self.manga.spring_damper.check_settled(ui, &mut new_scroll_offset.y);
 
         if new_scroll_offset != self.manga.scroll_offset {
             egui::Popup::close_all(ui);
@@ -3757,6 +3759,7 @@ impl<'a> MediaBrowser<'a> {
         };
         let max_row_count = max_cell_count.div_ceil(row_cell_count);
         let scroll_area_height = max_row_count as f32 * self.grid_cell_space.y - GRID_IMAGE_SPACING.y;
+        let max_scroll_offset = scroll_area_height - self.central_rect.height();
 
         if self.poll_ready.is_ready() {
             if let Some(opacity) = self.get_animation_opacity(ui) {
@@ -3771,13 +3774,13 @@ impl<'a> MediaBrowser<'a> {
                     ScrollKind::SpringDamper => {
                         self.spring_damper.step(ui);
                         self.grid_scroll_offset += self.spring_damper.delta;
-                        self.grid_scroll_offset = self.grid_scroll_offset.clamp(0., scroll_area_height - self.central_rect.height());
+                        self.grid_scroll_offset = self.grid_scroll_offset.clamp(0., max_scroll_offset);
 
                         ScrollSource::SCROLL_BAR
                     }
                 };
 
-                let grid_scroll_offset = egui::ScrollArea::new([false, true])
+                let mut new_grid_scroll_offset = egui::ScrollArea::new([false, true])
                     .auto_shrink(false)
                     .scroll_source(scroll_source)
                     .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
@@ -3802,18 +3805,22 @@ impl<'a> MediaBrowser<'a> {
                         });
                     })
                     .state.offset.y;
+                self.spring_damper.check_settled(ui, &mut new_grid_scroll_offset);
 
-                for rect in self.grid_cell_strokes.selected.drain(..) {
-                    stroke_rect(ui, rect);
-                }
-                if let Some(rect) = self.grid_cell_strokes.hovered.take() {
-                    stroke_rect(ui, rect);
+                let clip_stroke_rect = (
+                    new_grid_scroll_offset > 0. &&
+                    new_grid_scroll_offset < max_scroll_offset
+                )
+                .then_some(self.central_rect);
+                for rect in self.grid_cell_strokes.drain(..) {
+                    stroke_rect(ui, rect, clip_stroke_rect);
                 }
 
-                if grid_scroll_offset != self.grid_scroll_offset {
+                if new_grid_scroll_offset != self.grid_scroll_offset {
                     egui::Popup::close_all(ui);
                 }
-                self.grid_scroll_offset = grid_scroll_offset;
+
+                self.grid_scroll_offset = new_grid_scroll_offset;
             });
         }
     }
@@ -3889,9 +3896,9 @@ impl<'a> MediaBrowser<'a> {
 
         // Defer highlighting cells incase selection changes during layout
         if self.grid_entries_selection.contains(&self.grid_entry_i) ||
-            cell_resp.hovered() && self.grid_entries_selection.is_empty()
+            ui.rect_contains_pointer(cell_resp.rect) && self.grid_entries_selection.is_empty() // Hover
         {
-            self.grid_cell_strokes.selected.push(cell_resp.rect)
+            self.grid_cell_strokes.push(cell_resp.rect)
         }
     }
 
