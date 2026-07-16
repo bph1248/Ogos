@@ -920,7 +920,8 @@ pub enum GuiKind {
 #[derive(Clone, Copy)]
 enum ImageKind {
     Jpeg,
-    Png
+    Png,
+    Webp
 }
 
 #[derive(Default)]
@@ -1317,12 +1318,12 @@ fn load_rgba_image_manga(archive_path: Arc<PathBuf>, archive_i: usize, image_kin
     let mut archive = zip::ZipArchive::new(archive)?;
 
     let mut zip_file = archive.by_index(archive_i)?;
-    let mut bytes = Vec::new();
-    zip_file.read_to_end(&mut bytes)?;
-    let reader = io::BufReader::new(io::Cursor::new(bytes));
+    let mut buf = Vec::new();
+    zip_file.read_to_end(&mut buf)?;
 
     let image = match image_kind {
         ImageKind::Jpeg => {
+            let reader = io::BufReader::new(io::Cursor::new(buf));
             let opts = zune_jpeg::zune_core::options::DecoderOptions::new_fast()
                 .jpeg_set_out_colorspace(zune_jpeg::zune_core::colorspace::ColorSpace::RGBA);
             let mut decoder = zune_jpeg::JpegDecoder::new_with_options(reader, opts);
@@ -1333,6 +1334,7 @@ fn load_rgba_image_manga(archive_path: Arc<PathBuf>, archive_i: usize, image_kin
             image::RgbaImage::from_vec(dimensions.0 as u32, dimensions.1 as u32, decoded).unwrap()
         },
         ImageKind::Png => {
+            let reader = io::BufReader::new(io::Cursor::new(buf));
             let opts = zune_png::zune_core::options::DecoderOptions::new_fast()
                 .png_set_add_alpha_channel(true)
                 .png_set_decode_animated(false)
@@ -1380,6 +1382,11 @@ fn load_rgba_image_manga(archive_path: Arc<PathBuf>, archive_i: usize, image_kin
                 },
                 _ => Err(ErrVar::InvalidPngColorSpace { color_space })?
             }
+        },
+        ImageKind::Webp => {
+            let (buf, width, height) = zenwebp::oneshot::decode_rgba(&buf).map_err(|err| err.decompose().0)?;
+
+            image::RgbaImage::from_vec(width, height, buf).unwrap()
         }
     };
 
@@ -2664,6 +2671,14 @@ impl<'a> MediaBrowser<'a> {
                     let height = u32::from_be_bytes(height_slice.try_into().unwrap());
 
                     (ImageKind::Png, width as f32, height as f32)
+                },
+                "webp" => {
+                    let mut buf = [0_u8; 30];
+                    page.read_exact(&mut buf).unwrap();
+
+                    let info = zenwebp::ImageInfo::from_bytes(&buf).unwrap();
+
+                    (ImageKind::Webp, info.width as f32, info.height as f32)
                 },
                 _ => {
                     let msg = format!("{}: unsupported image format: archive index: {}, name: {}", module_path!(), archive_i, name);
