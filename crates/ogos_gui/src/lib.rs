@@ -69,6 +69,7 @@ const FRAME_INNER_MARGIN: f32 = 15.;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const MANGA_CONTEXT_MENU_MIN_WIDTH: f32 = 201.;
+const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
 
 type CacheReady = Option<WaitGroup>;
@@ -2426,7 +2427,7 @@ impl<'a> MediaBrowser<'a> {
 
         let ctx_ = ctx.clone();
         let wgpu_ = wgpu.clone();
-        let chunk_size = 16 * 1024_usize.pow(2);
+        let chunk_size = PCIE_TRANSFER_LIMIT_MIBS / refresh_rate as usize * 1024_usize.pow(2);
         let (image_sx, from_charon) = mpmc::unbounded();
         let (to_demeter, image_rx) = mpmc::unbounded();
         let (partial_tex_sx, from_demeter) = mpmc::unbounded();
@@ -4549,7 +4550,10 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
     wgpu_setup_create_new.instance_descriptor.flags = wgpu::InstanceFlags::empty();
     let wgpu_setup = egui_wgpu::WgpuSetup::CreateNew(wgpu_setup_create_new);
     let wgpu_options = egui_wgpu::WgpuConfiguration {
-        surface: egui_wgpu::SurfaceConfig::LOW_LATENCY,
+        surface: egui_wgpu::SurfaceConfig {
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: Some(1)
+        },
         wgpu_setup,
         ..default!()
     };
