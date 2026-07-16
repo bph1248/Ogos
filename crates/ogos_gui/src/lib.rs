@@ -622,11 +622,11 @@ struct SpringDamper {
     bounce_display: String
 }
 impl SpringDamper {
-    fn step(&mut self, ui: &mut egui::Ui) {
+    fn step(&mut self, ui: &mut egui::Ui, refresh_rate: u32) {
         const EPSILON: f32 = 0.0001;
 
         let (dt, delta) = ui.input(|i| {
-            let dt = i.unstable_dt.min(1. / 240.); //$ Hardcoded min
+            let dt = i.unstable_dt.min(1. / refresh_rate as f32);
 
             let delta = match self.should_smooth {
                 true => i.smooth_scroll_delta,
@@ -2073,6 +2073,7 @@ impl Info {
 struct MediaBrowser<'a> {
     wgpu: egui_wgpu::RenderState,
     thread_pool: Arc<rayon::ThreadPool>,
+    refresh_rate: u32,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
     deferred_metadata_sx: mpmc::Sender<MetadataInfo>,
@@ -2249,7 +2250,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
     }
 }
 impl<'a> MediaBrowser<'a> {
-    fn new(ctx: &egui::Context, wgpu: &egui_wgpu::RenderState, win_inner_extent: Extent2dU) -> Res<Self> {
+    fn new(ctx: &egui::Context, wgpu: &egui_wgpu::RenderState, refresh_rate: u32, win_inner_extent: Extent2dU) -> Res<Self> {
         let config = config::get().read()?;
         let (media_dirs,
             grid_cell_width,
@@ -2519,6 +2520,7 @@ impl<'a> MediaBrowser<'a> {
 
         Ok(Self {
             wgpu: wgpu.clone(),
+            refresh_rate,
             thread_pool,
             image_dirs,
             images,
@@ -3275,7 +3277,7 @@ impl<'a> MediaBrowser<'a> {
                     ScrollKind::EaseInOut =>
                         (ScrollSource::ALL, self.scroll_multiplier),
                     ScrollKind::SpringDamper => {
-                        self.manga.spring_damper.step(ui);
+                        self.manga.spring_damper.step(ui, self.refresh_rate);
 
                         (ScrollSource::DRAG | ScrollSource::SCROLL_BAR, self.manga.spring_damper.multiplier)
                     }
@@ -3301,7 +3303,7 @@ impl<'a> MediaBrowser<'a> {
                     ScrollKind::SpringDamper => {
                         match stop_kinesis {
                             true => self.manga.spring_damper.stop(),
-                            false => self.manga.spring_damper.step(ui)
+                            false => self.manga.spring_damper.step(ui, self.refresh_rate)
                         }
 
                         (ScrollSource::DRAG, self.manga.spring_damper.multiplier)
@@ -3792,7 +3794,7 @@ impl<'a> MediaBrowser<'a> {
                         )
                     },
                     ScrollKind::SpringDamper => {
-                        self.spring_damper.step(ui);
+                        self.spring_damper.step(ui, self.refresh_rate);
                         let scroll_offset = self.grid_scroll_offset + self.spring_damper.delta;
                         let scroll_offset = scroll_offset.clamp(0., max_scroll_offset);
 
@@ -4593,9 +4595,10 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                     Box::new(Info::new(msg))
                 },
                 GuiKind::MediaBrowser => {
+                    let refresh_rate = window.current_monitor().unwrap().refresh_rate_millihertz().unwrap() / 1000;
                     let win_inner_size = window.inner_size();
                     let win_inner_size = Extent2dU::new(win_inner_size.width, win_inner_size.height);
-                    Box::new(MediaBrowser::new(&cctx.egui_ctx, cctx.wgpu_render_state.as_ref().unwrap(), win_inner_size)?)
+                    Box::new(MediaBrowser::new(&cctx.egui_ctx, cctx.wgpu_render_state.as_ref().unwrap(), refresh_rate, win_inner_size)?)
                 }
             };
 
