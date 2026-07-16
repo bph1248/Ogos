@@ -465,10 +465,7 @@ impl Manga {
             }
         }
 
-        *self = Manga {
-            spring_damper: mem::take(&mut self.spring_damper),
-            ..default!()
-        }
+        *self = Manga::new(mem::take(&mut self.spring_damper))
     }
 
     fn flag_scale(&mut self, ui: &mut egui::Ui, scale: f32, viewport: egui::Rect) {
