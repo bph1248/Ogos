@@ -3774,7 +3774,7 @@ impl<'a> MediaBrowser<'a> {
         };
         let max_row_count = max_cell_count.div_ceil(row_cell_count);
         let scroll_area_height = max_row_count as f32 * self.grid_cell_space.y - GRID_IMAGE_SPACING.y;
-        let max_scroll_offset = scroll_area_height - self.central_rect.height();
+        let max_scroll_offset = scroll_area_height.sub(self.central_rect.height()).max(0.);
 
         if self.poll_ready.is_ready() {
             if let Some(opacity) = self.get_animation_opacity(ui) {
