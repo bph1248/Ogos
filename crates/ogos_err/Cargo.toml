@@ -17,6 +17,7 @@ discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
 fast_image_resize = { workspace = true }
 image = { workspace = true }
+jpeg-decoder = { workspace = true }
 log = { workspace = true }
 netcorehost = { workspace = true }
 notify-debouncer-full = { workspace = true }
@@ -39,4 +40,5 @@ windows = { workspace = true }
 windows_061 = { workspace = true }
 zenwebp = { workspace = true }
 zip = { workspace = true }
+zune-jpeg = { workspace = true }
 zune-png = { workspace = true }

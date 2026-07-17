@@ -20,7 +20,7 @@ fast_image_resize = { workspace = true }
 hotpath = { workspace = true }
 image = { workspace = true }
 indexmap = { version = "2.14.0", features = ["serde"] }
-jpeg-decoder = "0.3.2"
+jpeg-decoder = { workspace = true }
 log = { workspace = true }
 ogos_common = { workspace = true }
 ogos_config = { workspace = true }
@@ -41,7 +41,7 @@ wgpu = { workspace = true }
 windows = { workspace = true }
 zenwebp = { workspace = true }
 zip = { workspace = true }
-zune-jpeg = "0.5.15"
+zune-jpeg = { workspace = true }
 zune-png = { workspace = true }
 
 [features]

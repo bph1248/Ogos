@@ -958,7 +958,7 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
                     drop(binds);
 
                     let new_binds = init_binds(error_sx)?;
-                    for (_, win_info) in ts.win_infos.iter_mut() {
+                    for win_info in ts.win_infos.values_mut() {
                         win_info.has_maps = new_binds.has_maps(&win_info.exe);
                     }
 

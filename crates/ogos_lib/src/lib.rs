@@ -124,7 +124,7 @@ unsafe impl Send for LongLivedTask {}
 unsafe impl Sync for LongLivedTask {}
 
 fn error_alert(msg: String) {
-    error!("{}", &msg);
+    error!("{}", msg);
 
     _ = gui::begin(gui::GuiKind::Info { msg });
 }

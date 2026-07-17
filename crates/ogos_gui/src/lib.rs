@@ -1326,7 +1326,7 @@ fn load_rgba_image_manga(archive_path: Arc<PathBuf>, archive_i: usize, image_kin
                 .jpeg_set_out_colorspace(zune_jpeg::zune_core::colorspace::ColorSpace::RGBA);
             let mut decoder = zune_jpeg::JpegDecoder::new_with_options(reader, opts);
 
-            let decoded = decoder.decode().unwrap();
+            let decoded = decoder.decode()?;
             let dimensions = decoder.dimensions().unwrap();
 
             image::RgbaImage::from_vec(dimensions.0 as u32, dimensions.1 as u32, decoded).unwrap()
@@ -1339,7 +1339,7 @@ fn load_rgba_image_manga(archive_path: Arc<PathBuf>, archive_i: usize, image_kin
                 .png_set_strip_to_8bit(true);
             let mut decoder = zune_png::PngDecoder::new_with_options(reader, opts);
 
-            let decoded = decoder.decode().unwrap();
+            let decoded = decoder.decode()?;
             let decoded = decoded.u8().unwrap();
             let dimensions = decoder.dimensions().unwrap();
             let width = dimensions.0 as u32;
@@ -1448,7 +1448,7 @@ fn resize_image_manga(mut image: image::RgbaImage, extent: Extent2dF, filter: fi
         extent.width as u32,
         extent.height as u32
     );
-    resizer.resize(&image, &mut dst_image, &opts).unwrap();
+    resizer.resize(&image, &mut dst_image, &opts)?;
 
     srgb_mapper.backward_map_inplace(&mut dst_image)?;
 
@@ -2170,7 +2170,13 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                 match self.view_kind {
                     ViewKind::Grid => self.central_panel_grid(ui),
                     ViewKind::Details => self.central_panel_details(ui),
-                    ViewKind::InitManga { selected_details_dir_entry_i } => self.init_manga(ui, selected_details_dir_entry_i),
+                    ViewKind::InitManga { selected_details_dir_entry_i } =>
+                        if let Err(err) = self.init_manga(ui, selected_details_dir_entry_i) {
+                            let msg = format!("{}", err);
+                            send_log_err_msg(&self.error_sx, msg);
+
+                            self.view_kind = ViewKind::Details;
+                        },
                     ViewKind::WaitManga => self.wait_manga(),
                     ViewKind::Manga => self.central_panel_manga(ui)
                 }
@@ -2637,33 +2643,33 @@ impl<'a> MediaBrowser<'a> {
     }
 
     #[hotpath::measure]
-    fn init_manga(&mut self, ui: &mut egui::Ui, selected_details_dir_entry_i: usize) { //$ Slow
+    fn init_manga(&mut self, ui: &mut egui::Ui, selected_details_dir_entry_i: usize) -> Res1<()> { //$ Slow
         let dir_entry_info = &self.details_dir_entries[selected_details_dir_entry_i];
         let archive_path = Arc::new(dir_entry_info.path.clone());
-        let archive = fs::File::open(archive_path.as_path()).unwrap();
+        let archive = fs::File::open(archive_path.as_path())?;
         let archive = io::BufReader::new(archive);
-        let mut archive = zip::ZipArchive::new(archive).unwrap();
+        let mut archive = zip::ZipArchive::new(archive)?;
 
         self.manga.archive_pages.reserve_exact(archive.len());
         self.manga.view.reserve_exact(archive.len());
 
         for archive_i in 0..archive.len() {
-            let page = archive.by_index(archive_i).unwrap();
+            let page = archive.by_index(archive_i)?;
             let name = page.name().to_string();
             let mut page = io::BufReader::new(page);
 
-            let ext = Path::new(name.as_str()).get_file_ext().unwrap();
+            let ext = Path::new(name.as_str()).get_file_ext()?;
             let (image_kind, width, height) = match ext.to_ascii_lowercase().as_str() {
                 "jpg" | "jpeg" => {
-                    let mut decoder = jpeg_decoder::Decoder::new(page);
-                    decoder.read_info().unwrap();
+                    let mut decoder = jpeg_decoder::Decoder::new(page); // jpeg_decoder is used as it doesn't require Seek
+                    decoder.read_info()?;
                     let decoder_info = decoder.info().unwrap();
 
                     (ImageKind::Jpeg, decoder_info.width as f32, decoder_info.height as f32)
                 },
                 "png" => {
                     let mut buf = [0_u8; 24];
-                    page.read_exact(&mut buf).unwrap();
+                    page.read_exact(&mut buf)?;
 
                     let width_slice = buf.get(16..20).unwrap();
                     let height_slice = buf.get(20..24).unwrap();
@@ -2674,20 +2680,13 @@ impl<'a> MediaBrowser<'a> {
                 },
                 "webp" => {
                     let mut buf = [0_u8; 30];
-                    page.read_exact(&mut buf).unwrap();
+                    page.read_exact(&mut buf)?;
 
-                    let info = zenwebp::ImageInfo::from_bytes(&buf).unwrap();
+                    let info = zenwebp::ImageInfo::from_bytes(&buf).map_err(|err| err.decompose().0)?;
 
                     (ImageKind::Webp, info.width as f32, info.height as f32)
                 },
-                _ => {
-                    let msg = format!("{}: unsupported image format: archive index: {}, name: {}", module_path!(), archive_i, name);
-                    send_log_err_msg(&self.error_sx, msg);
-
-                    self.view_kind = ViewKind::Details;
-
-                    return
-                }
+                _ => return Err(ErrVar::InvalidImageFormat { archive_i, name }.into())
             };
 
             self.manga.archive_pages.push(ArchivePageInfo { name, index: archive_i, image_kind, extent: [width, height].into() });
@@ -2763,6 +2762,8 @@ impl<'a> MediaBrowser<'a> {
         self.manga.to_thanatos.set(self.to_thanatos.clone());
 
         self.view_kind = ViewKind::WaitManga;
+
+        Ok(())
     }
 
     fn wait_manga(&mut self) {
@@ -4584,7 +4585,7 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                 style.spacing.icon_width = (style.spacing.icon_width * factor).round();
                 style.spacing.icon_width_inner = (style.spacing.icon_width_inner * factor).round();
 
-                for (_, font_id) in style.text_styles.iter_mut() {
+                for font_id in style.text_styles.values_mut() {
                     font_id.size = (font_id.size * factor).round();
                 }
             });

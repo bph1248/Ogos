@@ -20,6 +20,7 @@ eframe = { path = "B:/dev/egui/crates/eframe", default-features = false, feature
 fast_image_resize = { version = "6.0.0", features = ["image"] }
 hotpath = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+jpeg-decoder = "0.3.2"
 log = "0.4.17"
 netcorehost = "0.19.0"
 notify-debouncer-full = { version = "0.7.0", features = ["crossbeam-channel"] }
@@ -76,6 +77,7 @@ windows_061 = { version = "0.61", package = "windows", features = [
 ] }
 zenwebp = { version = "0.4.4", default-features = false }
 zip = "8.6.0"
+zune-jpeg = "0.5.15"
 zune-png = "0.5.2"
 
 [profile.public]
