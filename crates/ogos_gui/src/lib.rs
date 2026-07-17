@@ -3535,7 +3535,7 @@ impl<'a> MediaBrowser<'a> {
                             .response;
                         if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = self.scroll_multiplier_edit.parse::<f32>() {
                             self.scroll_multiplier_edit.clear();
-                            self.scroll_multiplier = multiplier;
+                            self.scroll_multiplier = multiplier.max(0.1);
                         }
                         ui.end_row();
                     },
@@ -3552,7 +3552,7 @@ impl<'a> MediaBrowser<'a> {
                             .response;
                         if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = spring_damper.multiplier_edit.parse::<f32>() {
                             spring_damper.multiplier_edit.clear();
-                            spring_damper.multiplier = multiplier;
+                            spring_damper.multiplier = multiplier.max(0.1);
                         }
                         ui.end_row();
 
@@ -3563,7 +3563,7 @@ impl<'a> MediaBrowser<'a> {
                             .response;
                         if stiffness_edit_resp.lost_focus() && let Ok(omega) = spring_damper.stiffness_edit.parse::<f32>() {
                             spring_damper.stiffness_edit.clear();
-                            spring_damper.update_stiffness(omega);
+                            spring_damper.update_stiffness(omega.max(0.1));
                         }
                         ui.end_row();
 
@@ -3574,7 +3574,7 @@ impl<'a> MediaBrowser<'a> {
                             .response;
                         if bounce_edit_resp.lost_focus() && let Ok(bounce) = spring_damper.bounce_edit.parse::<f32>() {
                             spring_damper.bounce_edit.clear();
-                            spring_damper.update_bounce(bounce);
+                            spring_damper.update_bounce(bounce.max(0.1));
                         }
                         ui.end_row();
                     }
