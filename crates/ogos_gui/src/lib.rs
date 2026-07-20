@@ -2818,6 +2818,7 @@ impl<'a> MediaBrowser<'a> {
         self.stream(ui);
 
         self.reset_grid_entries_selection();
+        self.grid_scroll_offset = 0.;
         self.animate_bool = false;
         self.active_tag = None;
 
@@ -3744,6 +3745,7 @@ impl<'a> MediaBrowser<'a> {
                     self.stream(ui);
 
                     self.reset_grid_entries_selection();
+                    self.grid_scroll_offset = 0.;
                     self.active_tag = Some(tag.clone());
                     self.animate_bool = false;
                 }
