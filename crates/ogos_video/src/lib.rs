@@ -8,7 +8,6 @@ use ogos_err::*;
 
 use concat_string::*;
 use log::*;
-use ini::*;
 use serde::{
     de::*,
     *
@@ -17,7 +16,7 @@ use std::{
     fmt,
     fs::{self, *},
     io,
-    os::{self, windows::process::CommandExt},
+    os::{windows::process::CommandExt},
     path::*,
     process::*,
     string::*
@@ -26,73 +25,6 @@ use windows::Win32::System::Threading::*;
 
 const MAINTAIN_SAMPLE_RATE_GUARD_FILE_NAME: &str = "maintain_sample_rate.guard";
 const NA_STR: &str = "<n/a>";
-
-fn deserialize_side_data_list<'de, D>(deserializer: D) -> Result<SideData, D::Error> where
-    D: Deserializer<'de>
-{
-    struct SideDataListVisitor;
-
-    impl<'de> Visitor<'de> for SideDataListVisitor {
-        type Value = SideData;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("side_data_list")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> where
-            A: SeqAccess<'de>
-        {
-            let mut side_data = SideData::default();
-            loop {
-                match seq.next_element::<SideDataListElement>() {
-                    Ok(Some(SideDataListElement::ContentLightLevel { max_content })) => side_data.max_content = Some(max_content),
-                    Ok(Some(SideDataListElement::DolbyVision)) => side_data.is_dolby_vision = true,
-                    Ok(None) => break,
-                    _ => ()
-                }
-            }
-
-            Ok(side_data)
-        }
-    }
-
-    let side_data = deserializer.deserialize_seq(SideDataListVisitor {})?;
-
-    Ok(side_data)
-}
-
-fn deserialize_packets_and_frames<'de, D>(deserializer: D) -> Result<SideData, D::Error> where
-    D: Deserializer<'de>
-{
-    struct PacketsAndFramesVisitor;
-
-    impl<'de> Visitor<'de> for PacketsAndFramesVisitor {
-        type Value = SideData;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("packets_and_frames")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> where
-            A: SeqAccess<'de>
-        {
-            let mut side_data = SideData::default();
-            loop {
-                match seq.next_element::<PacketFrame>() {
-                    Ok(Some(PacketFrame::Frame { side_data: side_data_ })) => side_data = side_data_,
-                    Ok(None) => break,
-                    _ => ()
-                }
-            }
-
-            Ok(side_data)
-        }
-    }
-
-    let side_data = deserializer.deserialize_seq(PacketsAndFramesVisitor {})?;
-
-    Ok(side_data)
-}
 
 fn deserialize_streams<'de, D>(deserializer: D) -> Result<Streams, D::Error> where
     D: Deserializer<'de>
@@ -134,19 +66,12 @@ fn deserialize_streams<'de, D>(deserializer: D) -> Result<Streams, D::Error> whe
     Ok(streams)
 }
 
-#[derive(Default, Deserialize)]
-struct SideData {
-    max_content: Option<u32>,
-    is_dolby_vision: bool
-}
-
 fn color_transfer() -> String { "bt.709".into() }
 
 #[derive(Clone, Default, Deserialize)]
 struct VideoStream {
     #[serde(default = "color_transfer")]
-    color_transfer: String,
-    bits_per_raw_sample: Option<String>
+    color_transfer: String
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -162,39 +87,8 @@ struct Streams {
 
 #[derive(Deserialize)]
 struct Ffprobe {
-    #[serde(rename = "packets_and_frames", deserialize_with = "deserialize_packets_and_frames")]
-    side_data: SideData,
     #[serde(deserialize_with = "deserialize_streams")]
     streams: Streams
-}
-
-#[derive(Deserialize)]
-struct Layer {
-    name: String
-}
-
-#[derive(Deserialize)]
-struct ReShadeVkLayerManifest {
-    layer: Layer
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase", tag = "type")]
-enum PacketFrame {
-    Packet,
-    Frame {
-        #[serde(rename = "side_data_list", deserialize_with = "deserialize_side_data_list")]
-        side_data: SideData
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "side_data_type")]
-enum SideDataListElement {
-    #[serde(rename = "Content light level metadata")]
-    ContentLightLevel { max_content: u32 },
-    #[serde(rename = "Dolby Vision Metadata")]
-    DolbyVision
 }
 
 #[derive(Deserialize)]
@@ -237,9 +131,8 @@ impl MpvArg<'_> {
     }
 }
 
-enum Setting<'a> {
+enum Setting {
     DisplayMode(DisplayMode),
-    NovideoSrgb(NovideoSrgbInfo<'a>),
     SampleRate(Hz)
 }
 
@@ -264,7 +157,7 @@ pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, ove
         let mut args = vec![];
 
         let mut ffprobe_cmd = Command::new(ffprobe_path.as_ref());
-        ffprobe_cmd.args(["-v", "quiet", "-read_intervals", "%+#1", "-show_entries", "stream=codec_type,bits_per_raw_sample,sample_rate,color_transfer:side_data=side_data_type,max_content", "-of", "json"])
+        ffprobe_cmd.args(["-v", "quiet", "-read_intervals", "%+#1", "-show_entries", "stream=codec_type,sample_rate,color_transfer:side_data=side_data_type,max_content", "-of", "json"])
             .arg(vid_path)
             .creation_flags(CREATE_NO_WINDOW.0);
         let output = output_command(&mut ffprobe_cmd)?;
@@ -306,95 +199,17 @@ pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, ove
         }
 
         // Display mode
-        let reshade_config = mpv_config.reshade.as_ref();
         let profile_arg;
         let set_display_mode_op;
 
-        let mut disable_reshade = || -> Res1<()> {
-            if let Some(reshade_config) = reshade_config {
-                let manifest_str = fs::read_to_string(reshade_config.layer_path).map_err(|err| ErrVar::FailedReadFile { inner: err, path: reshade_config.layer_path.as_static_cow_path() })?;
-                let manifest = serde_json::from_str::<ReShadeVkLayerManifest>(&manifest_str)?;
-
-                cmd.env("VK_LOADER_LAYERS_DISABLE", manifest.layer.name);
-            }
-
-            Ok(())
-        };
-
-        match vid_color_transfer == "smpte2084" || ffprobe.side_data.is_dolby_vision {
-            true => {
-                match reshade_config.zip(ffprobe.side_data.max_content) {
-                    Some((reshade_config, max_content)) if max_content > 0 => { // Statically tone map with ReShade
-                        let reshade_settings_sym_link_path = mpv_path.with_file_name("ReShade.ini");
-                        if !reshade_settings_sym_link_path.try_exists()? {
-                            // Either the symlink doesn't exist or its target doesn't exist, in which case, remove it
-                            if let Err(err) = fs::remove_file(&reshade_settings_sym_link_path) &&
-                                err.kind() != io::ErrorKind::NotFound
-                            {
-                                Err(err)?;
-                            }
-
-                            let reshade_settings_path = Path::new(reshade_config.settings_path).confirm_static()?;
-                            if let Err(err) = os::windows::fs::symlink_file(reshade_settings_path, &reshade_settings_sym_link_path) {
-                                warn!("{}: failed to symlink {} to {} - copying file instead: {}", module_path!(), reshade_settings_path.display(), reshade_settings_sym_link_path.display(), err);
-
-                                fs::copy(reshade_settings_path, reshade_settings_sym_link_path)?;
-                            }
-                        }
-
-                        // Max luminance
-                        info!("{}: max luminance: {}", module_path!(), max_content);
-
-                        // Write max luminance to preset
-                        let mut reshade_preset_ini = Ini::load_from_file(reshade_config.preset_path).map_err(|err| ErrVar::FailedIniOp { inner: err, path: reshade_config.preset_path.as_static_cow_path() })?;
-                        reshade_preset_ini.with_section(Some("lilium__tone_mapping.fx")).set("InputLuminanceMax", max_content.to_string());
-                        reshade_preset_ini.write_to_file(reshade_config.preset_path).map_err(|err| ErrVar::FailedWriteFile { inner: err, path: reshade_config.preset_path.as_static_cow_path() })?;
-
-                        profile_arg = MpvArg::Profile(reshade_config.profile).to_arg_string();
-                    },
-                    _ => { // Let mpv handle tone mapping
-                        disable_reshade()?;
-
-                        profile_arg = MpvArg::Profile(mpv_config.hdr_profile).to_arg_string();
-                    }
-                }
-
+        match vid_color_transfer.as_str() {
+            "smpte2084" | "arib-std-b67" => {
+                profile_arg = MpvArg::Profile(mpv_config.hdr_profile).to_arg_string();
                 set_display_mode_op = SetDisplayModeOp::Set(DisplayMode::Hdr);
             },
-            false => {
-                disable_reshade()?;
-
-                match vid_color_transfer.as_str() {
-                    "arib-std-b67" => { // HLG
-                        profile_arg = MpvArg::Profile(mpv_config.hdr_profile).to_arg_string();
-                        set_display_mode_op = SetDisplayModeOp::Set(DisplayMode::Hdr);
-                    },
-                    _ => { // SDR
-                        profile_arg = MpvArg::Profile(mpv_config.sdr_profile).to_arg_string();
-                        set_display_mode_op = SetDisplayModeOp::Set(DisplayMode::Sdr);
-
-                        // Bit depth / novideo_srgb optimization
-                        if let Some("10") = ffprobe.streams.video.bits_per_raw_sample.as_deref() {
-                            info!("{}: bit depth: 10", module_path!());
-
-                            let (_, display_ids) = get_first_gpu_display_ids()?;
-                            let color_bit_depth = get_color_bit_depth(display_ids.displayId)?;
-
-                            if color_bit_depth == ColorBitDepth::N10 && let Some(prev) = config.display_modes.as_ref()
-                                .and_then(|display_modes| display_modes.sdr.novideo_srgb.clone()) && prev.enable_optimization
-                            {
-                                let novideo_srgb_info = NovideoSrgbInfo {
-                                    enable_optimization: false,
-                                    ..prev.clone()
-                                };
-
-                                control_novideo_srgb(&novideo_srgb_info).inspect(|_| {
-                                    revert_to.push(Setting::NovideoSrgb(prev));
-                                })?;
-                            }
-                        }
-                    }
-                }
+            _ => {
+                profile_arg = MpvArg::Profile(mpv_config.sdr_profile).to_arg_string();
+                set_display_mode_op = SetDisplayModeOp::Set(DisplayMode::Sdr);
             }
         }
 
@@ -427,9 +242,6 @@ pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, ove
             match setting {
                 Setting::DisplayMode(display_mode) => {
                     set_display_mode(SetDisplayModeOp::Set(display_mode))?;
-                },
-                Setting::NovideoSrgb(info) => {
-                    control_novideo_srgb(&info)?;
                 },
                 Setting::SampleRate(hz) => {
                     set_sample_rate(hz)?;

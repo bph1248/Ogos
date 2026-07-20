@@ -398,26 +398,13 @@ pub struct PixelCleaning {
     pub let_walk_away: bool
 }
 
-const fn reshade_layer_path() -> &'static str { r"C:\ProgramData\ReShade\ReShade64.json" }
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Reshade<'a> {
-    pub profile: &'a str,
-    #[serde(default = "reshade_layer_path")]
-    pub layer_path: &'a str,
-    pub preset_path: &'a str,
-    pub settings_path: &'a str
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Mpv<'a> {
     pub sdr_profile: &'a str,
     pub hdr_profile: &'a str,
     pub default_glsl_shaders: Option<&'a str>,
-    pub override_glsl_shaders: Option<&'a str>,
-    pub reshade: Option<Reshade<'a>>
+    pub override_glsl_shaders: Option<&'a str>
 }
 impl_name!(Mpv, 'a);
 
