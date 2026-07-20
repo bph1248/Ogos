@@ -11,7 +11,6 @@ use ogos_err::*;
 
 use ddc::Ddc;
 use log::*;
-use netcorehost::hostfxr::*;
 use nvapi_sys as nvapi;
 use nvapi::{
     NVAPI_MAX_PHYSICAL_GPUS,
@@ -32,8 +31,7 @@ use nvapi_530::*;
 use once_cell::sync::*;
 use std::{
     ffi::*,
-    fmt::{self, *},
-    ptr
+    fmt::{self, *}
 };
 use widestring::*;
 use windows::Win32::{
@@ -42,8 +40,6 @@ use windows::Win32::{
     Graphics::Gdi::*,
     UI::WindowsAndMessaging::*
 };
-
-pub static NOVIDEO_SRGB_FFI: OnceCell<Option<NovideoSrgbFfi>> = OnceCell::new();
 
 static NVAPI_GPU_GET_DITHER_CONTROL_FN: Lazy<NvAPI_GPU_GetDitherControl_fn> = Lazy::new(|| unsafe {
     let interface = nvapi_QueryInterface(NvAPI_GPU_GetDitherControl.id()).x().unwrap_or_else(|err| {
@@ -161,40 +157,6 @@ impl Display for ControlWindowsArg {
     }
 }
 
-#[repr(C)]
-pub struct NovideoSrgbApplyInfo {
-    enable_clamp: bool,
-    color_space_target: i32,
-    primaries_source: i32,
-    profile_path: *const u16,
-    calibrate_gamma: bool,
-    gamma_target: i32,
-    gamma_value: f64,
-    black_output_offset: f64,
-    disable_optimization: bool
-}
-impl Default for NovideoSrgbApplyInfo {
-    fn default() -> Self {
-        Self {
-            enable_clamp: false,
-            color_space_target: 0,
-            primaries_source: 0,
-            profile_path: ptr::null(),
-            calibrate_gamma: false,
-            gamma_target: 0,
-            gamma_value: 0.0,
-            black_output_offset: 0.0,
-            disable_optimization: false
-        }
-    }
-}
-
-pub type NovideoSrgbApplyFn = unsafe extern "system" fn(*const NovideoSrgbApplyInfo) -> i32;
-pub struct NovideoSrgbFfi {
-    pub _hostfxr: Hostfxr,
-    pub novideo_srgb_apply_fn: ManagedFunction<NovideoSrgbApplyFn>
-}
-
 pub enum SetDisplayModeOp {
     Set(DisplayMode),
     Toggle
@@ -270,53 +232,6 @@ fn enable_screensaver() -> ResVar<()> { unsafe {
     info!("{}: screensaver: enabled", module_path!());
 
     Ok(())
-} }
-
-fn make_novideo_srgb_apply_info(info: &NovideoSrgbInfo) -> Res1<(NovideoSrgbApplyInfo, U16CString)> {
-    let profile_path = match info.primaries_source {
-        PrimariesSource::Edid => U16CString::new(),
-        PrimariesSource::Profile { ref path } => U16CString::from_str(path)?
-    };
-
-    let GammaFfi {
-        calibrate_gamma,
-        gamma_target,
-        gamma_value,
-        black_output_offset,
-    } = info.gamma.as_ffi();
-
-    Ok((
-        NovideoSrgbApplyInfo {
-            enable_clamp: info.enable_clamp,
-            color_space_target: info.color_space_target as i32,
-            primaries_source: info.primaries_source.as_i32(),
-            profile_path: profile_path.as_ptr(),
-            calibrate_gamma,
-            gamma_target,
-            gamma_value,
-            black_output_offset,
-            disable_optimization: !info.enable_optimization
-        },
-        profile_path // Keep alive
-    ))
-}
-
-pub fn control_novideo_srgb(info: &NovideoSrgbInfo) -> Res2<()> { unsafe {
-    match NOVIDEO_SRGB_FFI.get_unchecked() {
-        Some(ffi) => {
-            let apply_info = make_novideo_srgb_apply_info(info)?;
-
-            match (ffi.novideo_srgb_apply_fn)(&apply_info.0) {
-                42 => {
-                    info!("{}: novideo_srgb: {}", module_path!(), info);
-
-                    Ok(())
-                },
-                _ => Err(ErrVar::FailedNovideoSrgbApply)?
-            }
-        },
-        None => Err(ErrVar::MissingNovideoSrgbFfi)?
-    }
 } }
 
 pub fn get_color_bit_depth(display_id: NvU32) -> nvapi::Result<ColorBitDepth> { unsafe {
@@ -552,25 +467,11 @@ pub fn set_display_mode(op: SetDisplayModeOp) -> Res<Option<DisplayMode>, { loc_
                 set_color_bit_depth(display_ids.displayId, color_bit_depth)?;
                 set_dither_control(gpu_hnd, display_ids.displayId, display_mode_info.dither.state, dither_bit_depth, display_mode_info.dither.mode)?;
                 set_display_mode_unchecked(display_mode, display_path)?;
-
-                match display_modes_config.sdr.novideo_srgb.as_ref() {
-                    Some(info) => control_novideo_srgb(info)?,
-                    None => if display_modes_config.hdr.novideo_srgb.is_some() {
-                        control_novideo_srgb(&default!())?;
-                    }
-                }
             },
             DisplayMode::Hdr => {
                 let display_mode_info = &display_modes_config.hdr;
                 let color_bit_depth = display_mode_info.color_bit_depth;
                 let dither_bit_depth = display_mode_info.dither.bit_depth;
-
-                match display_modes_config.hdr.novideo_srgb.as_ref() {
-                    Some(info) => control_novideo_srgb(info)?,
-                    None => if display_modes_config.sdr.novideo_srgb.is_some() {
-                        control_novideo_srgb(&default!())?;
-                    }
-                }
 
                 set_color_bit_depth(display_ids.displayId, color_bit_depth)?;
                 set_dither_control(gpu_hnd, display_ids.displayId, display_mode_info.dither.state, dither_bit_depth, display_mode_info.dither.mode)?;

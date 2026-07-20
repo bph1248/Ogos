@@ -54,11 +54,6 @@ use window_foreground::*;
 use clap::CommandFactory;
 use crossbeam::channel as mpmc;
 use log::*;
-use netcorehost::{
-    pdcstr,
-    hostfxr::*,
-    pdcstring::PdCString
-};
 use notify_debouncer_full::{
     self as notify_db,
     notify
@@ -127,14 +122,6 @@ fn error_alert(msg: String) {
     error!("{}", msg);
 
     _ = gui::begin(gui::GuiKind::Info { msg });
-}
-
-fn confirm_novideo_srgb_deps(path: &Path) -> Res1<()> {
-    path.with_file_name("EDIDParser.dll").confirm()?;
-    path.with_file_name("NvAPIWrapper.dll").confirm()?;
-    path.with_file_name("WindowsDisplayAPI.dll").confirm()?;
-
-    Ok(())
 }
 
 fn get_long_lived_channels(cli: &Cli) -> LongLivedChannels {
@@ -271,46 +258,6 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
     if cli.toggle_display_mode {
         _ = set_display_mode(SetDisplayModeOp::Toggle).inspect_err(|err| {
             error_alert(format!("{}: failed to toggle display mode: {}", module_path!(), err));
-        });
-    }
-
-    if let Some(op) = cli.novideo_srgb.as_ref() {
-        (|| -> Res<_> {
-            let display_path = get_first_display_path()?;
-            let display_mode = get_display_mode(display_path)?;
-
-            if display_mode == DisplayMode::Sdr {
-                let config = config::get().read()?;
-                let NovideoSrgbInfo {
-                    primaries_source,
-                    color_space_target,
-                    gamma,
-                    enable_optimization,
-                    ..
-                } = config.display_modes.as_ref()
-                    .and_then(|display_modes| display_modes.sdr.novideo_srgb.clone())
-                    .ok_or(ErrVar::MissingConfigOption { name: NovideoSrgbInfo::NAME })?;
-
-                let enable_clamp = match op {
-                    NovideoSrgbOp::On => true,
-                    NovideoSrgbOp::Off => false
-                };
-                let info = NovideoSrgbInfo {
-                    enable_clamp,
-                    primaries_source,
-                    color_space_target,
-                    gamma,
-                    enable_optimization
-                };
-                control_novideo_srgb(&info)?;
-            } else {
-                Err(ErrVar::InvalidDisplayMode)?;
-            }
-
-            Ok(())
-        })()
-        .unwrap_or_else(|err| {
-            error_alert(format!("{}: failed to set novideo_srgb clamp: {}", module_path!(), err));
         });
     }
 
@@ -483,50 +430,6 @@ fn init() -> Res<(Cli, CliPathKind)> {
 
     // Config
     let config = config::load().map_err(|err| err.msg("failed to load config"))?;
-
-    // NovideoSrgb
-    if let Some(display_modes) = config.display_modes.as_ref() {
-        let primaries_sources = [&display_modes.sdr, &display_modes.hdr].into_iter()
-            .filter_map(|display_mode| display_mode.novideo_srgb.as_ref())
-            .map(|novideo_srgb| &novideo_srgb.primaries_source);
-        let novideo_srgb_is_present = primaries_sources.size_hint().1.unwrap() > 0;
-
-        for primaries_source in primaries_sources {
-            if let display::PrimariesSource::Profile { path } = primaries_source &&
-                !Path::new(path).try_exists()?
-            {
-                Err(ErrVar::MissingFile { path: path.as_static_cow_path() })?;
-            }
-        }
-
-        match novideo_srgb_is_present {
-            true => {
-                let novideo_srgb_dll_path = confirm_or_find_app(Some(&config.app_paths.novideo_srgb), App::NOVIDEO_SRGB)?;
-                confirm_novideo_srgb_deps(&novideo_srgb_dll_path)?;
-                let runtime_config_path = novideo_srgb_dll_path.with_file_name("novideo_srgb.runtimeconfig.json").confirm()?;
-                let novideo_srgb_dll_path = PdCString::from_os_str(novideo_srgb_dll_path.as_ref())?;
-                let runtime_config_path = PdCString::from_os_str(runtime_config_path)?;
-
-                let hostfxr = Hostfxr::load_with_nethost()?;
-                let ctx = hostfxr.initialize_for_runtime_config(runtime_config_path)?;
-
-                let delegate_loader = ctx.get_delegate_loader_for_assembly(novideo_srgb_dll_path)?;
-                let novideo_srgb_apply_fn = delegate_loader.get_function_with_unmanaged_callers_only::<NovideoSrgbApplyFn>(
-                    pdcstr!("novideo_srgb.Interop, novideo_srgb"),
-                    pdcstr!("NovideoSrgbApply")
-                )?;
-
-                let novideo_srgb_ffi = NovideoSrgbFfi {
-                    _hostfxr: hostfxr,
-                    novideo_srgb_apply_fn
-                };
-                NOVIDEO_SRGB_FFI.set(Some(novideo_srgb_ffi))
-                    .map_err(|_| ErrVar::FailedSetOnceCell)?;
-            },
-            false => NOVIDEO_SRGB_FFI.set(None).map_err(|_| ErrVar::FailedSetOnceCell)?
-        }
-    }
-
     CONFIG.set(RwLock::new(config)).map_err(|_| ErrVar::FailedSetConfig)?;
 
     Ok((cli, cli_path_kind))

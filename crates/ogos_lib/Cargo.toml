@@ -12,24 +12,20 @@ crate-type = ["lib"]
 argfile = "1.0.0"
 bincode = { workspace = true }
 bitflags = "2.11.1"
-cfg-if = "1.0.3"
 chrono = "0.4.44"
 clap = { workspace = true }
 concat-string = { workspace = true }
 const_format = { workspace = true }
 crossbeam = { workspace = true }
-discord-rich-presence = { workspace = true }
-hidapi = { version = "*", default-features = false, features = ["windows-native"] }
+hidapi = { version = "2.6.5", default-features = false, features = ["windows-native"] }
 log = { workspace = true }
 log-panics = "2.1.0"
-netcorehost = { workspace = true }
 notify-debouncer-full = { workspace = true }
 once_cell = { workspace = true }
 ogos_audio = { workspace = true }
 ogos_common = { workspace = true }
 ogos_config = { workspace = true }
 ogos_core = { workspace = true }
-ogos_discord = { workspace = true }
 ogos_display = { workspace = true }
 ogos_err = { workspace = true }
 ogos_gui = { path = "../ogos_gui" }
@@ -41,15 +37,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 simplelog = { workspace = true }
 strum = { workspace = true }
-subenum = { workspace = true }
 sysinfo = { workspace = true }
 windows = { workspace = true }
-windows_061 = { workspace = true }
 
 mki = { version = "0.2.3", optional = true }
-
-[package.metadata.cargo-shear]
-ignored = ["hidapi", "windows"]
 
 [features]
 about = ["mki"]

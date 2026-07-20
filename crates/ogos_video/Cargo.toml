@@ -17,7 +17,6 @@ ogos_config = { workspace = true }
 ogos_core = { workspace = true }
 ogos_display = { workspace = true }
 ogos_err = { workspace = true }
-rust-ini = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 windows = { workspace = true }

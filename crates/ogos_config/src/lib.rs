@@ -535,21 +535,18 @@ pub struct DitherInfo {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DisplayModeInfo<'a> {
+pub struct DisplayModeInfo {
     pub color_bit_depth: ColorBitDepth,
-    pub dither: DitherInfo,
-    #[serde(borrow)]
-    pub novideo_srgb: Option<NovideoSrgbInfo<'a>>
+    pub dither: DitherInfo
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DisplayModes<'a> {
-    #[serde(borrow)]
-    pub sdr: DisplayModeInfo<'a>,
-    pub hdr: DisplayModeInfo<'a>
+pub struct DisplayModes {
+    pub sdr: DisplayModeInfo,
+    pub hdr: DisplayModeInfo
 }
-impl_name!(DisplayModes, 'a);
+impl_name!(DisplayModes);
 
 #[derive(Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -688,7 +685,6 @@ pub struct App<'a> {
 impl<'a> App<'a> {
     pub const FFPROBE:          &'static str = "ffprobe.exe";
     pub const MPV:              &'static str = "mpv.exe";
-    pub const NOVIDEO_SRGB:     &'static str = "novideo_srgb.dll";
     pub const SKIF:             &'static str = "SKIF.exe";
     pub const WALLPAPER_ENGINE: &'static str = "wallpaper64.exe";
 }
@@ -703,14 +699,12 @@ pub struct Audio<'a> {
 
 const fn epic() -> &'static str { r"C:\Program Files (x86)\Epic Games\Launcher\Portal\Binaries\Win64\EpicGamesLauncher.exe" }
 const fn gog() -> &'static str { r"C:\Program Files (x86)\GOG Galaxy\GalaxyClient.exe" }
-const fn novideo_srgb() -> &'static str { r"./novideo_srgb/novideo_srgb.dll" }
 const fn steam() -> &'static str { r"C:\Program Files (x86)\steam\steam.exe" }
 
 fn app_paths<'a>() -> AppPaths<'a> {
     AppPaths {
         epic: epic(),
         gog: gog(),
-        novideo_srgb: novideo_srgb(),
         steam: steam(),
         ..default!()
     }
@@ -725,8 +719,6 @@ pub struct AppPaths<'a> {
     #[serde(default = "gog")]
     pub gog: &'a str,
     pub mpv: Option<&'a str>,
-    #[serde(default = "novideo_srgb")]
-    pub novideo_srgb: &'a str,
     pub skif: Option<&'a str>,
     #[serde(default = "steam")]
     pub steam: &'a str
@@ -741,7 +733,7 @@ pub struct Config<'a> {
     pub binds: Option<Binds<'a>>,
     #[serde(default)]
     pub discord: Discord<'a>,
-    pub display_modes: Option<DisplayModes<'a>>,
+    pub display_modes: Option<DisplayModes>,
     pub games: Option<Games<'a>>,
     pub media_browser: Option<MediaBrowser<'a>>,
     pub mpv: Option<Mpv<'a>>,

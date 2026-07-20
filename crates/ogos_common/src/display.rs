@@ -26,34 +26,6 @@ const _NV_DITHER_MODE_NV_DITHER_MODE_SPATIAL_STATIC_2x2: _NV_DITHER_MODE = 3;
 const _NV_DITHER_MODE_NV_DITHER_MODE_TEMPORAL: _NV_DITHER_MODE = 4;
 const _NV_DITHER_MODE_NV_DITHER_MODE_MAX: _NV_DITHER_MODE = 255;
 
-const fn novideo_srgb_enable_clamp() -> bool { true }
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NovideoSrgbInfo<'a> {
-    #[serde(default = "novideo_srgb_enable_clamp", skip)]
-    pub enable_clamp: bool,
-    #[serde(borrow, rename = "primaries")]
-    pub primaries_source: PrimariesSource<'a>,
-    pub color_space_target: ColorSpaceTarget,
-    #[serde(default)]
-    pub gamma: Gamma,
-    pub enable_optimization: bool
-}
-impl<'a> NovideoSrgbInfo<'a> {
-    pub const NAME: &'static str = "novideo_srgb";
-}
-
-impl<'a> Display for NovideoSrgbInfo<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.enable_clamp {
-            true => write!(f, "clamp: {}, optimization: {}, primaries: {}, target: {}, gamma: {}",
-                self.enable_clamp, self.enable_optimization, self.primaries_source, self.color_space_target, self.gamma),
-            false => write!(f, "clamp: {}", self.enable_clamp)
-        }
-    }
-}
-
 #[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(try_from = "BindVar")]
 pub enum ColorBitDepth {
@@ -105,26 +77,6 @@ impl TryFrom<BindVar> for ColorBitDepth {
             BindVar::N16 => Self::N16,
             _ => Err(ErrVar::FailedColorBitDepthFrom { from: value.as_str().into() })?
         })
-    }
-}
-
-#[derive(Clone, Copy, Default, Deserialize, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")]
-#[repr(i32)]
-pub enum ColorSpaceTarget {
-    #[serde(rename = "bt_709")]
-    #[default]
-    Bt709 = 0,
-    #[serde(rename = "display_p3")]
-    DisplayP3,
-    #[serde(rename = "adobe_rgb")]
-    AdobeRgb,
-    #[serde(rename = "bt_2020")]
-    Bt2020
-}
-impl Display for ColorSpaceTarget {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", Into::<&'static str>::into(self))
     }
 }
 
@@ -238,117 +190,6 @@ impl Deref for DitherState {
     }
 }
 impl Display for DitherState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", Into::<&'static str>::into(self))
-    }
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Intent {
-    Absolute,
-    Relative
-}
-
-#[derive(Default)]
-pub struct GammaFfi {
-    pub calibrate_gamma: bool,
-    pub gamma_target: i32,
-    pub gamma_value: f64,
-    pub black_output_offset: f64
-}
-
-fn deserialize_positive_f64<'de, D>(deserializer: D) -> Result<f64, D::Error> where
-    D: Deserializer<'de>
-{
-    let f = f64::deserialize(deserializer)?;
-    if f.is_sign_negative() {
-        Err(D::Error::custom(ErrVar::NegativeFloat))?;
-    }
-
-    Ok(f)
-}
-
-#[derive(Clone, Default, Deserialize, IntoStaticStr)]
-#[serde(deny_unknown_fields)]
-#[strum(serialize_all = "snake_case")]
-pub enum Gamma {
-    #[serde(rename = "srgb")]
-    Srgb,
-    #[default]
-    #[serde(rename = "bt_1886")]
-    Bt1886,
-    #[serde(rename = "custom")]
-    Custom {
-        #[serde(deserialize_with = "deserialize_positive_f64")]
-        value: f64,
-        #[serde(deserialize_with = "deserialize_positive_f64")]
-        black_output_offset: f64,
-        intent: Intent
-    },
-    #[serde(rename = "lstar")]
-    Lstar
-}
-impl Gamma {
-    fn target(&self) -> i32 {
-        match self {
-            Self::Srgb => 0,
-            Self::Bt1886 => 1,
-            Self::Custom { intent, .. } => {
-                match intent {
-                    Intent::Absolute => 2,
-                    Intent::Relative => 3
-                }
-            },
-            Self::Lstar => 4
-        }
-    }
-
-    pub fn as_ffi(&self) -> GammaFfi {
-        let calibrate_gamma = true;
-        let gamma_target = self.target();
-
-        match self {
-            Self::Custom { value, black_output_offset, .. } => GammaFfi {
-                calibrate_gamma,
-                gamma_target,
-                gamma_value: *value,
-                black_output_offset: *black_output_offset
-            },
-            _ => GammaFfi {
-                calibrate_gamma,
-                gamma_target,
-                gamma_value: 0.0,
-                black_output_offset: 0.0
-            }
-        }
-    }
-}
-
-impl Display for Gamma {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", Into::<&'static str>::into(self))
-    }
-}
-
-#[derive(Clone, Default, Deserialize, IntoStaticStr)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum PrimariesSource<'a> {
-    #[default]
-    Edid,
-    Profile { path: &'a str }
-}
-impl<'a> PrimariesSource<'a> {
-    pub fn as_i32(&self) -> i32 {
-        match self {
-            Self::Edid => 0,
-            Self::Profile { .. } => 1
-        }
-    }
-}
-
-impl<'a> Display for PrimariesSource<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", Into::<&'static str>::into(self))
     }

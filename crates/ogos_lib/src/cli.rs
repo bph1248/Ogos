@@ -10,7 +10,6 @@ use std::{
 const ALIAS: &str = "alias";
 const BINDS: &str = "binds";
 const BRIGHTNESS: &str = "brightness";
-const CLAMP: &str = "clamp";
 const CONFLICTS_WITH: &str = "conflicts with";
 const CURSOR: &str = "cursor";
 const DEVICE: &str = "device";
@@ -19,24 +18,16 @@ const EQ: &str = "eq";
 const GAME: &str = "game";
 const LONG_LIVED: &[&str] = &[BINDS, TASKBAR, WINDOW_SHIFT];
 const SK: &str = "sk";
-const STATE: &str = "state";
 const TASKBAR: &str = "taskbar";
 const WINDOW_SHIFT: &str = "window-shift";
 
 const ALIAS_BRIGHTNESS: &str = formatcp!("{a}: --{b}", a = ALIAS, b = BRIGHTNESS);
-const ALIAS_CLAMP: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CLAMP);
 const ALIAS_CURSOR: &str = formatcp!("{a}: --{b}", a = ALIAS, b = CURSOR);
 const ALIAS_SK: &str = formatcp!("{a}: --{b}", a = ALIAS, b = SK);
 const CONFLICTS_WITH_LONG_LIVED: &str = formatcp!("{a}: --<{b}, {c}, {d}>", a = CONFLICTS_WITH, b = BINDS, c = TASKBAR, d = WINDOW_SHIFT);
 const POSSIBLE_VALUES_DISPLAY_BRIGHTNESS: &str = "possible values: [0, 100]";
-const POSSIBLE_VALUES_NOVIDEO_SRGB_CLAMP: &str = "possible values: <on, off>";
 const REQUIRES_GAME: &str = formatcp!("requires: --{a}", a = GAME);
 
-#[derive(Clone, ValueEnum)]
-pub(crate) enum NovideoSrgbOp {
-    On,
-    Off
-}
 #[derive(Args)]
 #[group(requires = GAME, multiple = true)]
 pub(crate) struct Gaming {
@@ -78,10 +69,8 @@ pub(crate) struct Cli {
         help = formatcp!("Set display brightness via VCP feature 0x10. [{a}, {b}]", a = ALIAS_BRIGHTNESS, b = POSSIBLE_VALUES_DISPLAY_BRIGHTNESS)
     )]
     pub(crate) set_display_brightness: Option<u16>,
-    #[arg(long, help = "Enable/disable HDR mode and set color bit depth, dither state, and novideo_srgb state.")]
+    #[arg(long, help = "Enable/disable HDR mode and set color bit depth and dither state.")]
     pub(crate) toggle_display_mode: bool,
-    #[arg(long, name = STATE, alias = CLAMP, hide_possible_values = true, help = formatcp!("Set novideo_srgb's color space clamp. [{a}, {b}]", a = ALIAS_CLAMP, b = POSSIBLE_VALUES_NOVIDEO_SRGB_CLAMP))]
-    pub(crate) novideo_srgb: Option<NovideoSrgbOp>,
 
     #[arg(long = GAME, name = GAME, help = formatcp!("Launch a game, where <{a}> is a config-defined set of launch parameters and settings.", a = GAME))]
     pub(crate) launch_game: Option<String>,
