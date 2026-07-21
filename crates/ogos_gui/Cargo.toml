@@ -23,6 +23,7 @@ hotpath = { workspace = true }
 image = { workspace = true }
 indexmap = { version = "2.14.0", features = ["serde"] }
 jpeg-decoder = { workspace = true }
+linear-srgb = { workspace = true }
 log = { workspace = true }
 ogos_common = { workspace = true }
 ogos_config = { workspace = true }

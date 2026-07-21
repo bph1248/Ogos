@@ -23,6 +23,7 @@ fast_image_resize = { version = "6.0.0", features = ["image"] }
 hotpath = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 jpeg-decoder = "0.3.2"
+linear-srgb = "0.6.12"
 log = "0.4.17"
 notify-debouncer-full = { version = "0.7.0", features = ["crossbeam-channel"] }
 nvapi-sys = "0.1.3"

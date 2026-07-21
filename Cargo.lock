@@ -3098,6 +3098,7 @@ dependencies = [
  "image",
  "indexmap 2.14.0",
  "jpeg-decoder",
+ "linear-srgb",
  "log",
  "ogos_common",
  "ogos_config",

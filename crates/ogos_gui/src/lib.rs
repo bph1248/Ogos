@@ -1393,46 +1393,56 @@ fn load_rgba_image_manga(archive_path: Arc<PathBuf>, archive_i: usize, image_kin
 
 #[cfg(feature = "resize")]
 #[hotpath::measure]
-fn resize_image_manga(mut image: image::RgbaImage, dst_extent: Extent2dF, _filter: fir::FilterType) -> ResVar<image::RgbaImage> {
+fn resize_image_common(image: image::RgbaImage, dst_extent: Extent2dF, _filter: fir::FilterType) -> ResVar<image::RgbaImage> {
     use rgb::FromSlice;
+
+    let mut src_linear = image::Rgba32FImage::new(
+        image.width(),
+        image.height()
+    );
+    linear_srgb::default::srgb_u8_to_linear_rgba_slice(&image, &mut src_linear);
 
     let (src_width, src_height) = image.dimensions();
     let Extent2dU { width: dst_width, height: dst_height } = dst_extent.into();
-    let mut tmp_image = image::RgbaImage::new(dst_width, src_height);
-    let mut dst_image = image::RgbaImage::new(dst_width, dst_height);
-
-    let srgb_mapper = fir::create_srgb_mapper();
-    srgb_mapper.forward_map_inplace(&mut image)?;
+    let mut tmp_linear = image::Rgba32FImage::new(dst_width, src_height);
+    let mut dst_linear = image::Rgba32FImage::new(dst_width, dst_height);
 
     let mut resizer = resize::new(
         src_width as usize,
         src_height as usize,
         dst_width as usize,
         src_height as usize,
-        resize::Pixel::RGBA8,
+        resize::Pixel::RGBAF32,
         resize::Type::Custom(blackman_filter())
     )?;
-    resizer.resize(image.as_rgba(), tmp_image.as_rgba_mut())?;
+    resizer.resize(src_linear.as_rgba(), tmp_linear.as_rgba_mut())?;
     let mut resizer = resize::new(
         dst_width as usize,
         src_height as usize,
         dst_width as usize,
         dst_height as usize,
-        resize::Pixel::RGBA8,
+        resize::Pixel::RGBAF32,
         resize::Type::Custom(blackman_filter())
     )?;
-    resizer.resize(tmp_image.as_rgba(), dst_image.as_rgba_mut())?;
+    resizer.resize(tmp_linear.as_rgba(), dst_linear.as_rgba_mut())?;
 
-    srgb_mapper.backward_map_inplace(&mut dst_image)?;
+    let mut srgb = image::RgbaImage::new(
+        dst_width,
+        dst_height
+    );
+    linear_srgb::default::linear_to_srgb_u8_rgba_slice(&dst_linear, &mut srgb);
 
-    Ok(dst_image)
+    Ok(srgb)
 }
 
 #[cfg(not(feature = "resize"))]
 #[hotpath::measure]
-fn resize_image_manga(mut image: image::RgbaImage, extent: Extent2dF, filter: fir::FilterType) -> ResVar<image::RgbaImage> {
-    let srgb_mapper = fir::create_srgb_mapper();
-    srgb_mapper.forward_map_inplace(&mut image)?;
+fn resize_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::FilterType) -> ResVar<image::RgbaImage> {
+    let mut src_linear = image::Rgba32FImage::new(
+        image.width(),
+        image.height()
+    );
+    linear_srgb::default::srgb_u8_to_linear_rgba_slice(&image, &mut src_linear);
 
     let mut resizer = fir::Resizer::new();
     unsafe {
@@ -1442,17 +1452,21 @@ fn resize_image_manga(mut image: image::RgbaImage, extent: Extent2dF, filter: fi
             resizer.set_cpu_extensions(fir::CpuExtensions::Sse4_1);
         }
     };
-    let opts = fir::ResizeOptions { algorithm: fir::ResizeAlg::Convolution(filter), mul_div_alpha: false, ..default!() };
+    let opts = fir::ResizeOptions { algorithm: fir::ResizeAlg::Convolution(filter), ..default!() };
 
-    let mut dst_image = image::RgbaImage::new(
+    let mut dst_linear = image::Rgba32FImage::new(
         extent.width as u32,
         extent.height as u32
     );
-    resizer.resize(&image, &mut dst_image, &opts)?;
+    resizer.resize(&src_linear, &mut dst_linear, &opts)?;
 
-    srgb_mapper.backward_map_inplace(&mut dst_image)?;
+    let mut srgb = image::RgbaImage::new(
+        dst_linear.width(),
+        dst_linear.height()
+    );
+    linear_srgb::default::linear_to_srgb_u8_rgba_slice(&dst_linear, &mut srgb);
 
-    Ok(dst_image)
+    Ok(srgb)
 }
 
 fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
@@ -1466,7 +1480,7 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
             Orientation::Tall => (cell_extent.height.div(aspect_ratio_v).round(), cell_extent.height),
             Orientation::Wide => (cell_extent.width, cell_extent.width.mul(aspect_ratio_v).round())
         };
-        let dst_image = resize_image_manga(src_image, [dst_width, dst_height].into(), fir::FilterType::Custom(blackman_filter_fir()))?;
+        let dst_image = resize_image_common(src_image, [dst_width, dst_height].into(), fir::FilterType::Custom(blackman_filter_fir()))?;
 
         Ok(dst_image)
     };
@@ -1503,7 +1517,7 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
         let src_image = load_rgba_image_manga(archive_path, archive_i, image_kind)?;
 
         let dst_image = if let Some(ScaleImageManga { extent, filter }) = scale {
-            resize_image_manga(src_image, extent, filter)?
+            resize_image_common(src_image, extent, filter)?
         } else {
             src_image
         };
