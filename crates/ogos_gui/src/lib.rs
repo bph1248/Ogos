@@ -30,6 +30,7 @@ use raw_window_handle::*;
 use rayon::*;
 use serde::*;
 use std::{
+    cell::*,
     collections::*,
     f64::consts::PI,
     ffi::*,
@@ -71,6 +72,27 @@ const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const MANGA_CONTEXT_MENU_MIN_WIDTH: f32 = 201.;
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
+
+thread_local! {
+    static WORKER_THREAD_STATE: RefCell<WorkerThreadState> = RefCell::new({
+        let mut resizer = fir::Resizer::new();
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        unsafe {
+            if is_x86_feature_detected!("avx2") {
+                resizer.set_cpu_extensions(fir::CpuExtensions::Avx2);
+            } else if is_x86_feature_detected!("sse4.1") {
+                resizer.set_cpu_extensions(fir::CpuExtensions::Sse4_1);
+            }
+        }
+
+        WorkerThreadState {
+            resizer,
+            // src_linear: default!(),
+            // dst_linear: default!()
+        }
+    });
+}
 
 type CacheReady = Option<WaitGroup>;
 type ImageResult = Result<ImageInfo, (Stage, usize)>;
@@ -881,6 +903,12 @@ impl StreamBuilder {
     }
 }
 
+struct WorkerThreadState {
+    resizer: fir::Resizer,
+    // src_linear: Vec<f32>,
+    // dst_linear: Vec<f32>
+}
+
 struct WriteTex {
     tex: wgpu::Texture,
     captive: Option<(image::RgbaImage, Option<PollReady>)>,
@@ -1438,35 +1466,53 @@ fn resize_image_common(image: image::RgbaImage, dst_extent: Extent2dF, _filter: 
 #[cfg(not(feature = "resize"))]
 #[hotpath::measure]
 fn resize_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::FilterType) -> ResVar<image::RgbaImage> {
-    let mut src_linear = image::Rgba32FImage::new(
-        image.width(),
-        image.height()
-    );
-    linear_srgb::default::srgb_u8_to_linear_rgba_slice(&image, &mut src_linear);
+    WORKER_THREAD_STATE.with_borrow_mut(|ts| {
+        let Extent2dU { width: dst_width, height: dst_height } = extent.into();
 
-    let mut resizer = fir::Resizer::new();
-    unsafe {
-        if is_x86_feature_detected!("avx2") {
-            resizer.set_cpu_extensions(fir::CpuExtensions::Avx2);
-        } else if is_x86_feature_detected!("sse4.1") {
-            resizer.set_cpu_extensions(fir::CpuExtensions::Sse4_1);
-        }
-    };
-    let opts = fir::ResizeOptions { algorithm: fir::ResizeAlg::Convolution(filter), ..default!() };
+        // ts.src_linear.resize((image.width() * image.height() * 4) as usize, 0.);
+        // let mut src_linear = image::Rgba32FImage::from_vec(
+        //     image.width(),
+        //     image.height(),
+        //     mem::take(&mut ts.src_linear)
+        // )
+        // .unwrap();
+        let mut src_linear = image::Rgba32FImage::new(
+            image.width(),
+            image.height()
+        );
+        linear_srgb::default::srgb_u8_to_linear_rgba_slice(&image, &mut src_linear);
 
-    let mut dst_linear = image::Rgba32FImage::new(
-        extent.width as u32,
-        extent.height as u32
-    );
-    resizer.resize(&src_linear, &mut dst_linear, &opts)?;
+        // ts.dst_linear.resize((dst_width * dst_height * 4) as usize, 0.);
+        // let mut dst_linear = image::Rgba32FImage::from_vec(
+        //     dst_width,
+        //     dst_height,
+        //     mem::take(&mut ts.dst_linear)
+        // )
+        // .unwrap();
+        let mut dst_linear = image::Rgba32FImage::new(
+            dst_width,
+            dst_height,
+        );
 
-    let mut srgb = image::RgbaImage::new(
-        dst_linear.width(),
-        dst_linear.height()
-    );
-    linear_srgb::default::linear_to_srgb_u8_rgba_slice(&dst_linear, &mut srgb);
+        let res = (|| -> ResVar<_> {
+            let opts = fir::ResizeOptions { algorithm: fir::ResizeAlg::Convolution(filter), ..default!() };
+            ts.resizer.resize(&src_linear, &mut dst_linear, &opts)?;
+            ts.resizer.reset_internal_buffers();
 
-    Ok(srgb)
+            let mut srgb = image::RgbaImage::new(
+                dst_width,
+                dst_height
+            );
+            linear_srgb::default::linear_to_srgb_u8_rgba_slice(&dst_linear, &mut srgb);
+
+            Ok(srgb)
+        })();
+        // ts.src_linear = src_linear.into_raw();
+        // ts.dst_linear = dst_linear.into_raw();
+        let srgb = res?;
+
+        Ok(srgb)
+    })
 }
 
 fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
@@ -2304,7 +2350,7 @@ impl<'a> MediaBrowser<'a> {
         let enable_override_glsl_shaders_checkbox = config.mpv.as_ref().map(|mpv_config| mpv_config.override_glsl_shaders.is_some()).unwrap_or(false);
 
         let thread_pool = Arc::new(rayon::ThreadPoolBuilder::new()
-            .num_threads(thread::available_parallelism()?.get().saturating_sub(4))
+            .num_threads(4.min(thread::available_parallelism()?.get()))
             .build()?);
         let (deferred_metadata_sx, deferred_metadata_rx) = mpmc::unbounded();
         let (pick_image_metadata_sx, pick_image_metadata_rx) = mpmc::bounded(1);
