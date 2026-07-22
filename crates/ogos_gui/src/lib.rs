@@ -53,6 +53,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
+        System::Threading::*,
         UI::{
             Shell::*,
             WindowsAndMessaging::*
@@ -1735,7 +1736,7 @@ fn ferry_images(info: FerryImagesInfo) {
                     },
                     false => {
                         match signal_cache_readies.grid.is_some() {
-                            true => {
+                            true => { // Scale grid
                                 let ferry_base_image_info = FerryBaseImageInfo {
                                     ctx,
                                     src_path: &base_image_path,
@@ -1765,7 +1766,7 @@ fn ferry_images(info: FerryImagesInfo) {
                             }
                         }
                         match signal_cache_readies.details.is_some() {
-                            true => {
+                            true => { // Scale details
                                 let queue_ferry_base_image_info = QueueFerryBaseImageInfo {
                                     queue: to_queue,
                                     src_path: &base_image_path,
@@ -4661,9 +4662,15 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                     Box::new(Info::new(msg))
                 },
                 GuiKind::MediaBrowser => {
+                    unsafe {
+                        let thread_hnd = GetCurrentThread();
+                        SetThreadPriority(thread_hnd, THREAD_PRIORITY_ABOVE_NORMAL)?;
+                    }
+
                     let refresh_rate = window.current_monitor().unwrap().refresh_rate_millihertz().unwrap() / 1000;
                     let win_inner_size = window.inner_size();
                     let win_inner_size = Extent2dU::new(win_inner_size.width, win_inner_size.height);
+
                     Box::new(MediaBrowser::new(&cctx.egui_ctx, cctx.wgpu_render_state.as_ref().unwrap(), refresh_rate, win_inner_size)?)
                 }
             };
