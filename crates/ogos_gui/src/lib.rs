@@ -1064,15 +1064,19 @@ enum Watching {
     Words
 }
 
-fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, label: &str) -> egui::Response {
+fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, label: &str, poll_ready: &PollReady) -> egui::Response {
     match image_state {
         ImageState::Ready { tex_id, extent, .. } => {
-            let tex = egui::load::SizedTexture::new(*tex_id, *extent);
-            let image = egui::Image::new(tex).sense(egui::Sense::click());
+            if poll_ready.is_ready() {
+                let tex = egui::load::SizedTexture::new(*tex_id, *extent);
+                let image = egui::Image::new(tex).sense(egui::Sense::click());
 
-            match extent.orientation() {
-                Orientation::Tall => ui.add(image),
-                Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)).inner
+                match extent.orientation() {
+                    Orientation::Tall => ui.add(image),
+                    Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)).inner
+                }
+            } else {
+                alloc_hover_response(ui)
             }
         },
         ImageState::Failed => add_label(ui, label),
@@ -3839,76 +3843,74 @@ impl<'a> MediaBrowser<'a> {
         let scroll_area_height = max_row_count as f32 * self.grid_cell_space.y - GRID_IMAGE_SPACING.y;
         let max_scroll_offset = scroll_area_height.sub(self.central_rect.height()).max(0.);
 
-        if self.poll_ready.is_ready() {
-            if let Some(opacity) = self.get_animation_opacity(ui) {
-                ui.set_opacity(opacity);
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
+
+            let (scroll_source, scroll_offset) = match self.scroll_kind {
+                ScrollKind::EaseInOut => {
+                    (
+                        ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL,
+                        self.grid_scroll_offset
+                    )
+                },
+                ScrollKind::SpringDamper => {
+                    self.spring_damper.step(ui, self.refresh_rate);
+                    let scroll_offset = self.grid_scroll_offset + self.spring_damper.delta;
+                    let scroll_offset = scroll_offset.clamp(0., max_scroll_offset);
+
+                    (
+                        ScrollSource::SCROLL_BAR,
+                        scroll_offset
+                    )
+                }
+            };
+
+            let mut new_grid_scroll_offset = egui::ScrollArea::new([false, true])
+                .auto_shrink(false)
+                .scroll_source(scroll_source)
+                .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
+                .vertical_scroll_offset(scroll_offset)
+                .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
+                    if self.update_residence(&row_range, row_cell_count, max_cell_count) {
+                        self.stream(ui);
+                    }
+
+                    if let Some(opacity) = self.get_animation_opacity(ui) {
+                        ui.set_opacity(opacity);
+                    }
+
+                    let available_rect = ui.available_rect_before_wrap();
+
+                    #[allow(clippy::cast_precision_loss)]
+                    let table_width = row_cell_count as f32 * self.grid_cell_space.x - GRID_IMAGE_SPACING.x;
+                    let table_rect = egui::Rect::from_center_size(
+                        available_rect.center(),
+                        [table_width, available_rect.height()].into()
+                    );
+
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(table_rect), |ui| {
+                        let table_row_count = row_range.end - row_range.start;
+                        self.grid_table(ui, row_range.start, max_cell_count, table_row_count, row_cell_count);
+                    });
+                })
+                .state.offset.y;
+            self.spring_damper.check_settled(ui, &mut new_grid_scroll_offset);
+
+            let clip_stroke_rect = (
+                new_grid_scroll_offset > 0. &&
+                new_grid_scroll_offset < max_scroll_offset
+            )
+            .then_some(self.central_rect);
+            for rect in self.grid_cell_strokes.drain(..) {
+                stroke_rect(ui, rect, clip_stroke_rect);
             }
 
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
+            if new_grid_scroll_offset != self.grid_scroll_offset {
+                egui::Popup::close_all(ui);
+            }
 
-                let (scroll_source, scroll_offset) = match self.scroll_kind {
-                    ScrollKind::EaseInOut => {
-                        (
-                            ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL,
-                            self.grid_scroll_offset
-                        )
-                    },
-                    ScrollKind::SpringDamper => {
-                        self.spring_damper.step(ui, self.refresh_rate);
-                        let scroll_offset = self.grid_scroll_offset + self.spring_damper.delta;
-                        let scroll_offset = scroll_offset.clamp(0., max_scroll_offset);
-
-                        (
-                            ScrollSource::SCROLL_BAR,
-                            scroll_offset
-                        )
-                    }
-                };
-
-                let mut new_grid_scroll_offset = egui::ScrollArea::new([false, true])
-                    .auto_shrink(false)
-                    .scroll_source(scroll_source)
-                    .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
-                    .vertical_scroll_offset(scroll_offset)
-                    .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
-                        if self.update_residence(&row_range, row_cell_count, max_cell_count) {
-                            self.stream(ui);
-                        }
-
-                        let available_rect = ui.available_rect_before_wrap();
-
-                        #[allow(clippy::cast_precision_loss)]
-                        let table_width = row_cell_count as f32 * self.grid_cell_space.x - GRID_IMAGE_SPACING.x;
-                        let table_rect = egui::Rect::from_center_size(
-                            available_rect.center(),
-                            [table_width, available_rect.height()].into()
-                        );
-
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(table_rect), |ui| {
-                            let table_row_count = row_range.end - row_range.start;
-                            self.grid_table(ui, row_range.start, max_cell_count, table_row_count, row_cell_count);
-                        });
-                    })
-                    .state.offset.y;
-                self.spring_damper.check_settled(ui, &mut new_grid_scroll_offset);
-
-                let clip_stroke_rect = (
-                    new_grid_scroll_offset > 0. &&
-                    new_grid_scroll_offset < max_scroll_offset
-                )
-                .then_some(self.central_rect);
-                for rect in self.grid_cell_strokes.drain(..) {
-                    stroke_rect(ui, rect, clip_stroke_rect);
-                }
-
-                if new_grid_scroll_offset != self.grid_scroll_offset {
-                    egui::Popup::close_all(ui);
-                }
-
-                self.grid_scroll_offset = new_grid_scroll_offset;
-            });
-        }
+            self.grid_scroll_offset = new_grid_scroll_offset;
+        });
     }
 
     fn grid_table(&mut self, ui: &mut egui::Ui, row_start: usize, max_cell_count: usize, row_count: usize, row_cell_count: usize) {
@@ -3937,8 +3939,8 @@ impl<'a> MediaBrowser<'a> {
 
         let cell_resp = match image_states {
             Some(ImageStates { grid: grid_state, .. }) =>
-                try_add_image(ui, grid_state, grid_entry_info.stem.as_ref()),
-            None => add_label(ui, grid_entry_info.stem.as_ref())
+                try_add_image(ui, grid_state, &grid_entry_info.stem, &self.poll_ready),
+            None => add_label(ui, &grid_entry_info.stem)
         };
 
         // Select cell or switch view
@@ -4374,7 +4376,7 @@ impl<'a> MediaBrowser<'a> {
             let dir_name = self.grid_entries[self.details_grid_entry_i].stem.as_ref();
 
             match details_state {
-                Some(details_state) => try_add_image(ui, details_state, dir_name),
+                Some(details_state) => try_add_image(ui, details_state, dir_name, &self.poll_ready),
                 None => add_label(ui, dir_name)
             }
         });
