@@ -1723,7 +1723,7 @@ fn ferry_images(info: FerryImagesInfo) {
         let details_relay = details_relay.clone();
         let error_sx = error_sx.clone();
 
-        thread_pool.spawn_fifo(move || {
+        thread_pool.enqueue_high(move || {
             (|| -> Res<()> {
                 let base_image_path = match base_image_kind {
                     BaseImageKind::Pick { path } => path,
@@ -1857,7 +1857,7 @@ fn ferry_images(info: FerryImagesInfo) {
             let ctx = ctx.clone();
             let error_sx = error_sx.clone();
 
-            thread_pool.spawn_fifo(move || {
+            thread_pool.enqueue_low(move || {
                 (|| -> Res<()> {
                     match scale {
                         Some(scale) => {
@@ -1915,7 +1915,7 @@ fn ferry_images_manga(info: FerryImagesInfoManga) {
         let relay = relay.clone();
         let error_sx = error_sx.clone();
 
-        thread_pool.spawn_fifo(move || {
+        thread_pool.enqueue_high(move || {
             (|| -> Res<()> {
                 let ferry_image_manga_info = FerryImageMangaInfo {
                     ctx,
@@ -2175,9 +2175,25 @@ impl Info {
     }
 }
 
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+struct ThreadPool {
+    high_priority: mpmc::Sender<Job>,
+    low_priority: mpmc::Sender<Job>,
+}
+impl ThreadPool {
+    fn enqueue_high<Op: FnOnce() + Send + 'static>(&self, job: Op) {
+        self.high_priority.send(Box::new(job)).unwrap();
+    }
+
+    fn enqueue_low<Op: FnOnce() + Send + 'static>(&self, job: Op) {
+        self.low_priority.send(Box::new(job)).unwrap();
+    }
+}
+
 struct MediaBrowser<'a> {
     wgpu: egui_wgpu::RenderState,
-    thread_pool: Arc<rayon::ThreadPool>,
+    thread_pool: Arc<ThreadPool>,
     refresh_rate: u32,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
@@ -2396,11 +2412,37 @@ impl<'a> MediaBrowser<'a> {
         let discord_display_kind = config.discord.display_kind;
         let enable_override_glsl_shaders_checkbox = config.mpv.as_ref().map(|mpv_config| mpv_config.override_glsl_shaders.is_some()).unwrap_or(false);
 
-        let thread_pool = Arc::new(rayon::ThreadPoolBuilder::new()
-            .num_threads(4.min(thread::available_parallelism()?.get()))
-            .build()?);
         let (deferred_metadata_sx, deferred_metadata_rx) = mpmc::unbounded();
         let (pick_image_metadata_sx, pick_image_metadata_rx) = mpmc::bounded(1);
+
+        let (high_priority_sx, high_priority_rx) = mpmc::unbounded();
+        let (low_priority_sx, low_priority_rx) = mpmc::unbounded();
+        let thread_pool = Arc::new(ThreadPool {
+            high_priority: high_priority_sx,
+            low_priority: low_priority_sx
+        });
+        let worker_count = 4.min(thread::available_parallelism()?.get());
+        for _ in 0..worker_count {
+            let high_priority_rx = high_priority_rx.clone();
+            let low_priority_rx = low_priority_rx.clone();
+
+            thread::spawn(move || {
+                loop {
+                    while let Ok(job) = high_priority_rx.try_recv() {
+                        job();
+                    }
+
+                    if let Ok(job) = low_priority_rx.try_recv() {
+                        job();
+                    }
+
+                    crossbeam::channel::select_biased! {
+                        recv(high_priority_rx) -> res => if let Ok(job) = res { job(); },
+                        recv(low_priority_rx) -> res => if let Ok(job) = res { job(); }
+                    }
+                }
+            });
+        }
 
         let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
         let base_images_dir = current_exe_dir.join("images");
@@ -4204,7 +4246,7 @@ impl<'a> MediaBrowser<'a> {
         let grid_entry_i = self.grid_entry_i;
         let pick_image_metadata_sx = self.pick_image_metadata_sx.clone();
         let image_dirs = self.image_dirs;
-        self.thread_pool.spawn_fifo(move || {
+        self.thread_pool.enqueue_high(move || {
             (|| -> Res<_> {
                 fs::copy(&path, &base_image_path)?;
 
