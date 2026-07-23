@@ -96,6 +96,7 @@ thread_local! {
 }
 
 type CacheReady = Option<WaitGroup>;
+type GenerationId = Arc<AtomicUsize>;
 type ImageResult = Result<ImageInfo, (Stage, usize)>;
 type Residence = Range<usize>;
 type ShouldStream = bool;
@@ -238,6 +239,7 @@ struct FerryImageInfo {
     image_file_name: Arc<str>,
     expected_metadata: Option<Arc<Metadata>>,
     grid_entry_i: usize,
+    gen_id_check: Option<GenerationIdCheck>,
     signal_cache_readies: CacheReadies,
     wait_cache_readies: CacheReadies,
     signal_tex_ready: Option<PollReady>
@@ -303,6 +305,7 @@ struct FerryCachedImageInfo<'a> {
     stage: Stage,
     grid_entry_i: usize,
     relay: mpmc::Sender<ImageResult>,
+    gen_id_check: &'a Option<GenerationIdCheck>,
     wait_cache_ready: CacheReady,
     signal_tex_ready: Option<PollReady>
 }
@@ -322,7 +325,13 @@ struct QueueFerryCachedImageInfo<'a> {
     path: &'a Path,
     grid_entry_i: usize,
     relay: mpmc::Sender<ImageResult>,
+    gen_id_check: Option<GenerationIdCheck>,
     wait_cache_ready: CacheReady
+}
+
+struct GenerationIdCheck {
+    id: GenerationId,
+    expected: usize
 }
 
 struct GridEntryInfo {
@@ -356,7 +365,8 @@ struct ImageInfo {
 struct ImageStates {
     grid: ImageState,
     details: ImageState,
-    ref_count: usize
+    ref_count: usize,
+    gen_id: Arc<AtomicUsize>
 }
 impl ImageStates {
     fn clone_cache_readies_on_scale(&mut self) -> CacheReadies {
@@ -364,6 +374,13 @@ impl ImageStates {
             grid: self.grid.clone_cache_ready_on_scale(),
             details: self.details.clone_cache_ready_on_scale()
         }
+    }
+
+    fn get_gen_id_check(&self) -> GenerationIdCheck {
+        let id = self.gen_id.clone();
+        let expected = id.fetch_add(1, Ordering::Relaxed) + 1;
+
+        GenerationIdCheck { id, expected }
     }
 
     fn iter(&self) -> ImageStatesIter<'_> {
@@ -378,7 +395,7 @@ impl ImageStates {
         Self {
             grid: ImageState::NoneCheckCache { cache_ready: cache_readies.grid },
             details: ImageState::NoneCheckCache { cache_ready: cache_readies.details },
-            ref_count: 0
+            ..default!()
         }
     }
 
@@ -579,6 +596,7 @@ struct QueueImageInfo {
     grid_entry_i: usize,
     relay: mpmc::Sender<ImageResult>,
     scale: Option<ScaleImage>,
+    gen_id_check: Option<GenerationIdCheck>,
     cache_ready: CacheReady
 }
 
@@ -1251,6 +1269,16 @@ fn blackman_filter_fir() -> fir::Filter {
     fir::Filter::new("Blackman", blackman, BLACKMAN_SUPPORT).unwrap()
 }
 
+fn check_cancel(check: &Option<GenerationIdCheck>) -> ResVar<()> {
+    if let Some(check) = check &&
+        check.id.load(Ordering::Relaxed) != check.expected
+    {
+        return Err(ErrVar::Cancel)
+    }
+
+    Ok(())
+}
+
 fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, image_rx: mpmc::Receiver<ImageInfo>, partial_tex_sx: mpmc::Sender<PartialTex>, chunk_size: usize) {
     for ImageInfo { image, stage, index: view_i, signal_tex_ready } in image_rx.iter() {
         hotpath::measure_block!(formatcp!("{}::demeter", module_path!()), {
@@ -1332,10 +1360,14 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
 }
 
 #[hotpath::measure]
-fn load_rgba_image_cached(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
+fn load_rgba_image_cached(path: &Path, gen_id_check: &Option<GenerationIdCheck>) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
+    check_cancel(gen_id_check)?;
+
     let mut file = fs::File::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
+
+    check_cancel(gen_id_check)?;
 
     let (buf, width, height) = zenwebp::oneshot::decode_rgba(&buf).map_err(|err| err.decompose().0)?;
 
@@ -1591,10 +1623,10 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
 }
 
 fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
-    let FerryCachedImageInfo { ctx, path, stage, grid_entry_i, relay, wait_cache_ready, signal_tex_ready } = info;
+    let FerryCachedImageInfo { ctx, path, stage, grid_entry_i, relay, gen_id_check, wait_cache_ready, signal_tex_ready } = info;
 
     let inner = || -> ResVar<image::RgbaImage> {
-        let image = load_rgba_image_cached(path)?;
+        let image = load_rgba_image_cached(path, gen_id_check)?;
 
         Ok(image)
     };
@@ -1607,10 +1639,13 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
         Ok(image) => if relay.send(Ok(ImageInfo { image, stage, index: grid_entry_i, signal_tex_ready })).is_ok() {
             ctx.request_repaint();
         },
-        Err(err) => {
-            _ = relay.send(Err((stage, grid_entry_i)));
+        Err(err) => match err {
+            ErrVar::Cancel => return Ok(()),
+            _ => {
+                _ = relay.send(Err((stage, grid_entry_i)));
 
-            Err(err)?;
+                return Err(err.into())
+            }
         }
     }
 
@@ -1628,19 +1663,21 @@ fn queue_ferry_base_image(info: QueueFerryBaseImageInfo) {
             dst_path: dst_path.to_path_buf(),
             cell_extent
         }),
+        gen_id_check: None,
         cache_ready: signal_cache_ready
     })
     .unwrap();
 }
 
 fn queue_ferry_cached_image(info: QueueFerryCachedImageInfo) {
-    let QueueFerryCachedImageInfo { queue, path, grid_entry_i, relay, wait_cache_ready } = info;
+    let QueueFerryCachedImageInfo { queue, path, grid_entry_i, relay, gen_id_check, wait_cache_ready } = info;
 
     queue.send(QueueImageInfo {
         path: path.to_path_buf(),
         grid_entry_i,
         relay,
         scale: None,
+        gen_id_check,
         cache_ready: wait_cache_ready
     })
     .unwrap();
@@ -1672,6 +1709,7 @@ fn ferry_images(info: FerryImagesInfo) {
             image_file_name,
             expected_metadata,
             grid_entry_i,
+            gen_id_check,
             signal_cache_readies,
             wait_cache_readies,
             signal_tex_ready
@@ -1705,7 +1743,7 @@ fn ferry_images(info: FerryImagesInfo) {
                 let metadata_differs = expected_metadata.is_none_or(|expected_metadata| expected_metadata != metadata);
 
                 match metadata_differs {
-                    true => {
+                    true => { // Scale grid & details
                         let ferry_base_image_info = FerryBaseImageInfo {
                             ctx,
                             src_path: &base_image_path,
@@ -1759,6 +1797,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                     stage: Stage::Grid,
                                     grid_entry_i,
                                     relay: grid_relay,
+                                    gen_id_check: &gen_id_check,
                                     wait_cache_ready: wait_cache_readies.grid,
                                     signal_tex_ready
                                 };
@@ -1786,6 +1825,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                     path: &details_image_path,
                                     grid_entry_i,
                                     relay: details_relay,
+                                    gen_id_check,
                                     wait_cache_ready: wait_cache_readies.details
                                 };
                                 queue_ferry_cached_image(queue_ferry_cached_image_info)
@@ -1810,6 +1850,7 @@ fn ferry_images(info: FerryImagesInfo) {
                 grid_entry_i,
                 relay,
                 scale,
+                gen_id_check,
                 cache_ready
             } = image_info;
 
@@ -1842,6 +1883,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                 stage: Stage::Details,
                                 grid_entry_i,
                                 relay,
+                                gen_id_check: &gen_id_check,
                                 wait_cache_ready: cache_ready,
                                 signal_tex_ready: None
                             };
@@ -2538,6 +2580,7 @@ impl<'a> MediaBrowser<'a> {
                         image_file_name: image_file_name.clone(),
                         expected_metadata: grid_entry_info.metadata.clone(),
                         grid_entry_i,
+                        gen_id_check: Some(image_states.get_gen_id_check()),
                         signal_cache_readies: image_states.clone_cache_readies_on_scale(),
                         wait_cache_readies: CacheReadies::NONE,
                         signal_tex_ready: None
@@ -2922,7 +2965,13 @@ impl<'a> MediaBrowser<'a> {
 
                     image_states.ref_count = image_states.ref_count.saturating_sub(1);
                     if image_states.ref_count == 0 {
-                        let new_image_states = ImageStates::new_none_check_cache(image_states.take_cache_readies());
+                        let cache_readies = image_states.take_cache_readies();
+                        let new_image_states = ImageStates {
+                            grid: ImageState::NoneCheckCache { cache_ready: cache_readies.grid },
+                            details: ImageState::NoneCheckCache { cache_ready: cache_readies.details },
+                            ref_count: 0,
+                            gen_id: mem::take(&mut image_states.gen_id)
+                        };
 
                         let old_image_states = mem::replace(image_states, new_image_states);
                         self.to_thanatos.send(Soul::ImageStates(old_image_states)).unwrap();
@@ -2943,6 +2992,7 @@ impl<'a> MediaBrowser<'a> {
                             image_file_name: image_file_name.clone(),
                             expected_metadata: grid_entry_info.metadata.clone(),
                             grid_entry_i,
+                            gen_id_check: Some(image_states.get_gen_id_check()),
                             signal_cache_readies: image_states.clone_cache_readies_on_scale(),
                             wait_cache_readies: image_states.take_cache_readies_on_not_scale(),
                             signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
@@ -4130,6 +4180,7 @@ impl<'a> MediaBrowser<'a> {
             image_file_name: new_image_file_name.clone(),
             expected_metadata: None,
             grid_entry_i: self.grid_entry_i,
+            gen_id_check: None,
             signal_cache_readies: cache_readies,
             wait_cache_readies: CacheReadies::NONE,
             signal_tex_ready: None

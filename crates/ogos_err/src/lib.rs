@@ -169,6 +169,7 @@ pub enum ErrVar {
     ZuneJpegDecode(#[from] zune_jpeg::errors::DecodeErrors),
     ZunePngDecode(#[from] zune_png::error::PngDecodeErrors),
 
+    Cancel,
     Close,
     FailedBindVarFrom { from: String },
     FailedBuildLoggerConfig,
@@ -275,6 +276,7 @@ impl Display for ErrVar {
             ZuneJpegDecode(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
             ZunePngDecode(inner) => write!(f, "{}: {}", as_ref_str!(self), inner),
 
+            Cancel => write!(f, "cancel"),
             Close => write!(f, "close"),
             FailedBindVarFrom { from } => write!(f, "failed bind var from: {}", from),
             FailedBuildLoggerConfig => write!(f, "failed to build logger config"),
