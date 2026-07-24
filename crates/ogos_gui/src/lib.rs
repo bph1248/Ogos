@@ -27,7 +27,6 @@ use fast_image_resize as fir;
 use indexmap::*;
 use log::*;
 use raw_window_handle::*;
-use rayon::*;
 use serde::*;
 use std::{
     cell::*,
