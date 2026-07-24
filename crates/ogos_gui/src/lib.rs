@@ -96,7 +96,6 @@ thread_local! {
 }
 
 type CacheReady = Option<WaitGroup>;
-type GenerationId = Arc<AtomicUsize>;
 type ImageResult = Result<ImageInfo, (Stage, usize)>;
 type Residence = Range<usize>;
 type ShouldStream = bool;
@@ -264,6 +263,7 @@ struct FerryImageInfoManga {
     image_kind: ImageKind,
     view_i: usize,
     scale: Option<ScaleImageManga>,
+    gen_id_check: GenerationIdCheck,
     signal_tex_ready: Option<PollReady>
 }
 
@@ -296,6 +296,7 @@ struct FerryImageMangaInfo {
     view_i: usize,
     scale: Option<ScaleImageManga>,
     relay: mpmc::Sender<ImageResult>,
+    gen_id_check: GenerationIdCheck,
     signal_tex_ready: Option<PollReady>
 }
 
@@ -333,6 +334,15 @@ struct GenerationIdCheck {
     id: GenerationId,
     expected: usize
 }
+impl GenerationIdCheck {
+    fn check(&self) -> ResVar<()> {
+        if self.id.load(Ordering::Relaxed) != self.expected {
+            return Err(ErrVar::Cancel)
+        }
+
+        Ok(())
+    }
+}
 
 struct GridEntryInfo {
     path: PathBuf,
@@ -361,12 +371,30 @@ struct ImageInfo {
     signal_tex_ready: Option<PollReady>
 }
 
+#[derive(Clone, Default)]
+struct GenerationId(Arc<AtomicUsize>);
+impl GenerationId {
+    fn get_next_check(&self) -> GenerationIdCheck {
+        let id = self.clone();
+        let expected = id.fetch_add(1, Ordering::Relaxed) + 1;
+
+        GenerationIdCheck { id, expected }
+    }
+}
+impl Deref for GenerationId {
+    type Target = Arc<AtomicUsize>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Default)]
 struct ImageStates {
     grid: ImageState,
     details: ImageState,
     ref_count: usize,
-    gen_id: Arc<AtomicUsize>
+    gen_id: GenerationId
 }
 impl ImageStates {
     fn clone_cache_readies_on_scale(&mut self) -> CacheReadies {
@@ -374,13 +402,6 @@ impl ImageStates {
             grid: self.grid.clone_cache_ready_on_scale(),
             details: self.details.clone_cache_ready_on_scale()
         }
-    }
-
-    fn get_gen_id_check(&self) -> GenerationIdCheck {
-        let id = self.gen_id.clone();
-        let expected = id.fetch_add(1, Ordering::Relaxed) + 1;
-
-        GenerationIdCheck { id, expected }
     }
 
     fn iter(&self) -> ImageStatesIter<'_> {
@@ -479,8 +500,6 @@ struct Manga {
     scroll_offset: egui::Vec2,
     scroll_offset_y_anchor: Option<f32>,
     spring_damper: SpringDamper,
-    prev_viewport_top: f32,
-    some_prev_delta: bool,
     secondary_was_down: bool,
     residence: Range<usize>,
     visible_view: Range<usize>,
@@ -544,7 +563,8 @@ struct ViewPageInfo {
     image_kind: ImageKind,
     offset: f32,
     extent: Extent2dF,
-    image_state: ImageStateManga
+    image_state: ImageStateManga,
+    gen_id: GenerationId
 }
 
 struct PartialTex {
@@ -634,7 +654,6 @@ impl ShouldScale {
     }
 }
 
-//$ Attribute: https://www.ryanjuckett.com/damped-springs/
 #[derive(Default)]
 struct SpringDamper {
     multiplier: f32,
@@ -1269,16 +1288,6 @@ fn blackman_filter_fir() -> fir::Filter {
     fir::Filter::new("Blackman", blackman, BLACKMAN_SUPPORT).unwrap()
 }
 
-fn check_cancel(check: &Option<GenerationIdCheck>) -> ResVar<()> {
-    if let Some(check) = check &&
-        check.id.load(Ordering::Relaxed) != check.expected
-    {
-        return Err(ErrVar::Cancel)
-    }
-
-    Ok(())
-}
-
 fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, image_rx: mpmc::Receiver<ImageInfo>, partial_tex_sx: mpmc::Sender<PartialTex>, chunk_size: usize) {
     for ImageInfo { image, stage, index: view_i, signal_tex_ready } in image_rx.iter() {
         hotpath::measure_block!(formatcp!("{}::demeter", module_path!()), {
@@ -1360,14 +1369,10 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
 }
 
 #[hotpath::measure]
-fn load_rgba_image_cached(path: &Path, gen_id_check: &Option<GenerationIdCheck>) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
-    check_cancel(gen_id_check)?;
-
+fn load_rgba_image_cached(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
     let mut file = fs::File::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
-
-    check_cancel(gen_id_check)?;
 
     let (buf, width, height) = zenwebp::oneshot::decode_rgba(&buf).map_err(|err| err.decompose().0)?;
 
@@ -1594,12 +1599,14 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
 }
 
 fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
-    let FerryImageMangaInfo { ctx, archive_path, archive_i, image_kind, view_i, scale, relay, signal_tex_ready } = info;
+    let FerryImageMangaInfo { ctx, archive_path, archive_i, image_kind, view_i, scale, relay, gen_id_check, signal_tex_ready } = info;
 
     let inner = || -> Res1<image::RgbaImage> {
+        gen_id_check.check()?;
         let src_image = load_rgba_image_manga(archive_path, archive_i, image_kind)?;
 
         let dst_image = if let Some(ScaleImageManga { extent, filter }) = scale {
+            gen_id_check.check()?;
             resize_image_common(src_image, extent, filter)?
         } else {
             src_image
@@ -1613,9 +1620,18 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
             ctx.request_repaint();
         },
         Err(err) => {
-            _ = relay.send(Err((Stage::Manga, view_i)));
+            if let Some(signal_tex_ready) = signal_tex_ready {
+                signal_tex_ready.mark_done();
+            }
 
-            Err(err)?;
+            match err.var.as_ref() {
+                ErrVar::Cancel => return Ok(()),
+                _ => {
+                    _ = relay.send(Err((Stage::Manga, view_i)));
+
+                    return Err(err)
+                }
+            }
         }
     }
 
@@ -1626,7 +1642,8 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
     let FerryCachedImageInfo { ctx, path, stage, grid_entry_i, relay, gen_id_check, wait_cache_ready, signal_tex_ready } = info;
 
     let inner = || -> ResVar<image::RgbaImage> {
-        let image = load_rgba_image_cached(path, gen_id_check)?;
+        if let Some(gen_id_check) = gen_id_check { gen_id_check.check()? }
+        let image = load_rgba_image_cached(path)?;
 
         Ok(image)
     };
@@ -1639,12 +1656,18 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
         Ok(image) => if relay.send(Ok(ImageInfo { image, stage, index: grid_entry_i, signal_tex_ready })).is_ok() {
             ctx.request_repaint();
         },
-        Err(err) => match err {
-            ErrVar::Cancel => return Ok(()),
-            _ => {
-                _ = relay.send(Err((stage, grid_entry_i)));
+        Err(err) => {
+            if let Some(signal_tex_ready) = signal_tex_ready {
+                signal_tex_ready.mark_done();
+            }
 
-                return Err(err.into())
+            match err {
+                ErrVar::Cancel => return Ok(()),
+                _ => {
+                    _ = relay.send(Err((stage, grid_entry_i)));
+
+                    return Err(err.into())
+                }
             }
         }
     }
@@ -1925,6 +1948,7 @@ fn ferry_images_manga(info: FerryImagesInfoManga) {
                     view_i: info.view_i,
                     scale: info.scale,
                     relay,
+                    gen_id_check: info.gen_id_check,
                     signal_tex_ready: info.signal_tex_ready
                 };
                 ferry_image_manga(ferry_image_manga_info)?;
@@ -2622,7 +2646,7 @@ impl<'a> MediaBrowser<'a> {
                         image_file_name: image_file_name.clone(),
                         expected_metadata: grid_entry_info.metadata.clone(),
                         grid_entry_i,
-                        gen_id_check: Some(image_states.get_gen_id_check()),
+                        gen_id_check: Some(image_states.gen_id.get_next_check()),
                         signal_cache_readies: image_states.clone_cache_readies_on_scale(),
                         wait_cache_readies: CacheReadies::NONE,
                         signal_tex_ready: None
@@ -2851,7 +2875,8 @@ impl<'a> MediaBrowser<'a> {
                 image_kind: archive_page_info.image_kind,
                 offset: view_page_offset,
                 extent: archive_page_info.extent,
-                image_state: default!()
+                image_state: default!(),
+                gen_id: default!()
             };
             self.manga.view.push(view_page_info);
 
@@ -2863,13 +2888,14 @@ impl<'a> MediaBrowser<'a> {
 
         let ferry_image_infos = (0..visible_page_count)
             .map(|view_i| {
-                let ViewPageInfo { archive_i, image_kind, .. } = self.manga.view[view_i];
+                let ViewPageInfo { archive_i, image_kind, ref gen_id, .. } = self.manga.view[view_i];
 
                 FerryImageInfoManga {
                     archive_i,
                     image_kind,
                     view_i,
                     scale: None,
+                    gen_id_check: gen_id.get_next_check(),
                     signal_tex_ready: Some(self.poll_ready.clone())
                 }
             })
@@ -2886,13 +2912,14 @@ impl<'a> MediaBrowser<'a> {
 
         let ferry_image_infos = (visible_page_count..self.manga.residence.end)
             .map(|view_i| {
-                let ViewPageInfo { archive_i, image_kind, .. } = self.manga.view[view_i];
+                let ViewPageInfo { archive_i, image_kind, ref gen_id, .. } = self.manga.view[view_i];
 
                 FerryImageInfoManga {
                     archive_i,
                     image_kind,
                     view_i,
                     scale: None,
+                    gen_id_check: gen_id.get_next_check(),
                     signal_tex_ready: None
                 }
             })
@@ -3008,11 +3035,14 @@ impl<'a> MediaBrowser<'a> {
                     image_states.ref_count = image_states.ref_count.saturating_sub(1);
                     if image_states.ref_count == 0 {
                         let cache_readies = image_states.take_cache_readies();
+                        let gen_id = mem::take(&mut image_states.gen_id);
+                        gen_id.fetch_add(1, Ordering::Relaxed);
+
                         let new_image_states = ImageStates {
                             grid: ImageState::NoneCheckCache { cache_ready: cache_readies.grid },
                             details: ImageState::NoneCheckCache { cache_ready: cache_readies.details },
                             ref_count: 0,
-                            gen_id: mem::take(&mut image_states.gen_id)
+                            gen_id
                         };
 
                         let old_image_states = mem::replace(image_states, new_image_states);
@@ -3034,7 +3064,7 @@ impl<'a> MediaBrowser<'a> {
                             image_file_name: image_file_name.clone(),
                             expected_metadata: grid_entry_info.metadata.clone(),
                             grid_entry_i,
-                            gen_id_check: Some(image_states.get_gen_id_check()),
+                            gen_id_check: Some(image_states.gen_id.get_next_check()),
                             signal_cache_readies: image_states.clone_cache_readies_on_scale(),
                             wait_cache_readies: image_states.take_cache_readies_on_not_scale(),
                             signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
@@ -3068,21 +3098,23 @@ impl<'a> MediaBrowser<'a> {
         if !self.manga.stream.drop.is_empty() {
             for view_i in self.manga.stream.drop.iter() {
                 let page_info = &mut self.manga.view[*view_i];
+                page_info.gen_id.fetch_add(1, Ordering::Relaxed);
                 let old_image_state = mem::take(&mut page_info.image_state);
                 self.to_thanatos.send(Soul::ImageState(old_image_state.into())).unwrap();
             }
         }
 
-        let mut make_ferry_images_info = |load: &HashSet<usize>, signal_tex_ready: bool| -> FerryImagesInfoManga {
+        let make_ferry_images_info = |load: &HashSet<usize>, signal_tex_ready: bool| -> FerryImagesInfoManga {
             let ferry_image_infos = load.iter().copied()
                 .map(|view_i| {
-                    let page_info = &mut self.manga.view[view_i];
+                    let ViewPageInfo { archive_i, image_kind, extent, ref gen_id, ..  } = self.manga.view[view_i];
 
                     FerryImageInfoManga {
-                        archive_i: page_info.archive_i,
-                        image_kind: page_info.image_kind,
+                        archive_i,
+                        image_kind,
                         view_i,
-                        scale: scale.then_some(ScaleImageManga { extent: self.manga.view[view_i].extent, filter: self.manga.filter }),
+                        scale: scale.then_some(ScaleImageManga { extent, filter: self.manga.filter }),
+                        gen_id_check: gen_id.get_next_check(),
                         signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
                     }
                 })
@@ -3384,7 +3416,7 @@ impl<'a> MediaBrowser<'a> {
                 let height_scaled = page.extent.height.mul(scale).round();
                 let extent = [width_scaled, height_scaled].into();
 
-                self.manga.view.push(ViewPageInfo { image_kind: page.image_kind, archive_i: page.index, offset: page_scaled_offset, extent, image_state: default!() });
+                self.manga.view.push(ViewPageInfo { image_kind: page.image_kind, archive_i: page.index, offset: page_scaled_offset, extent, image_state: default!(), gen_id: default!() });
 
                 page_scaled_offset += height_scaled;
             }
@@ -3514,13 +3546,7 @@ impl<'a> MediaBrowser<'a> {
                 .min(self.manga.view.len());
             self.manga.visible_view = start_visible..end_visible;
 
-            let viewport_top_delta = viewport.top().sub(self.manga.prev_viewport_top).abs();
-            let delta_this_frame = viewport_top_delta > 0.;
-
-            let hyperspace = self.manga.some_prev_delta && delta_this_frame && // Scrolling
-                viewport_top_delta > 340.; // Speed limit
-
-            if !hyperspace && self.update_residence_manga(self.manga.visible_view.clone(), self.manga.view.len()) {
+            if self.update_residence_manga(self.manga.visible_view.clone(), self.manga.view.len()) {
                 self.stream_manga(ui, self.manga.scale != 100.);
             }
 
@@ -3538,9 +3564,6 @@ impl<'a> MediaBrowser<'a> {
                     }
                 }
             }
-
-            self.manga.prev_viewport_top = viewport.top();
-            self.manga.some_prev_delta = delta_this_frame;
 
             // let info = vec![
             //     format!("visible : {:?}", start_visible..end_visible),
