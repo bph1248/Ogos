@@ -291,7 +291,7 @@ pub trait VarName {
     fn var_name(&self) -> &'static str;
 }
 
-pub fn attempt<T>(mut f: impl FnMut() -> Res<T>, attempt_count: u32, sleep_dur: Duration) -> Res<T> {
+pub fn attempt<T, E>(mut f: impl FnMut() -> Result<T, E>, attempt_count: u32, sleep_dur: Duration) -> Result<T, E> {
     for _ in 0..attempt_count.saturating_sub(1) {
         if let Ok(t) = f() {
             return Ok(t)
