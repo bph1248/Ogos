@@ -648,6 +648,7 @@ struct SpringDamper {
 impl SpringDamper {
     fn step(&mut self, ui: &mut egui::Ui, refresh_rate: u32) {
         const EPSILON: f32 = 0.0001;
+        const TOLERANCE: f32 = 0.5;
 
         let (dt, delta) = ui.input(|i| {
             let dt = i.unstable_dt.min(1. / refresh_rate as f32);
@@ -744,16 +745,11 @@ impl SpringDamper {
         self.vel = self.vel_pos_coef * self.displacement + self.vel_vel_coef * old_vel;
 
         self.delta = self.pos - old_pos;
-    }
-
-    fn check_settled(&mut self, ui: &mut egui::Ui, scroll_offset: &mut f32) {
-        const TOLERANCE: f32 = 0.5;
 
         if self.displacement.abs() < TOLERANCE && self.vel.abs() < TOLERANCE {
             self.stop();
-            *scroll_offset = scroll_offset.round();
         } else {
-            ui.request_repaint();
+          ui.request_repaint();
         }
     }
 
@@ -2742,7 +2738,7 @@ impl<'a> MediaBrowser<'a> {
                     (ImageKind::Png, width as f32, height as f32)
                 },
                 "webp" => {
-                    let mut buf = [0_u8; 30];
+                    let mut buf = [0_u8; zenwebp::ImageInfo::PROBE_BYTES];
                     page.read_exact(&mut buf)?;
 
                     let info = zenwebp::ImageInfo::from_bytes(&buf).map_err(|err| err.decompose().0)?;
@@ -3387,7 +3383,7 @@ impl<'a> MediaBrowser<'a> {
                         (ScrollSource::DRAG, self.manga.spring_damper.multiplier)
                     }
                 };
-                self.manga.scroll_offset_y_anchor.get_or_insert(self.manga.scroll_offset.y);
+                self.manga.scroll_offset_y_anchor.get_or_insert(self.manga.scroll_offset.y.round());
                 self.manga.secondary_was_down = true;
 
                 ScrollAreaInfo {
@@ -3400,7 +3396,7 @@ impl<'a> MediaBrowser<'a> {
             }
         };
         let ScrollAreaInfo { scroll_source, drag_by, stop_kinesis, scroll_offset, scroll_multiplier } = scroll_area_info;
-        let mut new_scroll_offset = egui::ScrollArea::both()
+        let new_scroll_offset = egui::ScrollArea::both()
             .auto_shrink(false)
             .scroll_source(scroll_source)
             .drag_by(drag_by)
@@ -3414,13 +3410,16 @@ impl<'a> MediaBrowser<'a> {
                 self.show_viewport_manga(ui, viewport)
             })
             .state.offset;
-        self.manga.spring_damper.check_settled(ui, &mut new_scroll_offset.y);
 
-        if new_scroll_offset != self.manga.scroll_offset {
-            egui::Popup::close_all(ui);
+        match new_scroll_offset == self.manga.scroll_offset {
+            true =>
+                self.manga.scroll_offset = new_scroll_offset.round(),
+            false => {
+                self.manga.scroll_offset = new_scroll_offset;
+
+                egui::Popup::close_all(ui)
+            }
         }
-
-        self.manga.scroll_offset = new_scroll_offset;
     }
 
     fn show_viewport_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
@@ -3454,7 +3453,7 @@ impl<'a> MediaBrowser<'a> {
                 }
             }
 
-            // let info = vec![
+            // let info = &[
             //     format!("visible : {:?}", start_visible..end_visible),
             //     format!("resi    : {:?}", self.manga.residence),
             //     format!("viewport: {}", viewport),
@@ -3482,6 +3481,7 @@ impl<'a> MediaBrowser<'a> {
             .show(|ui| {
                 ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
                 ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
+                ui.separator();
                 ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Manga));
             });
     }
@@ -3870,7 +3870,7 @@ impl<'a> MediaBrowser<'a> {
                 }
             };
 
-            let mut new_grid_scroll_offset = egui::ScrollArea::new([false, true])
+            let new_grid_scroll_offset = egui::ScrollArea::new([false, true])
                 .auto_shrink(false)
                 .scroll_source(scroll_source)
                 .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
@@ -3899,7 +3899,6 @@ impl<'a> MediaBrowser<'a> {
                     });
                 })
                 .state.offset.y;
-            self.spring_damper.check_settled(ui, &mut new_grid_scroll_offset);
 
             let clip_stroke_rect = (
                 new_grid_scroll_offset > 0. &&
@@ -3910,11 +3909,15 @@ impl<'a> MediaBrowser<'a> {
                 stroke_rect(ui, rect, clip_stroke_rect);
             }
 
-            if new_grid_scroll_offset != self.grid_scroll_offset {
-                egui::Popup::close_all(ui);
-            }
+            match new_grid_scroll_offset == self.grid_scroll_offset {
+                true =>
+                    self.grid_scroll_offset = new_grid_scroll_offset.round(),
+                false => {
+                    self.grid_scroll_offset = new_grid_scroll_offset;
 
-            self.grid_scroll_offset = new_grid_scroll_offset;
+                    egui::Popup::close_all(ui)
+                }
+            }
         });
     }
 
@@ -4055,6 +4058,7 @@ impl<'a> MediaBrowser<'a> {
 
                 self.grid_cell_sort_submenu(ui);
                 self.grid_cell_tag_submenus(ui);
+                ui.separator();
                 self.grid_cell_scroll_submenu(ui);
             });
 
