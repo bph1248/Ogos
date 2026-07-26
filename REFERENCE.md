@@ -16,7 +16,6 @@ A list of paths to apps that Ogos depends on. If a path is not specified and a d
 - `ffprobe`: [Ffprobe](https://ffmpeg.org/ffprobe.html).
 - `gog`: [GOG GALAXY](https://www.gogalaxy.com/en/).
 - `mpv`: [mpv](https://mpv.io/).
-- `novideo_srgb`: [novideo_srgb](https://github.com/bph1248/novideo_srgb).
 - `skif`: [Special K Injection Frontend](https://www.special-k.info/).
 - `steam`: [Steam](https://store.steampowered.com/about/).
 
@@ -50,9 +49,6 @@ Settings related to global hotkeys and dynamic key/button maps, used in conjunct
 #### Display modes
 
 Nvidia-specific graphics settings, customizable per display mode.
-
-- `novideo_srgb`: Enable novideo_srgb's color space / gamma clamp. All operations occur in SDR mode, before switching to, and after switching from, HDR mode. It's still possible to leave the clamp enabled in HDR mode, hence why this setting has a HDR variant.\
-Note that novideo_srgb has been [broken](https://github.com/ledoge/novideo_srgb/issues/121) since driver version 591.44+ due an Nvidia API change.
 
 #### Games
 
@@ -99,11 +95,6 @@ Settings used in conjunction with `ogos [PATH]` and the media browser. Ffprobe i
 
 - `sdr_profile`: The profile name to forward to mpv when launching SDR videos. SDR videos are considered anything not HDR.
 - `hdr_profile`: Same as above but for HDR. HDR videos are considered anything targeting PQ or HLG gamma.
-- `reshade`: Settings used to configure ReShade and Lilium's static tone mapper for use with HDR videos. Video metadata must contain the max luminance property, else ReShade is disabled. Mpv must be configured to use Vulkan.
-    - `profile`: Overrides `hdr_profile`.
-    - `layer_path`: The path to ReShade's Vulkan layer manifest, used to disable ReShade for videos that don't support static tone mapping.
-    - `preset_path`: The path to a ReShade preset file. If video metadata contains the max luminance property then the value is written to `[lilium__tone_mapping.fx] InputLuminanceMax` on launch.
-    - `settings_path`: The path to a ReShade settings file. A symlink to this file is created in mpv's directory on launch to allow ReShade to function. If the file cannot be symlinked it will be copied.
 - `default_glsl_shaders`: A list of GLSL shaders to forward to mpv. Follows the same format as mpv's `--glsl-shaders`.
 - `override_glsl_shaders`: Overrides `default_glsl_shaders`.
 
@@ -168,8 +159,6 @@ Window shift is disabled if the foreground window is full screen or `left_button
         gog: "<path>",
         // Optional
         mpv: "<path>",
-        // Optional, default: ".\novideo_srgb\novideo_srgb.dll"
-        novideo_srgb: "<path>",
         // Optional
         skif: "<path>",
         // Optional, default: "C:\Program Files (x86)\steam\steam.exe"
@@ -245,19 +234,6 @@ Window shift is disabled if the foreground window is full screen or `left_button
                 bit_depth: <6, 8, 10>,
                 state: <default, enabled, disabled>,
                 mode: <spatial_static, spatial_static2x2, spatial_dynamic, spatial_dynamic2x2, temporal>
-            ),
-            // Optional
-            novideo_srgb: (
-                primaries: <edid, profile(path: "<path>")>,
-                color_space_target: <bt_709, display_p3, adobe_rgb, bt_2020>,
-                // Optional
-                gamma: <
-                    srgb,
-                    bt_1886,
-                    lstar,
-                    custom(value: <ufloat>, black_output_offset: <ufloat>, intent: <absolute, relative>)
-                >,
-                enable_optimization: <bool>
             )
         ),
         hdr: (..)
@@ -300,15 +276,7 @@ Window shift is disabled if the foreground window is full screen or `left_button
         // Optional
         default_glsl_shaders: "<shaders>",
         // Optional
-        override_glsl_shaders: "<shaders>",
-        // Optional
-        reshade: (
-            profile: "<profile>",
-            // Optional, default: "C:\ProgramData\ReShade\ReShade64.json"
-            layer_path: "<path>",
-            preset_path: "<path>",
-            settings_path: "<path>"
-        )
+        override_glsl_shaders: "<shaders>"
     ),
     // Optional
     pixel_cleaning: (
