@@ -219,6 +219,11 @@ impl From<&wgpu::Texture> for Extent2dF {
         }
     }
 }
+impl From<Extent2dF> for [f32; 2] {
+    fn from(value: Extent2dF) -> Self {
+        [value.width, value.height]
+    }
+}
 impl From<Extent2dF> for Extent2dU {
     fn from(value: Extent2dF) -> Self {
         Extent2dU {
@@ -476,7 +481,7 @@ struct Manga {
     scale: f32,
     scale_drag_anchor: f32,
     flagged_scale: Option<egui::Rect>,
-    filter: fir::FilterType,
+    filter: FilterAccel,
     scroll_kind: ScrollKind,
     scroll_offset: egui::Vec2,
     scroll_offset_y_anchor: Option<f32>,
@@ -491,7 +496,7 @@ impl Manga {
     fn new(spring_damper: SpringDamper) -> Self {
         Self {
             scale: 100.,
-            filter: fir::FilterType::Custom(blackman_filter_fir()),
+            filter: FilterAccel::Cpu(fir::FilterType::Custom(blackman_filter_fir())),
             spring_damper,
             ..default!()
         }
@@ -597,9 +602,114 @@ struct ResetResidence {
     visible_cell_count: usize
 }
 
+struct Resizer {
+    sampler: wgpu::Sampler,
+    bind_group_layout: wgpu::BindGroupLayout,
+    render_pipeline: wgpu::RenderPipeline
+}
+impl Resizer {
+    fn new(device: &wgpu::Device) -> Self {
+        use wgpu::*;
+
+        let sampler_desc = SamplerDescriptor {
+            label: None,
+            address_mode_u: AddressMode::Repeat,
+            address_mode_v: AddressMode::Repeat,
+            address_mode_w: AddressMode::Repeat,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: MipmapFilterMode::Nearest,
+            lod_min_clamp: 0.,
+            lod_max_clamp: 0.,
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None
+        };
+        let sampler = device.create_sampler(&sampler_desc);
+
+        let shader_module_desc = ShaderModuleDescriptor {
+            label: None,
+            source: ShaderSource::Wgsl(include_str!("../../../assets/scale_tex.wgsl").into())
+        };
+        let shader_module = device.create_shader_module(shader_module_desc);
+
+        let bind_group_layout_desc = BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false
+                    },
+                    count: None
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None
+                }
+            ]
+        };
+        let bind_group_layout = device.create_bind_group_layout(&bind_group_layout_desc);
+
+        let pipeline_layout_desc = PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0
+        };
+        let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
+
+        let vertex_state = VertexState {
+            module: &shader_module,
+            entry_point: Some("vertex_main"),
+            compilation_options: default!(),
+            buffers: default!()
+        };
+        let color_target_state = ColorTargetState {
+            format: TextureFormat::Rgba8UnormSrgb,
+            blend: None,
+            write_mask: ColorWrites::ALL
+        };
+        let fragment_state = FragmentState {
+            module: &shader_module,
+            entry_point: Some("fragment_main"),
+            compilation_options: default!(),
+            targets: &[Some(color_target_state)]
+        };
+        let render_pipeline_desc = RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            vertex: vertex_state,
+            primitive: default!(), // Right hand coords - WGSL clip space +Y points up
+            depth_stencil: None,
+            multisample: default!(),
+            fragment: Some(fragment_state),
+            multiview_mask: None,
+            cache: None
+        };
+        let render_pipeline = device.create_render_pipeline(&render_pipeline_desc);
+
+        Self {
+            sampler,
+            bind_group_layout,
+            render_pipeline
+        }
+    }
+}
+
 struct ScaleImageManga {
     extent: Extent2dF,
     filter: fir::FilterType
+}
+
+struct ScaledTexManga {
+    tex_id: egui::TextureId,
+    index: usize,
+    extent: Extent2dF
 }
 
 struct ScrollAreaInfo {
@@ -934,6 +1044,26 @@ impl ButtonState {
     }
 }
 
+enum FilterAccel {
+    Cpu(fir::FilterType),
+    Gpu(fir::FilterType)
+}
+impl Default for FilterAccel {
+    fn default() -> Self {
+        Self::Cpu(default!())
+    }
+}
+impl Deref for FilterAccel {
+    type Target = fir::FilterType;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            FilterAccel::Cpu(filter_type) => filter_type,
+            FilterAccel::Gpu(filter_type) => filter_type
+        }
+    }
+}
+
 enum GridViewOp {
     Refresh,
     Reset
@@ -1120,14 +1250,14 @@ fn alloc_texture(wgpu: &egui_wgpu::RenderState, width: u32, height: u32, render_
     let usage = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING;
     let usage = if render_attachment { usage | wgpu::TextureUsages::RENDER_ATTACHMENT } else { usage };
     let tex_desc = wgpu::TextureDescriptor {
-        label: Some("hi"),
+        label: None,
         size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage,
-        view_formats: default!()
+        view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb]
     };
     let tex = device.create_texture(&tex_desc);
     let tex_view = tex.create_view(&default!());
@@ -1262,11 +1392,11 @@ fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, image_rx: mpmc::Rec
                 let offset = image.height() as usize;
                 let (tex, tex_id) = alloc_write_texture(&wgpu, &image);
 
-                _ = partial_tex_sx.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, offset, row_size, chunk_row_count });
+                partial_tex_sx.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, offset, row_size, chunk_row_count }).unwrap();
             } else {
                 let (tex, tex_id) = alloc_clear_texture(&wgpu, &image);
 
-                _ = partial_tex_sx.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, offset: 0, row_size, chunk_row_count });
+                partial_tex_sx.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, offset: 0, row_size, chunk_row_count }).unwrap();
             }
         });
 
@@ -2163,6 +2293,9 @@ struct MediaBrowser<'a> {
     discord_state_edit: String,
     discord_display_kind: DiscordDisplayKind,
     open_error_win: bool,
+    resizer: Arc<Resizer>,
+    scaled_tex_manga_sx: mpmc::Sender<ScaledTexManga>,
+    scaled_tex_manga_rx: mpmc::Receiver<ScaledTexManga>,
     image_sx: mpmc::Sender<ImageResult>,
     from_charon: mpmc::Receiver<ImageResult>,
     to_hephaestus: mpmc::Sender<WriteTex>,
@@ -2497,6 +2630,9 @@ impl<'a> MediaBrowser<'a> {
         let (error_sx, error_rx) = mpmc::unbounded();
         let error_msg = "".to_string();
 
+        let resizer = Arc::new(Resizer::new(&wgpu.device));
+        let (scaled_tex_manga_sx, scaled_tex_manga_rx) = mpmc::unbounded();
+
         let win_inner_extent = Extent2dF::from(win_inner_extent);
         let central_size = egui::vec2(
             win_inner_extent.width.sub(2. * FRAME_INNER_MARGIN).max(0.),
@@ -2563,7 +2699,7 @@ impl<'a> MediaBrowser<'a> {
                     }
 
                     let (tex, tex_id) = alloc_write_texture(wgpu, &image);
-                    _ = to_thanatos.send(Soul::RgbaImage(image));
+                    to_thanatos.send(Soul::RgbaImage(image)).unwrap();
 
                     let image_states = get_image_states_from_grid_entry_mut(&mut images, &grid_entries, index).unwrap();
                     image_states.grid = ImageState::Ready { tex_id, extent: tex.as_(), cache_ready: None };
@@ -2642,6 +2778,9 @@ impl<'a> MediaBrowser<'a> {
             discord_details_edit: default!(),
             discord_state_edit: default!(),
             discord_display_kind,
+            resizer,
+            scaled_tex_manga_sx,
+            scaled_tex_manga_rx,
             image_sx,
             from_charon,
             to_hephaestus,
@@ -2661,7 +2800,7 @@ impl<'a> MediaBrowser<'a> {
         })
     }
 
-    fn assign_image_state(&mut self, tex_id: egui::TextureId, stage: Stage, extent: Extent2dF, index: usize) {
+    fn assess_image_ready(&mut self, tex: wgpu::Texture, tex_id: egui::TextureId, stage: Stage, extent: Extent2dF, index: usize) {
         match stage {
             Stage::Grid => {
                 let image_states = self.get_image_states_from_grid_entry_mut(index).unwrap();
@@ -2673,7 +2812,101 @@ impl<'a> MediaBrowser<'a> {
                 let cache_ready = image_states.details.take_cache_ready();
                 image_states.details = ImageState::Ready { tex_id, extent, cache_ready };
             },
-            Stage::Manga => self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent }
+            Stage::Manga => if let FilterAccel::Gpu(_) = self.manga.filter && self.manga.scale != 100. {
+                let wgpu = self.wgpu.clone();
+                let dst_extent = self.manga.view[index].extent;
+                let resizer = self.resizer.clone();
+                let scaled_tex_sx = self.scaled_tex_manga_sx.clone();
+
+                self.thread_pool.enqueue_high(move || {
+                    use wgpu::*;
+                    let egui_wgpu::RenderState { device, queue, .. } = &wgpu;
+
+                    let dst_tex_desc = wgpu::TextureDescriptor {
+                        label: None,
+                        size: Extent3d {
+                            width: dst_extent.width as u32,
+                            height: dst_extent.height as u32,
+                            depth_or_array_layers: 1
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: TextureDimension::D2,
+                        format: TextureFormat::Rgba8UnormSrgb,
+                        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[TextureFormat::Rgba8Unorm]
+                    };
+                    let dst_tex = device.create_texture(&dst_tex_desc);
+
+                    let src_tex_view_desc = TextureViewDescriptor {
+                        format: Some(TextureFormat::Rgba8UnormSrgb),
+                        ..default!()
+                    };
+                    let src_tex_view = tex.create_view(&src_tex_view_desc);
+                    let dst_tex_view = dst_tex.create_view(&default!());
+
+                    let bind_group_desc = BindGroupDescriptor {
+                        label: None,
+                        layout: &resizer.bind_group_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: BindingResource::TextureView(&src_tex_view)
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: BindingResource::Sampler(&resizer.sampler)
+                            }
+                        ]
+                    };
+                    let bind_group = device.create_bind_group(&bind_group_desc);
+
+                    let render_pass_desc = RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[
+                            Some(RenderPassColorAttachment {
+                                view: &dst_tex_view,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: wgpu::StoreOp::Store
+                                }
+                            })
+                        ],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None
+                    };
+
+                    let mut encoder = device.create_command_encoder(&default!());
+                    {
+                        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+                        render_pass.set_pipeline(&resizer.render_pipeline);
+                        render_pass.set_bind_group(0, &bind_group, default!());
+                        render_pass.draw(0..3, 0..1);
+                    }
+                    let command_buffer = encoder.finish();
+                    queue.submit([command_buffer]);
+
+                    let dst_tex_view_desc = TextureViewDescriptor {
+                        format: Some(TextureFormat::Rgba8Unorm),
+                        ..default!()
+                    };
+                    let dst_tex_view = dst_tex.create_view(&dst_tex_view_desc);
+                    let dst_tex_id = register_native_texture(&wgpu, &dst_tex_view);
+
+                    scaled_tex_sx.send(ScaledTexManga {
+                        tex_id: dst_tex_id,
+                        index,
+                        extent: dst_extent
+                    })
+                    .unwrap();
+                });
+            } else {
+                self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
+            }
         }
     }
 
@@ -2995,7 +3228,7 @@ impl<'a> MediaBrowser<'a> {
                         archive_i,
                         image_kind,
                         view_i,
-                        scale: scale.then_some(ScaleImageManga { extent, filter: self.manga.filter }),
+                        scale: scale.then_some(ScaleImageManga { extent, filter: *self.manga.filter }),
                         gen_id_check: gen_id.get_next_check(),
                         signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
                     }
@@ -3018,8 +3251,12 @@ impl<'a> MediaBrowser<'a> {
 
     #[hotpath::measure]
     fn stream_textures_stepped(&mut self) {
-        let mut sentinel = self.chunk_size;
+        while let Ok(scaled_tex) = self.scaled_tex_manga_rx.try_recv() {
+            let ScaledTexManga { tex_id, index, extent } = scaled_tex;
+            self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
+        }
 
+        let mut sentinel = self.chunk_size;
         sentinel -= self.try_write_partial_tex(sentinel);
 
         while let Ok(mut partial_tex) = self.from_demeter.try_recv() {
@@ -3028,11 +3265,12 @@ impl<'a> MediaBrowser<'a> {
                     if let Some(signal_tex_ready) = signal_tex_ready {
                         signal_tex_ready.mark_done();
                     }
-                    _ = self.to_thanatos.send(Soul::RgbaImage(image));
+                    self.to_thanatos.send(Soul::RgbaImage(image)).unwrap();
                 }
 
                 let PartialTex { tex, tex_id, stage, index, .. } = partial_tex;
-                self.assign_image_state(tex_id, stage, tex.as_(), index);
+                let extent: Extent2dF = tex.as_();
+                self.assess_image_ready(tex, tex_id, stage, extent, index);
             } else {
                 self.partial_tex_stash.push_back(partial_tex);
                 sentinel -= self.try_write_partial_tex(sentinel);
@@ -3064,14 +3302,14 @@ impl<'a> MediaBrowser<'a> {
                     let image_size = image_info.image.as_raw().len();
                     if image_size <= sentinel {
                         // Writable now
-                        _ = self.to_demeter.send(image_info);
+                        self.to_demeter.send(image_info).unwrap();
                         sentinel -= image_size;
 
                         continue
                     }
                     if image_size > self.chunk_size {
                         // Clearable now
-                        _ = self.to_demeter.send(image_info);
+                        self.to_demeter.send(image_info).unwrap();
 
                         continue
                     }
@@ -3106,10 +3344,10 @@ impl<'a> MediaBrowser<'a> {
             self.to_hephaestus.send(write_tex).unwrap();
 
             if last_write {
+                let PartialTex { tex, .. } = self.partial_tex_stash.pop_front().unwrap();
                 let extent = Extent2dF { width: tex.width() as f32, height: tex.height() as f32 };
-                self.assign_image_state(tex_id, stage, extent, index);
+                self.assess_image_ready(tex, tex_id, stage, extent, index);
 
-                self.partial_tex_stash.pop_front();
             } else {
                 *offset += write_row_count;
             }
@@ -3332,7 +3570,7 @@ impl<'a> MediaBrowser<'a> {
                     self.manga.stream.load_after.insert(view_i);
                 }
             }
-            self.stream_manga(ui, self.manga.scale != 100.);
+            self.stream_manga(ui, self.manga.scale != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
         }
 
         let scroll_offset_x_centered = self.manga.view_extent.width.sub(self.central_rect.width()).div_euclid(2.).max(0.);
@@ -3435,7 +3673,7 @@ impl<'a> MediaBrowser<'a> {
             self.manga.visible_view = start_visible..end_visible;
 
             if self.update_residence_manga(self.manga.visible_view.clone(), self.manga.view.len()) {
-                self.stream_manga(ui, self.manga.scale != 100.);
+                self.stream_manga(ui, self.manga.scale != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
             }
 
             if self.poll_ready.is_ready() {
@@ -3546,32 +3784,56 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn filter_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
+        egui::Grid::new("grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
 
-        if ui.radio(self.manga.filter == fir::FilterType::Box, "Box").clicked() {
-            self.manga.filter = fir::FilterType::Box;
-        }
-        if ui.radio(self.manga.filter == fir::FilterType::Bilinear, "Bilinear").clicked() {
-            self.manga.filter = fir::FilterType::Bilinear;
-        }
-        if ui.radio(self.manga.filter == fir::FilterType::Custom(blackman_filter_fir()), "Blackman 3").clicked() {
-            self.manga.filter = fir::FilterType::Custom(blackman_filter_fir());
-        }
-        if ui.radio(self.manga.filter == fir::FilterType::CatmullRom, "Catmull-Rom").clicked() {
-            self.manga.filter = fir::FilterType::CatmullRom;
-        }
-        if ui.radio(self.manga.filter == fir::FilterType::Gaussian, "Gaussian").clicked() {
-            self.manga.filter = fir::FilterType::Gaussian;
-        }
-        if ui.radio(self.manga.filter == fir::FilterType::Hamming, "Hamming").clicked() {
-            self.manga.filter = fir::FilterType::Hamming;
-        }
-        if ui.radio(self.manga.filter == fir::FilterType::Lanczos3, "Lanczos 3").clicked() {
-            self.manga.filter = fir::FilterType::Lanczos3;
-        }
-        if ui.radio(self.manga.filter == fir::FilterType::Mitchell, "Mitchell").clicked() {
-            self.manga.filter = fir::FilterType::Mitchell;
-        }
+                    ui.label("CPU");
+
+                    ui.separator();
+
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Box)), "Box").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Box);
+                    }
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Bilinear)), "Bilinear").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Bilinear);
+                    }
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Custom(_))), "Blackman 3").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Custom(blackman_filter_fir()));
+                    }
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::CatmullRom)), "Catmull-Rom").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::CatmullRom);
+                    }
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Gaussian)), "Gaussian").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Gaussian);
+                    }
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Hamming)), "Hamming").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Hamming);
+                    }
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Lanczos3)), "Lanczos 3").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Lanczos3);
+                    }
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Mitchell)), "Mitchell").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Mitchell);
+                    }
+                });
+
+                ui.vertical(|ui| {
+                    ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
+
+                    ui.label("GPU");
+
+                    ui.separator();
+
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(fir::FilterType::Bilinear)), "Bilinear").clicked() {
+                        self.manga.filter = FilterAccel::Gpu(fir::FilterType::Bilinear);
+                    }
+                });
+
+                ui.end_row();
+            });
     }
 
     fn scroll_submenu_common(&mut self, ui: &mut egui::Ui, stage: Stage) {
