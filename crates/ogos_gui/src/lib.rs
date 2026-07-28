@@ -597,6 +597,107 @@ struct ResetResidence {
     visible_cell_count: usize
 }
 
+struct Resizer {
+    sampler: wgpu::Sampler,
+    shader_module: wgpu::ShaderModule,
+    bind_group_layout: wgpu::BindGroupLayout,
+    render_pipeline: wgpu::RenderPipeline
+}
+impl Resizer {
+    fn new(device: &wgpu::Device) -> Self {
+        use wgpu::*;
+
+        let sampler_desc = SamplerDescriptor {
+            label: Some("resizer"),
+            address_mode_u: AddressMode::Repeat,
+            address_mode_v: AddressMode::Repeat,
+            address_mode_w: AddressMode::Repeat,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: MipmapFilterMode::Nearest,
+            lod_min_clamp: default!(),
+            lod_max_clamp: default!(),
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None
+        };
+        let sampler = device.create_sampler(&sampler_desc);
+
+        let shader_module_desc = ShaderModuleDescriptor {
+            label: Some("resizer"),
+            source: ShaderSource::Wgsl(include_str!("../../../assets/scale_tex.wgsl").into())
+        };
+        let shader_module = device.create_shader_module(shader_module_desc);
+
+        let bind_group_layout_desc = BindGroupLayoutDescriptor {
+            label: Some("resizer"),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false
+                    },
+                    count: None
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None
+                }
+            ]
+        };
+        let bind_group_layout = device.create_bind_group_layout(&bind_group_layout_desc);
+
+        let pipeline_layout_desc = PipelineLayoutDescriptor {
+            label: Some("resizer"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0
+        };
+        let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
+
+        let vertex_state = VertexState {
+            module: &shader_module,
+            entry_point: Some("vertex_main"),
+            compilation_options: default!(),
+            buffers: default!()
+        };
+        let color_target_state = ColorTargetState {
+            format: TextureFormat::Rgba8Unorm,
+            blend: None,
+            write_mask: ColorWrites::ALL
+        };
+        let fragment_state = FragmentState {
+            module: &shader_module,
+            entry_point: Some("fragment_main"),
+            compilation_options: default!(),
+            targets: &[Some(color_target_state)]
+        };
+        let render_pipeline_desc = RenderPipelineDescriptor {
+            label: Some("resizer"),
+            layout: Some(&pipeline_layout),
+            vertex: vertex_state,
+            primitive: default!(), // Right hand coords - WGSL clip space +Y points up
+            depth_stencil: None,
+            multisample: default!(),
+            fragment: Some(fragment_state),
+            multiview_mask: None,
+            cache: None
+        };
+        let render_pipeline = device.create_render_pipeline(&render_pipeline_desc);
+
+        Self {
+            sampler,
+            shader_module,
+            bind_group_layout,
+            render_pipeline
+        }
+    }
+}
+
 struct ScaleImageManga {
     extent: Extent2dF,
     filter: fir::FilterType
@@ -2163,6 +2264,7 @@ struct MediaBrowser<'a> {
     discord_state_edit: String,
     discord_display_kind: DiscordDisplayKind,
     open_error_win: bool,
+    resizer: Resizer,
     image_sx: mpmc::Sender<ImageResult>,
     from_charon: mpmc::Receiver<ImageResult>,
     to_hephaestus: mpmc::Sender<WriteTex>,
@@ -2497,6 +2599,8 @@ impl<'a> MediaBrowser<'a> {
         let (error_sx, error_rx) = mpmc::unbounded();
         let error_msg = "".to_string();
 
+        let resizer = Resizer::new(&wgpu.device);
+
         let win_inner_extent = Extent2dF::from(win_inner_extent);
         let central_size = egui::vec2(
             win_inner_extent.width.sub(2. * FRAME_INNER_MARGIN).max(0.),
@@ -2642,6 +2746,7 @@ impl<'a> MediaBrowser<'a> {
             discord_details_edit: default!(),
             discord_state_edit: default!(),
             discord_display_kind,
+            resizer,
             image_sx,
             from_charon,
             to_hephaestus,
