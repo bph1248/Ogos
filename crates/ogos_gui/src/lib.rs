@@ -759,7 +759,6 @@ struct SpringDamper {
 impl SpringDamper {
     fn step(&mut self, ui: &mut egui::Ui, refresh_rate: u32) {
         const EPSILON: f32 = 0.0001;
-        const TOLERANCE: f32 = 0.5;
 
         let (dt, delta) = ui.input(|i| {
             let dt = i.unstable_dt.min(1. / refresh_rate as f32);
@@ -857,7 +856,7 @@ impl SpringDamper {
 
         self.delta = self.pos - old_pos;
 
-        if self.displacement.abs() < TOLERANCE && self.vel.abs() < TOLERANCE {
+        if self.delta.abs() < EPSILON {
             self.stop();
         } else {
           ui.request_repaint();
