@@ -670,7 +670,7 @@ impl Resizer {
             buffers: default!()
         };
         let color_target_state = ColorTargetState {
-            format: TextureFormat::Rgba8Unorm,
+            format: TextureFormat::Rgba8UnormSrgb,
             blend: None,
             write_mask: ColorWrites::ALL
         };
@@ -1251,7 +1251,7 @@ fn alloc_texture(wgpu: &egui_wgpu::RenderState, width: u32, height: u32, render_
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage,
-        view_formats: default!()
+        view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb]
     };
     let tex = device.create_texture(&tex_desc);
     let tex_view = tex.create_view(&default!());
@@ -2817,13 +2817,17 @@ impl<'a> MediaBrowser<'a> {
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: TextureDimension::D2,
-                    format: TextureFormat::Rgba8Unorm,
+                    format: TextureFormat::Rgba8UnormSrgb,
                     usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-                    view_formats: default!()
+                    view_formats: &[TextureFormat::Rgba8Unorm]
                 };
                 let dst_tex = device.create_texture(&dst_tex_desc);
 
-                let src_tex_view = src_tex.create_view(&default!());
+                let src_tex_view_desc = TextureViewDescriptor {
+                    format: Some(TextureFormat::Rgba8UnormSrgb),
+                    ..default!()
+                };
+                let src_tex_view = src_tex.create_view(&src_tex_view_desc);
                 let dst_tex_view = dst_tex.create_view(&default!());
 
                 let bind_group_desc = BindGroupDescriptor {
@@ -2871,6 +2875,11 @@ impl<'a> MediaBrowser<'a> {
                 let command_buffer = encoder.finish();
                 queue.submit([command_buffer]);
 
+                let dst_tex_view_desc = TextureViewDescriptor {
+                    format: Some(TextureFormat::Rgba8Unorm),
+                    ..default!()
+                };
+                let dst_tex_view = dst_tex.create_view(&dst_tex_view_desc);
                 let dst_tex_id = register_native_texture(&self.wgpu, &dst_tex_view);
 
                 self.manga.view[index].image_state = ImageStateManga::Ready { tex_id: dst_tex_id, extent: dst_extent };
