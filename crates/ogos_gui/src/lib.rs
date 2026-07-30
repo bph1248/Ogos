@@ -706,6 +706,12 @@ struct ScaleImageManga {
     filter: fir::FilterType
 }
 
+struct ScaledTexManga {
+    tex_id: egui::TextureId,
+    index: usize,
+    extent: Extent2dF
+}
+
 struct ScrollAreaInfo {
     scroll_source: ScrollSource,
     drag_by: egui::PointerButton,
@@ -2287,7 +2293,9 @@ struct MediaBrowser<'a> {
     discord_state_edit: String,
     discord_display_kind: DiscordDisplayKind,
     open_error_win: bool,
-    resizer: Resizer,
+    resizer: Arc<Resizer>,
+    scaled_tex_manga_sx: mpmc::Sender<ScaledTexManga>,
+    scaled_tex_manga_rx: mpmc::Receiver<ScaledTexManga>,
     image_sx: mpmc::Sender<ImageResult>,
     from_charon: mpmc::Receiver<ImageResult>,
     to_hephaestus: mpmc::Sender<WriteTex>,
@@ -2622,7 +2630,8 @@ impl<'a> MediaBrowser<'a> {
         let (error_sx, error_rx) = mpmc::unbounded();
         let error_msg = "".to_string();
 
-        let resizer = Resizer::new(&wgpu.device);
+        let resizer = Arc::new(Resizer::new(&wgpu.device));
+        let (scaled_tex_manga_sx, scaled_tex_manga_rx) = mpmc::unbounded();
 
         let win_inner_extent = Extent2dF::from(win_inner_extent);
         let central_size = egui::vec2(
@@ -2770,6 +2779,8 @@ impl<'a> MediaBrowser<'a> {
             discord_state_edit: default!(),
             discord_display_kind,
             resizer,
+            scaled_tex_manga_sx,
+            scaled_tex_manga_rx,
             image_sx,
             from_charon,
             to_hephaestus,
@@ -2789,102 +2800,112 @@ impl<'a> MediaBrowser<'a> {
         })
     }
 
-    fn assign_image_state(&mut self, src_tex: wgpu::Texture, src_tex_id: egui::TextureId, stage: Stage, src_extent: Extent2dF, index: usize) { //$ Rename
+    fn assess_image_ready(&mut self, tex: wgpu::Texture, tex_id: egui::TextureId, stage: Stage, extent: Extent2dF, index: usize) {
         match stage {
             Stage::Grid => {
                 let image_states = self.get_image_states_from_grid_entry_mut(index).unwrap();
                 let cache_ready = image_states.grid.take_cache_ready();
-                image_states.grid = ImageState::Ready { tex_id: src_tex_id, extent: src_extent, cache_ready };
+                image_states.grid = ImageState::Ready { tex_id, extent, cache_ready };
             },
             Stage::Details => {
                 let image_states = self.get_image_states_from_grid_entry_mut(index).unwrap();
                 let cache_ready = image_states.details.take_cache_ready();
-                image_states.details = ImageState::Ready { tex_id: src_tex_id, extent: src_extent, cache_ready };
+                image_states.details = ImageState::Ready { tex_id, extent, cache_ready };
             },
             Stage::Manga => if let FilterAccel::Gpu(_) = self.manga.filter && self.manga.scale != 100. {
-                use wgpu::*;
-
-                let egui_wgpu::RenderState { device, queue, .. } = &self.wgpu;
+                let wgpu = self.wgpu.clone();
                 let dst_extent = self.manga.view[index].extent;
+                let resizer = self.resizer.clone();
+                let scaled_tex_sx = self.scaled_tex_manga_sx.clone();
 
-                let dst_tex_desc = wgpu::TextureDescriptor {
-                    label: None,
-                    size: Extent3d {
-                        width: dst_extent.width as u32,
-                        height: dst_extent.height as u32,
-                        depth_or_array_layers: 1
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: TextureDimension::D2,
-                    format: TextureFormat::Rgba8UnormSrgb,
-                    usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[TextureFormat::Rgba8Unorm]
-                };
-                let dst_tex = device.create_texture(&dst_tex_desc);
+                self.thread_pool.enqueue_high(move || {
+                    use wgpu::*;
+                    let egui_wgpu::RenderState { device, queue, .. } = &wgpu;
 
-                let src_tex_view_desc = TextureViewDescriptor {
-                    format: Some(TextureFormat::Rgba8UnormSrgb),
-                    ..default!()
-                };
-                let src_tex_view = src_tex.create_view(&src_tex_view_desc);
-                let dst_tex_view = dst_tex.create_view(&default!());
-
-                let bind_group_desc = BindGroupDescriptor {
-                    label: None,
-                    layout: &self.resizer.bind_group_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: BindingResource::TextureView(&src_tex_view)
+                    let dst_tex_desc = wgpu::TextureDescriptor {
+                        label: None,
+                        size: Extent3d {
+                            width: dst_extent.width as u32,
+                            height: dst_extent.height as u32,
+                            depth_or_array_layers: 1
                         },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: BindingResource::Sampler(&self.resizer.sampler)
-                        }
-                    ]
-                };
-                let bind_group = device.create_bind_group(&bind_group_desc);
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: TextureDimension::D2,
+                        format: TextureFormat::Rgba8UnormSrgb,
+                        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[TextureFormat::Rgba8Unorm]
+                    };
+                    let dst_tex = device.create_texture(&dst_tex_desc);
 
-                let render_pass_desc = RenderPassDescriptor {
-                    label: None,
-                    color_attachments: &[
-                        Some(RenderPassColorAttachment {
-                            view: &dst_tex_view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                                store: wgpu::StoreOp::Store
+                    let src_tex_view_desc = TextureViewDescriptor {
+                        format: Some(TextureFormat::Rgba8UnormSrgb),
+                        ..default!()
+                    };
+                    let src_tex_view = tex.create_view(&src_tex_view_desc);
+                    let dst_tex_view = dst_tex.create_view(&default!());
+
+                    let bind_group_desc = BindGroupDescriptor {
+                        label: None,
+                        layout: &resizer.bind_group_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: BindingResource::TextureView(&src_tex_view)
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: BindingResource::Sampler(&resizer.sampler)
                             }
-                        })
-                    ],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None
-                };
+                        ]
+                    };
+                    let bind_group = device.create_bind_group(&bind_group_desc);
 
-                let mut encoder = device.create_command_encoder(&default!());
-                {
-                    let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
-                    render_pass.set_pipeline(&self.resizer.render_pipeline);
-                    render_pass.set_bind_group(0, &bind_group, default!());
-                    render_pass.draw(0..3, 0..1);
-                }
-                let command_buffer = encoder.finish();
-                queue.submit([command_buffer]);
+                    let render_pass_desc = RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[
+                            Some(RenderPassColorAttachment {
+                                view: &dst_tex_view,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: wgpu::StoreOp::Store
+                                }
+                            })
+                        ],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None
+                    };
 
-                let dst_tex_view_desc = TextureViewDescriptor {
-                    format: Some(TextureFormat::Rgba8Unorm),
-                    ..default!()
-                };
-                let dst_tex_view = dst_tex.create_view(&dst_tex_view_desc);
-                let dst_tex_id = register_native_texture(&self.wgpu, &dst_tex_view);
+                    let mut encoder = device.create_command_encoder(&default!());
+                    {
+                        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+                        render_pass.set_pipeline(&resizer.render_pipeline);
+                        render_pass.set_bind_group(0, &bind_group, default!());
+                        render_pass.draw(0..3, 0..1);
+                    }
+                    let command_buffer = encoder.finish();
+                    queue.submit([command_buffer]);
 
-                self.manga.view[index].image_state = ImageStateManga::Ready { tex_id: dst_tex_id, extent: dst_extent };
+                    let dst_tex_view_desc = TextureViewDescriptor {
+                        format: Some(TextureFormat::Rgba8Unorm),
+                        ..default!()
+                    };
+                    let dst_tex_view = dst_tex.create_view(&dst_tex_view_desc);
+                    let dst_tex_id = register_native_texture(&wgpu, &dst_tex_view);
+
+                    scaled_tex_sx.send(ScaledTexManga {
+                        tex_id: dst_tex_id,
+                        index,
+                        extent: dst_extent
+                    })
+                    .unwrap();
+                });
             } else {
-                self.manga.view[index].image_state = ImageStateManga::Ready { tex_id: src_tex_id, extent: src_extent };
+                self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
             }
         }
     }
@@ -3230,8 +3251,12 @@ impl<'a> MediaBrowser<'a> {
 
     #[hotpath::measure]
     fn stream_textures_stepped(&mut self) {
-        let mut sentinel = self.chunk_size;
+        while let Ok(scaled_tex) = self.scaled_tex_manga_rx.try_recv() {
+            let ScaledTexManga { tex_id, index, extent } = scaled_tex;
+            self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
+        }
 
+        let mut sentinel = self.chunk_size;
         sentinel -= self.try_write_partial_tex(sentinel);
 
         while let Ok(mut partial_tex) = self.from_demeter.try_recv() {
@@ -3245,7 +3270,7 @@ impl<'a> MediaBrowser<'a> {
 
                 let PartialTex { tex, tex_id, stage, index, .. } = partial_tex;
                 let extent: Extent2dF = tex.as_();
-                self.assign_image_state(tex, tex_id, stage, extent, index);
+                self.assess_image_ready(tex, tex_id, stage, extent, index);
             } else {
                 self.partial_tex_stash.push_back(partial_tex);
                 sentinel -= self.try_write_partial_tex(sentinel);
@@ -3321,7 +3346,7 @@ impl<'a> MediaBrowser<'a> {
             if last_write {
                 let PartialTex { tex, .. } = self.partial_tex_stash.pop_front().unwrap();
                 let extent = Extent2dF { width: tex.width() as f32, height: tex.height() as f32 };
-                self.assign_image_state(tex, tex_id, stage, extent, index);
+                self.assess_image_ready(tex, tex_id, stage, extent, index);
 
             } else {
                 *offset += write_row_count;
