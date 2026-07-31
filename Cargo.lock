@@ -1262,6 +1262,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f449e6c6c08c865631d4890cfacf252b3d396c9bcc83adb6623cdb02a8336c41"
 
 [[package]]
+name = "fixedbitset"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
 name = "flate2"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2443,6 +2449,7 @@ dependencies = [
  "log",
  "num-traits",
  "once_cell",
+ "petgraph",
  "rustc-hash 1.1.0",
  "spirv",
  "thiserror 2.0.18",
@@ -2948,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "ogos"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "hotpath",
  "ogos_err",
@@ -2958,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_audio"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "com-policy-config",
  "log",
@@ -2970,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_common"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "const_format",
  "log",
@@ -2990,7 +2997,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_config"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "const_format",
  "discord-rich-presence",
@@ -3006,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "eframe",
  "once_cell",
@@ -3017,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_discord"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "discord-rich-presence",
  "log",
@@ -3029,7 +3036,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_display"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "ddc",
  "ddc-winapi",
@@ -3047,7 +3054,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_err"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3083,7 +3090,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_gui"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "concat-string",
  "const_format",
@@ -3123,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_lib"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "argfile",
  "bincode",
@@ -3160,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_mki"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "lazy_static",
  "log",
@@ -3169,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_proc_macros"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3178,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "ogos_video"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "concat-string",
  "log",
@@ -3290,6 +3297,17 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "petgraph"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
+dependencies = [
+ "fixedbitset",
+ "hashbrown 0.15.5",
+ "indexmap 2.14.0",
+]
 
 [[package]]
 name = "pin-project"

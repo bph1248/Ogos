@@ -642,10 +642,11 @@ impl Resizer {
         };
         let sampler = device.create_sampler(&sampler_desc);
 
-        let shader_module_desc = ShaderModuleDescriptor {
-            label: None,
-            source: ShaderSource::Wgsl(include_str!("../../../assets/scale_tex.wgsl").into())
-        };
+        // let shader_module_desc = ShaderModuleDescriptor {
+        //     label: None,
+        //     source: ShaderSource::Wgsl(include_str!("../../../assets/scale_tex.wgsl").into())
+        // };
+        let shader_module_desc = wgpu::include_spirv!("../../../assets/scale_tex.spv");
         let shader_module = device.create_shader_module(shader_module_desc);
 
         let bind_group_layout_desc = BindGroupLayoutDescriptor {
