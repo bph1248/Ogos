@@ -255,8 +255,8 @@ struct FerryImagesInfo<'a> {
     base_image_kind: BaseImageKind,
     grid_cell_extent: Extent2dF,
     details_cell_extent: Extent2dF,
-    grid_relay: mpmc::Sender<ImageResult>,
-    details_relay: mpmc::Sender<ImageResult>,
+    grid_ship: mpmc::Sender<ImageResult>,
+    details_ship: mpmc::Sender<ImageResult>,
     ferry_image_infos: Vec<FerryImageInfo>,
     error_sx: mpmc::Sender<String>
 }
@@ -274,7 +274,7 @@ struct FerryImagesInfoManga<'a> {
     ctx: &'a egui::Context,
     thread_pool: &'a Arc<ThreadPool>,
     archive_path: Arc<PathBuf>,
-    relay: mpmc::Sender<ImageResult>,
+    ship: mpmc::Sender<ImageResult>,
     ferry_image_infos: Vec<FerryImageInfoManga>,
     error_sx: mpmc::Sender<String>
 }
@@ -286,7 +286,7 @@ struct FerryBaseImageInfo<'a> {
     cell_extent: Extent2dF,
     stage: Stage,
     grid_entry_i: usize,
-    relay: mpmc::Sender<ImageResult>,
+    ship: mpmc::Sender<ImageResult>,
     signal_cache_ready: CacheReady,
     signal_tex_ready: Option<PollReady>,
     metadata: Option<Metadata>
@@ -299,7 +299,7 @@ struct FerryImageMangaInfo {
     image_kind: ImageKind,
     view_i: usize,
     scale: Option<ScaleImageManga>,
-    relay: mpmc::Sender<ImageResult>,
+    ship: mpmc::Sender<ImageResult>,
     gen_id_check: GenerationIdCheck,
     signal_tex_ready: Option<PollReady>
 }
@@ -309,12 +309,13 @@ struct FerryCachedImageInfo<'a> {
     path: &'a Path,
     stage: Stage,
     grid_entry_i: usize,
-    relay: mpmc::Sender<ImageResult>,
+    ship: mpmc::Sender<ImageResult>,
     gen_id_check: &'a Option<GenerationIdCheck>,
     wait_cache_ready: CacheReady,
     signal_tex_ready: Option<PollReady>
 }
 
+#[derive(Clone)]
 struct GenerationIdCheck {
     id: GenerationId,
     expected: usize
@@ -353,8 +354,21 @@ struct ImageInfo {
     image: image::RgbaImage,
     stage: Stage,
     index: usize,
+    gen_id_check: Option<GenerationIdCheck>,
     signal_tex_ready: Option<PollReady>,
     metadata: Option<Metadata>
+}
+
+struct IrisInfo {
+    wgpu: egui_wgpu::RenderState,
+    tex: wgpu::Texture,
+    tex_id: egui::TextureId,
+    index: usize,
+    gen_id_check: Option<GenerationIdCheck>,
+    dst_extent: Extent2dF,
+    resizer: Arc<Resizer>,
+    ship: mpmc::Sender<ScaledTexManga>,
+    to_thanatos: mpmc::Sender<Soul>
 }
 
 #[derive(Clone, Default)]
@@ -559,6 +573,7 @@ struct PartialTex {
     captive: Option<(image::RgbaImage, Option<PollReady>)>,
     stage: Stage,
     index: usize,
+    gen_id_check: Option<GenerationIdCheck>,
     offset: usize,
     row_size: usize,
     chunk_row_count: usize
@@ -709,6 +724,7 @@ struct ScaleImageManga {
 struct ScaledTexManga {
     tex_id: egui::TextureId,
     index: usize,
+    gen_id_check: Option<GenerationIdCheck>,
     extent: Extent2dF
 }
 
@@ -1161,7 +1177,8 @@ enum ScrollKind {
 enum Soul {
     ImageState(ImageState),
     ImageStates(ImageStates),
-    RgbaImage(image::RgbaImage)
+    RgbaImage(image::RgbaImage),
+    TexId(egui::TextureId)
 }
 
 #[derive(Clone, Copy)]
@@ -1380,8 +1397,8 @@ fn blackman_filter_fir() -> fir::Filter {
     fir::Filter::new("Blackman", blackman, BLACKMAN_SUPPORT).unwrap()
 }
 
-fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, image_rx: mpmc::Receiver<ImageInfo>, partial_tex_sx: mpmc::Sender<PartialTex>, chunk_size: usize) {
-    for ImageInfo { image, stage, index: view_i, signal_tex_ready, .. } in image_rx.iter() {
+fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<ImageInfo>, ship: mpmc::Sender<PartialTex>, chunk_size: usize) {
+    for ImageInfo { image, stage, index: view_i, gen_id_check, signal_tex_ready, .. } in port.iter() {
         hotpath::measure_block!(formatcp!("{}::demeter", module_path!()), {
             let image_size = image.as_raw().len();
             let row_size = 4 * image.width() as usize;
@@ -1391,11 +1408,11 @@ fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, image_rx: mpmc::Rec
                 let offset = image.height() as usize;
                 let (tex, tex_id) = alloc_write_texture(&wgpu, &image);
 
-                partial_tex_sx.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, offset, row_size, chunk_row_count }).unwrap();
+                ship.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, gen_id_check, offset, row_size, chunk_row_count }).unwrap();
             } else {
                 let (tex, tex_id) = alloc_clear_texture(&wgpu, &image);
 
-                partial_tex_sx.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, offset: 0, row_size, chunk_row_count }).unwrap();
+                ship.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, gen_id_check, offset: 0, row_size, chunk_row_count }).unwrap();
             }
         });
 
@@ -1403,10 +1420,102 @@ fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, image_rx: mpmc::Rec
     }
 }
 
-fn hephaestus(ctx: egui::Context, wgpu: egui_wgpu::RenderState, write_tex_rx: mpmc::Receiver<WriteTex>) {
+fn iris(info: IrisInfo) {
+    use wgpu::*;
+
+    let IrisInfo { wgpu, tex, tex_id, index, gen_id_check, dst_extent, resizer, ship, to_thanatos } = info;
+    let egui_wgpu::RenderState { device, queue, .. } = &wgpu;
+
+    let dst_tex_desc = wgpu::TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: dst_extent.width as u32,
+            height: dst_extent.height as u32,
+            depth_or_array_layers: 1
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8UnormSrgb,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[TextureFormat::Rgba8Unorm]
+    };
+    let dst_tex = device.create_texture(&dst_tex_desc);
+
+    let src_tex_view_desc = TextureViewDescriptor {
+        format: Some(TextureFormat::Rgba8UnormSrgb),
+        ..default!()
+    };
+    let src_tex_view = tex.create_view(&src_tex_view_desc);
+    let dst_tex_view = dst_tex.create_view(&default!());
+
+    let bind_group_desc = BindGroupDescriptor {
+        label: None,
+        layout: &resizer.bind_group_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&src_tex_view)
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(&resizer.sampler)
+            }
+        ]
+    };
+    let bind_group = device.create_bind_group(&bind_group_desc);
+
+    let render_pass_desc = RenderPassDescriptor {
+        label: None,
+        color_attachments: &[
+            Some(RenderPassColorAttachment {
+                view: &dst_tex_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store
+                }
+            })
+        ],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None
+    };
+
+    let mut encoder = device.create_command_encoder(&default!());
+    {
+        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+        render_pass.set_pipeline(&resizer.render_pipeline);
+        render_pass.set_bind_group(0, &bind_group, default!());
+        render_pass.draw(0..3, 0..1);
+    }
+    let command_buffer = encoder.finish();
+    queue.submit([command_buffer]);
+
+    let dst_tex_view_desc = TextureViewDescriptor {
+        format: Some(TextureFormat::Rgba8Unorm),
+        ..default!()
+    };
+    let dst_tex_view = dst_tex.create_view(&dst_tex_view_desc);
+    let dst_tex_id = register_native_texture(&wgpu, &dst_tex_view);
+
+    ship.send(ScaledTexManga {
+        tex_id: dst_tex_id,
+        index,
+        gen_id_check,
+        extent: dst_extent
+    })
+    .unwrap();
+
+    to_thanatos.send(Soul::TexId(tex_id)).unwrap();
+}
+
+fn hephaestus(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<WriteTex>) {
     let mut captive_ = None;
 
-    for WriteTex { tex, captive, offset, row_count, last_write } in write_tex_rx.iter() {
+    for WriteTex { tex, captive, offset, row_count, last_write } in port.iter() {
         hotpath::measure_block!(formatcp!("{}::hephaestus", module_path!()), {
             if captive.is_some() {
                 captive_ = captive;
@@ -1428,10 +1537,10 @@ fn hephaestus(ctx: egui::Context, wgpu: egui_wgpu::RenderState, write_tex_rx: mp
     }
 }
 
-fn thanatos(wgpu: egui_wgpu::RenderState, image_state_rx: mpmc::Receiver<Soul>) {
+fn thanatos(wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<Soul>) {
     let egui_wgpu::RenderState { renderer, ..} = wgpu;
 
-    for soul in image_state_rx.iter() {
+    for soul in port.iter() {
         hotpath::measure_block!(formatcp!("{}::thanatos", module_path!()), {
             match soul {
                 Soul::ImageState(image_state) => if let ImageState::Ready { tex_id, .. } = image_state {
@@ -1444,7 +1553,8 @@ fn thanatos(wgpu: egui_wgpu::RenderState, image_state_rx: mpmc::Receiver<Soul>) 
                         }
                     }
                 },
-                Soul::RgbaImage(image) => drop(image)
+                Soul::RgbaImage(image) => drop(image),
+                Soul::TexId(tex_id) => renderer.write().free_texture(&tex_id)
             }
         });
     }
@@ -1650,7 +1760,7 @@ fn resize_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::
 }
 
 fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
-    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, relay, signal_cache_ready, signal_tex_ready, metadata } = info;
+    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, ship, signal_cache_ready, signal_tex_ready, metadata } = info;
 
     let inner = || -> Res1<image::RgbaImage> {
         let src_image = load_rgba_image(src_path)?;
@@ -1669,7 +1779,7 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
         Ok(image) => {
             let image_ = image.clone();
 
-            if relay.send(Ok(ImageInfo { image: image_, stage, index: grid_entry_i, signal_tex_ready, metadata })).is_ok() {
+            if ship.send(Ok(ImageInfo { image: image_, stage, index: grid_entry_i, gen_id_check: None, signal_tex_ready, metadata })).is_ok() {
                 ctx.request_repaint();
             }
 
@@ -1681,7 +1791,7 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
             drop(signal_cache_ready)
         },
         Err(err) => {
-            _ = relay.send(Err((stage, grid_entry_i)));
+            _ = ship.send(Err((stage, grid_entry_i)));
 
             Err(err)?;
         }
@@ -1691,7 +1801,7 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
 }
 
 fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
-    let FerryImageMangaInfo { ctx, archive_path, archive_i, image_kind, view_i, scale, relay, gen_id_check, signal_tex_ready } = info;
+    let FerryImageMangaInfo { ctx, archive_path, archive_i, image_kind, view_i, scale, ship, gen_id_check, signal_tex_ready } = info;
 
     let inner = || -> Res1<image::RgbaImage> {
         gen_id_check.check()?;
@@ -1708,7 +1818,7 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
     };
 
     match inner() {
-        Ok(image) => if relay.send(Ok(ImageInfo { image, stage: Stage::Manga, index: view_i, signal_tex_ready, metadata: None })).is_ok() {
+        Ok(image) => if ship.send(Ok(ImageInfo { image, stage: Stage::Manga, index: view_i, gen_id_check: Some(gen_id_check), signal_tex_ready, metadata: None })).is_ok() {
             ctx.request_repaint();
         },
         Err(err) => {
@@ -1719,7 +1829,7 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
             match err.var.as_ref() {
                 ErrVar::Cancel => return Ok(()),
                 _ => {
-                    _ = relay.send(Err((Stage::Manga, view_i)));
+                    _ = ship.send(Err((Stage::Manga, view_i)));
 
                     return Err(err)
                 }
@@ -1731,7 +1841,7 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
 }
 
 fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
-    let FerryCachedImageInfo { ctx, path, stage, grid_entry_i, relay, gen_id_check, wait_cache_ready, signal_tex_ready } = info;
+    let FerryCachedImageInfo { ctx, path, stage, grid_entry_i, ship, gen_id_check, wait_cache_ready, signal_tex_ready } = info;
 
     let inner = || -> ResVar<image::RgbaImage> {
         if let Some(gen_id_check) = gen_id_check { gen_id_check.check()? }
@@ -1745,7 +1855,7 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
     }
 
     match inner() {
-        Ok(image) => if relay.send(Ok(ImageInfo { image, stage, index: grid_entry_i, signal_tex_ready, metadata: None })).is_ok() {
+        Ok(image) => if ship.send(Ok(ImageInfo { image, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready, metadata: None })).is_ok() {
             ctx.request_repaint();
         },
         Err(err) => {
@@ -1756,7 +1866,7 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
             match err {
                 ErrVar::Cancel => return Ok(()),
                 _ => {
-                    _ = relay.send(Err((stage, grid_entry_i)));
+                    _ = ship.send(Err((stage, grid_entry_i)));
 
                     return Err(err.into())
                 }
@@ -1775,8 +1885,8 @@ fn ferry_images(info: FerryImagesInfo) {
         base_image_kind,
         grid_cell_extent,
         details_cell_extent,
-        grid_relay,
-        details_relay,
+        grid_ship,
+        details_ship,
         ferry_image_infos,
         error_sx
     } = info;
@@ -1800,8 +1910,8 @@ fn ferry_images(info: FerryImagesInfo) {
         let ctx = ctx.clone();
         let thread_pool_ = thread_pool.clone();
         let base_image_kind = base_image_kind.clone();
-        let grid_relay = grid_relay.clone();
-        let details_relay = details_relay.clone();
+        let grid_ship = grid_ship.clone();
+        let details_ship = details_ship.clone();
         let error_sx_high = error_sx.clone();
         let error_sx_low = error_sx.clone();
 
@@ -1833,7 +1943,7 @@ fn ferry_images(info: FerryImagesInfo) {
                             cell_extent: grid_cell_extent,
                             stage: Stage::Grid,
                             grid_entry_i,
-                            relay: grid_relay,
+                            ship: grid_ship,
                             signal_cache_ready: signal_cache_readies.grid,
                             signal_tex_ready,
                             metadata: Some(metadata)
@@ -1848,7 +1958,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                 cell_extent: details_cell_extent,
                                 stage: Stage::Details,
                                 grid_entry_i,
-                                relay: details_relay,
+                                ship: details_ship,
                                 signal_cache_ready: signal_cache_readies.details,
                                 signal_tex_ready: None,
                                 metadata: None
@@ -1866,7 +1976,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                     cell_extent: grid_cell_extent,
                                     stage: Stage::Grid,
                                     grid_entry_i,
-                                    relay: grid_relay,
+                                    ship: grid_ship,
                                     signal_cache_ready: signal_cache_readies.grid,
                                     signal_tex_ready,
                                     metadata: None
@@ -1881,7 +1991,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                     path: &grid_image_path,
                                     stage: Stage::Grid,
                                     grid_entry_i,
-                                    relay: grid_relay,
+                                    ship: grid_ship,
                                     gen_id_check: &gen_id_check,
                                     wait_cache_ready: wait_cache_readies.grid,
                                     signal_tex_ready
@@ -1899,7 +2009,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                         cell_extent: details_cell_extent,
                                         stage: Stage::Details,
                                         grid_entry_i,
-                                        relay: details_relay,
+                                        ship: details_ship,
                                         signal_cache_ready: signal_cache_readies.details,
                                         signal_tex_ready: None,
                                         metadata: None
@@ -1916,7 +2026,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                         path: &details_image_path,
                                         stage: Stage::Details,
                                         grid_entry_i,
-                                        relay: details_relay,
+                                        ship: details_ship,
                                         gen_id_check: &gen_id_check,
                                         wait_cache_ready: wait_cache_readies.details,
                                         signal_tex_ready: None
@@ -1940,7 +2050,7 @@ fn ferry_images_manga(info: FerryImagesInfoManga) {
         ctx,
         thread_pool,
         archive_path,
-        relay,
+        ship,
         ferry_image_infos,
         error_sx
     } = info;
@@ -1948,7 +2058,7 @@ fn ferry_images_manga(info: FerryImagesInfoManga) {
     for info in ferry_image_infos {
         let ctx = ctx.clone();
         let archive_path = archive_path.clone();
-        let relay = relay.clone();
+        let ship = ship.clone();
         let error_sx = error_sx.clone();
 
         thread_pool.enqueue_high(move || {
@@ -1960,7 +2070,7 @@ fn ferry_images_manga(info: FerryImagesInfoManga) {
                     image_kind: info.image_kind,
                     view_i: info.view_i,
                     scale: info.scale,
-                    relay,
+                    ship,
                     gen_id_check: info.gen_id_check,
                     signal_tex_ready: info.signal_tex_ready
                 };
@@ -2293,9 +2403,9 @@ struct MediaBrowser<'a> {
     discord_display_kind: DiscordDisplayKind,
     open_error_win: bool,
     resizer: Arc<Resizer>,
-    scaled_tex_manga_sx: mpmc::Sender<ScaledTexManga>,
-    scaled_tex_manga_rx: mpmc::Receiver<ScaledTexManga>,
-    image_sx: mpmc::Sender<ImageResult>,
+    iris_ship: mpmc::Sender<ScaledTexManga>,
+    from_iris: mpmc::Receiver<ScaledTexManga>,
+    charon_ship: mpmc::Sender<ImageResult>,
     from_charon: mpmc::Receiver<ImageResult>,
     to_hephaestus: mpmc::Sender<WriteTex>,
     to_demeter: mpmc::Sender<ImageInfo>,
@@ -2611,26 +2721,26 @@ impl<'a> MediaBrowser<'a> {
 
         let ctx_ = ctx.clone();
         let wgpu_ = wgpu.clone();
-        let (to_hephaestus, write_tex_rx) = mpmc::unbounded();
-        thread::spawn(move || hephaestus(ctx_, wgpu_, write_tex_rx));
+        let (to_hephaestus, hephaestus_port) = mpmc::unbounded();
+        thread::spawn(move || hephaestus(ctx_, wgpu_, hephaestus_port));
 
         let ctx_ = ctx.clone();
         let wgpu_ = wgpu.clone();
         let chunk_size = PCIE_TRANSFER_LIMIT_MIBS / refresh_rate as usize * 1024_usize.pow(2);
-        let (image_sx, from_charon) = mpmc::unbounded();
-        let (to_demeter, image_rx) = mpmc::unbounded();
-        let (partial_tex_sx, from_demeter) = mpmc::unbounded();
-        thread::spawn(move || demeter(ctx_, wgpu_, image_rx, partial_tex_sx, chunk_size));
+        let (charon_ship, from_charon) = mpmc::unbounded();
+        let (to_demeter, demeter_port) = mpmc::unbounded();
+        let (demeter_ship, from_demeter) = mpmc::unbounded();
+        thread::spawn(move || demeter(ctx_, wgpu_, demeter_port, demeter_ship, chunk_size));
 
-        let (to_thanatos, image_state_rx) = mpmc::unbounded();
+        let (to_thanatos, thanatos_port) = mpmc::unbounded();
         let wgpu_ = wgpu.clone();
-        thread::spawn(move || thanatos(wgpu_, image_state_rx));
+        thread::spawn(move || thanatos(wgpu_, thanatos_port));
 
         let (error_sx, error_rx) = mpmc::unbounded();
         let error_msg = "".to_string();
 
         let resizer = Arc::new(Resizer::new(&wgpu.device));
-        let (scaled_tex_manga_sx, scaled_tex_manga_rx) = mpmc::unbounded();
+        let (iris_ship, from_iris) = mpmc::unbounded();
 
         let win_inner_extent = Extent2dF::from(win_inner_extent);
         let central_size = egui::vec2(
@@ -2679,8 +2789,8 @@ impl<'a> MediaBrowser<'a> {
             base_image_kind: BaseImageKind::Startup,
             grid_cell_extent: grid_cell_size.into(),
             details_cell_extent: details_cell_size.into(),
-            grid_relay: resident_grid_sx.clone(),
-            details_relay: image_sx.clone(),
+            grid_ship: resident_grid_sx.clone(),
+            details_ship: charon_ship.clone(),
             ferry_image_infos,
             error_sx: error_sx.clone()
         };
@@ -2778,9 +2888,9 @@ impl<'a> MediaBrowser<'a> {
             discord_state_edit: default!(),
             discord_display_kind,
             resizer,
-            scaled_tex_manga_sx,
-            scaled_tex_manga_rx,
-            image_sx,
+            iris_ship,
+            from_iris,
+            charon_ship,
             from_charon,
             to_hephaestus,
             to_demeter,
@@ -2799,7 +2909,16 @@ impl<'a> MediaBrowser<'a> {
         })
     }
 
-    fn assess_image_ready(&mut self, tex: wgpu::Texture, tex_id: egui::TextureId, stage: Stage, extent: Extent2dF, index: usize) {
+    fn assess_partial_tex_ready(&mut self, partial_tex: PartialTex) {
+        let PartialTex { tex, tex_id, stage, index, gen_id_check, .. } = partial_tex;
+        let extent = tex.as_();
+
+        if let Some(gen_id_check) = gen_id_check.as_ref() && gen_id_check.check().is_err() {
+            self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
+
+            return
+        }
+
         match stage {
             Stage::Grid => {
                 let image_states = self.get_image_states_from_grid_entry_mut(index).unwrap();
@@ -2812,97 +2931,18 @@ impl<'a> MediaBrowser<'a> {
                 image_states.details = ImageState::Ready { tex_id, extent, cache_ready };
             },
             Stage::Manga => if let FilterAccel::Gpu(_) = self.manga.filter && self.manga.scale != 100. {
-                let wgpu = self.wgpu.clone();
-                let dst_extent = self.manga.view[index].extent;
-                let resizer = self.resizer.clone();
-                let scaled_tex_sx = self.scaled_tex_manga_sx.clone();
-
-                self.thread_pool.enqueue_high(move || {
-                    use wgpu::*;
-                    let egui_wgpu::RenderState { device, queue, .. } = &wgpu;
-
-                    let dst_tex_desc = wgpu::TextureDescriptor {
-                        label: None,
-                        size: Extent3d {
-                            width: dst_extent.width as u32,
-                            height: dst_extent.height as u32,
-                            depth_or_array_layers: 1
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: TextureDimension::D2,
-                        format: TextureFormat::Rgba8UnormSrgb,
-                        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[TextureFormat::Rgba8Unorm]
-                    };
-                    let dst_tex = device.create_texture(&dst_tex_desc);
-
-                    let src_tex_view_desc = TextureViewDescriptor {
-                        format: Some(TextureFormat::Rgba8UnormSrgb),
-                        ..default!()
-                    };
-                    let src_tex_view = tex.create_view(&src_tex_view_desc);
-                    let dst_tex_view = dst_tex.create_view(&default!());
-
-                    let bind_group_desc = BindGroupDescriptor {
-                        label: None,
-                        layout: &resizer.bind_group_layout,
-                        entries: &[
-                            BindGroupEntry {
-                                binding: 0,
-                                resource: BindingResource::TextureView(&src_tex_view)
-                            },
-                            BindGroupEntry {
-                                binding: 1,
-                                resource: BindingResource::Sampler(&resizer.sampler)
-                            }
-                        ]
-                    };
-                    let bind_group = device.create_bind_group(&bind_group_desc);
-
-                    let render_pass_desc = RenderPassDescriptor {
-                        label: None,
-                        color_attachments: &[
-                            Some(RenderPassColorAttachment {
-                                view: &dst_tex_view,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                                    store: wgpu::StoreOp::Store
-                                }
-                            })
-                        ],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None
-                    };
-
-                    let mut encoder = device.create_command_encoder(&default!());
-                    {
-                        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
-                        render_pass.set_pipeline(&resizer.render_pipeline);
-                        render_pass.set_bind_group(0, &bind_group, default!());
-                        render_pass.draw(0..3, 0..1);
-                    }
-                    let command_buffer = encoder.finish();
-                    queue.submit([command_buffer]);
-
-                    let dst_tex_view_desc = TextureViewDescriptor {
-                        format: Some(TextureFormat::Rgba8Unorm),
-                        ..default!()
-                    };
-                    let dst_tex_view = dst_tex.create_view(&dst_tex_view_desc);
-                    let dst_tex_id = register_native_texture(&wgpu, &dst_tex_view);
-
-                    scaled_tex_sx.send(ScaledTexManga {
-                        tex_id: dst_tex_id,
-                        index,
-                        extent: dst_extent
-                    })
-                    .unwrap();
-                });
+                let iris_info = IrisInfo {
+                    wgpu: self.wgpu.clone(),
+                    tex,
+                    tex_id,
+                    index,
+                    gen_id_check,
+                    dst_extent: self.manga.view[index].extent,
+                    resizer: self.resizer.clone(),
+                    ship: self.iris_ship.clone(),
+                    to_thanatos: self.to_thanatos.clone()
+                };
+                self.thread_pool.enqueue_high(|| iris(iris_info));
             } else {
                 self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
             }
@@ -3019,7 +3059,7 @@ impl<'a> MediaBrowser<'a> {
             ctx: ui.ctx(),
             thread_pool: &self.thread_pool,
             archive_path: archive_path.clone(),
-            relay: self.image_sx.clone(),
+            ship: self.charon_ship.clone(),
             ferry_image_infos,
             error_sx: self.error_sx.clone()
         };
@@ -3043,7 +3083,7 @@ impl<'a> MediaBrowser<'a> {
             ctx: ui.ctx(),
             thread_pool: &self.thread_pool,
             archive_path: archive_path.clone(),
-            relay: self.image_sx.clone(),
+            ship: self.charon_ship.clone(),
             ferry_image_infos,
             error_sx: self.error_sx.clone()
         };
@@ -3197,8 +3237,8 @@ impl<'a> MediaBrowser<'a> {
                 base_image_kind: BaseImageKind::Startup,
                 grid_cell_extent: self.grid_cell_size.into(),
                 details_cell_extent: self.details_cell_size.into(),
-                grid_relay: self.image_sx.clone(),
-                details_relay: self.image_sx.clone(),
+                grid_ship: self.charon_ship.clone(),
+                details_ship: self.charon_ship.clone(),
                 ferry_image_infos,
                 error_sx: self.error_sx.clone()
             }
@@ -3221,7 +3261,7 @@ impl<'a> MediaBrowser<'a> {
         let make_ferry_images_info = |load: &HashSet<usize>, signal_tex_ready: bool| -> FerryImagesInfoManga {
             let ferry_image_infos = load.iter().copied()
                 .map(|view_i| {
-                    let ViewPageInfo { archive_i, image_kind, extent, ref gen_id, ..  } = self.manga.view[view_i];
+                    let ViewPageInfo { archive_i, image_kind, extent, ref gen_id, .. } = self.manga.view[view_i];
 
                     FerryImageInfoManga {
                         archive_i,
@@ -3238,7 +3278,7 @@ impl<'a> MediaBrowser<'a> {
                 ctx,
                 thread_pool: &self.thread_pool,
                 archive_path: self.manga.archive_path.clone(),
-                relay: self.image_sx.clone(),
+                ship: self.charon_ship.clone(),
                 ferry_image_infos,
                 error_sx: self.error_sx.clone()
             }
@@ -3250,9 +3290,14 @@ impl<'a> MediaBrowser<'a> {
 
     #[hotpath::measure]
     fn stream_textures_stepped(&mut self) {
-        while let Ok(scaled_tex) = self.scaled_tex_manga_rx.try_recv() {
-            let ScaledTexManga { tex_id, index, extent } = scaled_tex;
-            self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
+        while let Ok(scaled_tex) = self.from_iris.try_recv() {
+            let ScaledTexManga { tex_id, index, gen_id_check, extent } = scaled_tex;
+
+            if let Some(gen_id_check) = gen_id_check && gen_id_check.check().is_ok() {
+                self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
+            } else {
+                self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
+            }
         }
 
         let mut sentinel = self.chunk_size;
@@ -3267,9 +3312,7 @@ impl<'a> MediaBrowser<'a> {
                     self.to_thanatos.send(Soul::RgbaImage(image)).unwrap();
                 }
 
-                let PartialTex { tex, tex_id, stage, index, .. } = partial_tex;
-                let extent: Extent2dF = tex.as_();
-                self.assess_image_ready(tex, tex_id, stage, extent, index);
+                self.assess_partial_tex_ready(partial_tex);
             } else {
                 self.partial_tex_stash.push_back(partial_tex);
                 sentinel -= self.try_write_partial_tex(sentinel);
@@ -3330,7 +3373,7 @@ impl<'a> MediaBrowser<'a> {
     fn try_write_partial_tex(&mut self, sentinel: usize) -> WrittenSize {
         if sentinel != 0 && let Some(partial_tex) = self.partial_tex_stash.front_mut() {
             let PartialTex { tex, captive, offset, .. } = partial_tex;
-            let PartialTex { tex_id, stage, index, row_size, chunk_row_count, .. } = *partial_tex;
+            let PartialTex { row_size, chunk_row_count, .. } = *partial_tex;
 
             let tex_height = tex.height() as usize;
             let remaining_row_count = tex_height.saturating_sub(*offset);
@@ -3343,10 +3386,8 @@ impl<'a> MediaBrowser<'a> {
             self.to_hephaestus.send(write_tex).unwrap();
 
             if last_write {
-                let PartialTex { tex, .. } = self.partial_tex_stash.pop_front().unwrap();
-                let extent = Extent2dF { width: tex.width() as f32, height: tex.height() as f32 };
-                self.assess_image_ready(tex, tex_id, stage, extent, index);
-
+                let partial_tex = self.partial_tex_stash.pop_front().unwrap();
+                self.assess_partial_tex_ready(partial_tex);
             } else {
                 *offset += write_row_count;
             }
@@ -3538,7 +3579,14 @@ impl<'a> MediaBrowser<'a> {
                 let height_scaled = page.extent.height.mul(scale).round();
                 let extent = [width_scaled, height_scaled].into();
 
-                self.manga.view.push(ViewPageInfo { image_kind: page.image_kind, archive_i: page.index, offset: page_scaled_offset, extent, image_state: default!(), gen_id: default!() });
+                self.manga.view.push(ViewPageInfo {
+                    image_kind: page.image_kind,
+                    archive_i: page.index,
+                    offset: page_scaled_offset,
+                    extent,
+                    image_state: default!(),
+                    gen_id: default!()
+                });
 
                 page_scaled_offset += height_scaled;
             }
@@ -4411,8 +4459,8 @@ impl<'a> MediaBrowser<'a> {
             base_image_kind: BaseImageKind::Pick { path: path.clone() },
             grid_cell_extent: self.grid_cell_size.into(),
             details_cell_extent: self.details_cell_size.into(),
-            grid_relay: self.image_sx.clone(),
-            details_relay: self.image_sx.clone(),
+            grid_ship: self.charon_ship.clone(),
+            details_ship: self.charon_ship.clone(),
             ferry_image_infos: vec![ferry_image_info],
             error_sx: self.error_sx.clone()
         };
