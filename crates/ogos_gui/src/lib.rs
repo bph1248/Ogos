@@ -140,7 +140,9 @@ struct CacheEntryInfo {
     sort_name: Option<Rc<str>>,
     metadata: Option<Arc<Metadata>>,
     #[serde(default)]
-    tags: Vec<usize>
+    tags: Vec<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bookmark: Option<Pivot>
 }
 
 #[derive(Clone)]
@@ -336,7 +338,8 @@ struct GridEntryInfo {
     sort_name: Option<Rc<str>>,
     file_kind: FileKind,
     image_i: Option<usize>,
-    metadata: Option<Arc<Metadata>>
+    metadata: Option<Arc<Metadata>>,
+    bookmark: Option<Pivot>
 }
 
 struct GridViewCellCounts {
@@ -499,6 +502,7 @@ struct Manga {
     scroll_kind: ScrollKind,
     scroll_offset: egui::Vec2,
     scroll_offset_y_anchor: Option<f32>,
+    go_to_scroll_offset_y: Option<f32>,
     spring_damper: SpringDamper,
     secondary_was_down: bool,
     residence: Range<usize>,
@@ -582,6 +586,13 @@ struct PartialTex {
 struct PendingTagOp {
     tag: Rc<str>,
     op: TagOp
+}
+
+/// Page coords of the viewport center
+#[derive(Clone, Copy, Deserialize, Serialize)]
+struct Pivot {
+    page_i: usize,
+    page_inset_pc: f32
 }
 
 pub struct PollReady {
@@ -2508,7 +2519,8 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     should_scale,
                     sort_name: info.sort_name,
                     metadata: info.image_i.map(|_| info.metadata).unwrap_or_default(),
-                    tags: mem::take(&mut grid_entry_tags[i])
+                    tags: mem::take(&mut grid_entry_tags[i]),
+                    bookmark: info.bookmark
                 }
             );
         }
@@ -2687,20 +2699,22 @@ impl<'a> MediaBrowser<'a> {
                                     image_i
                                 });
                             let metadata = cache_entry_info.metadata.clone();
+                            let bookmark = cache_entry_info.bookmark;
 
-                            GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata }
+                            GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
                         },
                         None => { // This entry is new. If a base image exists, scale and cache it
                             let sort_name = None;
                             let image_i = try_get_image_i(&mut images);
                             let metadata = None;
+                            let bookmark = None;
 
                             if let Some(image_states) = get_image_states_mut(&mut images, image_i) {
                                 image_states.grid = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
                                 image_states.details = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
                             }
 
-                            GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata }
+                            GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
                         }
                     };
 
@@ -2970,6 +2984,25 @@ impl<'a> MediaBrowser<'a> {
 
     fn get_image_states_from_grid_entry_mut(&mut self, grid_entry_i: usize) -> Option<&mut ImageStates> {
         get_image_states_from_grid_entry_mut(&mut self.images, &self.grid_entries, grid_entry_i)
+    }
+
+    fn get_pivot(&self) -> Pivot {
+        let viewport_offset = self.manga.scroll_offset.y;
+        let viewport_half_height = self.central_rect.height().div_euclid(2.);
+        let pivot_offset = viewport_offset + viewport_half_height;
+
+        let visible_page_i = self.manga.view[self.manga.visible_view.clone()]
+            .partition_point(|page_info| page_info.offset < pivot_offset)
+            .saturating_sub(1);
+        let page_i = self.manga.visible_view.start + visible_page_i;
+        let page_info = &self.manga.view[page_i];
+        let page_inset_px = pivot_offset - page_info.offset;
+        let page_inset_pc = page_inset_px / page_info.extent.height;
+
+        Pivot {
+            page_i,
+            page_inset_pc
+        }
     }
 
     #[hotpath::measure]
@@ -3552,17 +3585,7 @@ impl<'a> MediaBrowser<'a> {
 
         if let Some(viewport) = self.manga.flagged_scale.take() {
             let scale = self.manga.scale / 100.;
-            let viewport_half_height = viewport.height().div_euclid(2.);
-            let viewport_offset = viewport.top();
-            let viewport_pivot = viewport_offset + viewport_half_height;
-
-            let pivot_page_visible_i = self.manga.view[self.manga.visible_view.clone()]
-                .partition_point(|page_info| page_info.offset < viewport_pivot)
-                .saturating_sub(1);
-            let pivot_page_i = self.manga.visible_view.start + pivot_page_visible_i;
-            let pivot_page_info = &self.manga.view[pivot_page_i];
-            let pivot_page_inset_px = viewport_pivot - pivot_page_info.offset;
-            let pivot_page_inset_pc = pivot_page_inset_px / pivot_page_info.extent.height;
+            let pivot = self.get_pivot();
 
             for page_info in self.manga.view.drain(..) {
                 if let ImageStateManga::Ready { .. } = page_info.image_state {
@@ -3595,9 +3618,12 @@ impl<'a> MediaBrowser<'a> {
                 .div(2.).ceil().mul(2.); // Avoid subpixel alignment
             self.manga.view_extent = [view_width, page_scaled_offset].into();
 
-            let pivot_page_info = &self.manga.view[pivot_page_i];
-            let new_viewport_offset = pivot_page_info.offset +
-                pivot_page_inset_pc.mul(pivot_page_info.extent.height) -
+            let viewport_offset = viewport.top();
+            let viewport_half_height = viewport.height().div_euclid(2.);
+            let pivot_page_info = &self.manga.view[pivot.page_i];
+            let new_viewport_offset =
+                pivot_page_info.offset +
+                pivot.page_inset_pc.mul(pivot_page_info.extent.height) -
                 viewport_half_height;
             let viewport_translation = new_viewport_offset - viewport_offset;
             let new_viewport = viewport.translate([0., viewport_translation].into());
@@ -3619,6 +3645,10 @@ impl<'a> MediaBrowser<'a> {
                 }
             }
             self.stream_manga(ui, self.manga.scale != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
+        }
+
+        if let Some(scroll_offset_y) = self.manga.go_to_scroll_offset_y.take() {
+            self.manga.scroll_offset.y = scroll_offset_y;
         }
 
         let scroll_offset_x_centered = self.manga.view_extent.width.sub(self.central_rect.width()).div_euclid(2.).max(0.);
@@ -3767,6 +3797,7 @@ impl<'a> MediaBrowser<'a> {
             .show(|ui| {
                 ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
                 ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
+                ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
                 ui.separator();
                 ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Manga));
             });
@@ -3882,6 +3913,32 @@ impl<'a> MediaBrowser<'a> {
 
                 ui.end_row();
             });
+    }
+
+    fn bookmark_submenu_manga(&mut self, ui: &mut egui::Ui) {
+        ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
+
+        if ui.button("Set").clicked() {
+            let pivot = self.get_pivot();
+
+            let grid_entry_info = &mut self.grid_entries[self.details_grid_entry_i];
+            grid_entry_info.bookmark = Some(pivot);
+        }
+
+        let bookmark = self.grid_entries[self.details_grid_entry_i].bookmark;
+        if let Some(pivot) = bookmark &&
+            ui.button("Jump").clicked()
+        {
+            let viewport_half_height = self.central_rect.height().div_euclid(2.);
+
+            let page_info = &self.manga.view[pivot.page_i];
+            let scroll_offset_y =
+                page_info.offset +
+                pivot.page_inset_pc.mul(page_info.extent.height) -
+                viewport_half_height;
+
+            self.manga.go_to_scroll_offset_y = Some(scroll_offset_y);
+        }
     }
 
     fn scroll_submenu_common(&mut self, ui: &mut egui::Ui, stage: Stage) {
