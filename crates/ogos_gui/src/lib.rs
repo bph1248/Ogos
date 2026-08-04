@@ -69,7 +69,7 @@ const DETAILS_ENTRY_COUNT: usize = 64;
 const FRAME_INNER_MARGIN: f32 = 15.;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
-const MANGA_CONTEXT_MENU_MIN_WIDTH: f32 = 201.;
+const MANGA_SUBMENU_MIN_WIDTH: f32 = 201.;
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
 
@@ -495,10 +495,13 @@ struct Manga {
     archive_pages_width: f32, // Hang on to this to get view width later on when resizing
     view: Vec<ViewPageInfo>,
     view_extent: Extent2dF,
-    scale: f32,
+    scale_pc: f32,
     scale_drag_anchor: f32,
     flagged_scale: Option<egui::Rect>,
     filter: FilterAccel,
+    tint: egui::Rgba,
+    sepia_intensity_pc: f32,
+    white_intensity_pc: f32,
     scroll_kind: ScrollKind,
     scroll_offset: egui::Vec2,
     scroll_offset_y_anchor: Option<f32>,
@@ -513,8 +516,10 @@ struct Manga {
 impl Manga {
     fn new(spring_damper: SpringDamper) -> Self {
         Self {
-            scale: 100.,
+            scale_pc: 100.,
             filter: FilterAccel::Cpu(fir::FilterType::Custom(blackman_filter_fir())),
+            tint: egui::Rgba::WHITE,
+            white_intensity_pc: 100.,
             spring_damper,
             ..default!()
         }
@@ -531,12 +536,12 @@ impl Manga {
         *self = Manga::new(mem::take(&mut self.spring_damper))
     }
 
-    fn flag_scale(&mut self, ui: &mut egui::Ui, scale: f32, viewport: egui::Rect) {
-        if scale == 100. && self.scale == 100. {
+    fn flag_scale(&mut self, ui: &mut egui::Ui, scale_pc: f32, viewport: egui::Rect) {
+        if scale_pc == 100. && self.scale_pc == 100. {
             return
         }
 
-        self.scale = scale;
+        self.scale_pc = scale_pc;
         self.flagged_scale = Some(viewport);
 
         ui.close();
@@ -1244,10 +1249,11 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, label: &str, p
     }
 }
 
-fn try_add_image_manga(ui: &mut egui::Ui, image_state: &mut ImageStateManga, rect: egui::Rect) -> Option<egui::Response> {
+fn try_add_image_manga(ui: &mut egui::Ui, image_state: &mut ImageStateManga, rect: egui::Rect, tint: egui::Rgba) -> Option<egui::Response> {
     if let ImageStateManga::Ready { tex_id, extent, .. } = image_state {
         let tex = egui::load::SizedTexture::new(*tex_id, *extent);
-        let image = egui::Image::new(tex).sense(egui::Sense::click());
+        let tint: egui::Color32 = tint.into();
+        let image = egui::Image::new(tex).sense(egui::Sense::click()).tint(tint);
 
         let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Center)));
 
@@ -2945,7 +2951,7 @@ impl<'a> MediaBrowser<'a> {
                 let cache_ready = image_states.details.take_cache_ready();
                 image_states.details = ImageState::Ready { tex_id, extent, cache_ready };
             },
-            Stage::Manga => if let FilterAccel::Gpu(_) = self.manga.filter && self.manga.scale != 100. {
+            Stage::Manga => if let FilterAccel::Gpu(_) = self.manga.filter && self.manga.scale_pc != 100. {
                 let iris_info = IrisInfo {
                     wgpu: self.wgpu.clone(),
                     tex,
@@ -3584,7 +3590,7 @@ impl<'a> MediaBrowser<'a> {
         }
 
         if let Some(viewport) = self.manga.flagged_scale.take() {
-            let scale = self.manga.scale / 100.;
+            let scale = self.manga.scale_pc / 100.;
             let pivot = self.get_pivot();
 
             for page_info in self.manga.view.drain(..) {
@@ -3621,8 +3627,7 @@ impl<'a> MediaBrowser<'a> {
             let viewport_offset = viewport.top();
             let viewport_half_height = viewport.height().div_euclid(2.);
             let pivot_page_info = &self.manga.view[pivot.page_i];
-            let new_viewport_offset =
-                pivot_page_info.offset +
+            let new_viewport_offset = pivot_page_info.offset +
                 pivot.page_inset_pc.mul(pivot_page_info.extent.height) -
                 viewport_half_height;
             let viewport_translation = new_viewport_offset - viewport_offset;
@@ -3644,7 +3649,7 @@ impl<'a> MediaBrowser<'a> {
                     self.manga.stream.load_after.insert(view_i);
                 }
             }
-            self.stream_manga(ui, self.manga.scale != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
+            self.stream_manga(ui, self.manga.scale_pc != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
         }
 
         if let Some(scroll_offset_y) = self.manga.go_to_scroll_offset_y.take() {
@@ -3751,7 +3756,7 @@ impl<'a> MediaBrowser<'a> {
             self.manga.visible_view = start_visible..end_visible;
 
             if self.update_residence_manga(self.manga.visible_view.clone(), self.manga.view.len()) {
-                self.stream_manga(ui, self.manga.scale != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
+                self.stream_manga(ui, self.manga.scale_pc != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
             }
 
             if self.poll_ready.is_ready() {
@@ -3761,7 +3766,7 @@ impl<'a> MediaBrowser<'a> {
                     let page_extent = self.manga.view[view_i].extent;
                     let (page_rect, _) = ui.allocate_exact_size([ui.min_size().x, page_extent.height].into(), egui::Sense::hover());
 
-                    let image_resp = try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect);
+                    let image_resp = try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect, self.manga.tint);
 
                     if let Some(image_resp) = image_resp {
                         self.context_menu_manga(viewport, &image_resp);
@@ -3797,6 +3802,7 @@ impl<'a> MediaBrowser<'a> {
             .show(|ui| {
                 ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
                 ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
+                ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
                 ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
                 ui.separator();
                 ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Manga));
@@ -3808,22 +3814,22 @@ impl<'a> MediaBrowser<'a> {
         const SCALE_MAX: f32 = 300.;
         const SCALE_STEP: f32 = 25.;
 
-        ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
+        ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 5.;
 
-            let drag_scale_resp = ui.add(egui::DragValue::new(&mut self.manga.scale)
+            let drag_scale_resp = ui.add(egui::DragValue::new(&mut self.manga.scale_pc)
                 .range(SCALE_MIN..=SCALE_MAX)
                 .fixed_decimals(0)
                 .speed(0.25));
             if drag_scale_resp.drag_started() {
-                self.manga.scale_drag_anchor = self.manga.scale;
+                self.manga.scale_drag_anchor = self.manga.scale_pc;
             }
             if drag_scale_resp.dragged() {
-                self.manga.scale = self.manga.scale.div(SCALE_STEP).floor() * SCALE_STEP;
+                self.manga.scale_pc = self.manga.scale_pc.div(SCALE_STEP).floor() * SCALE_STEP;
             }
-            if drag_scale_resp.drag_stopped() && self.manga.scale_drag_anchor != self.manga.scale {
+            if drag_scale_resp.drag_stopped() && self.manga.scale_drag_anchor != self.manga.scale_pc {
                 self.manga.flagged_scale = Some(viewport);
             }
 
@@ -3831,10 +3837,10 @@ impl<'a> MediaBrowser<'a> {
 
             let drag_scale_extent = drag_scale_resp.rect.size();
             if ui.add_sized(drag_scale_extent, egui::Button::new("-25")).clicked() {
-                self.manga.flag_scale(ui, self.manga.scale.sub(SCALE_STEP).max(SCALE_MIN), viewport);
+                self.manga.flag_scale(ui, self.manga.scale_pc.sub(SCALE_STEP).max(SCALE_MIN), viewport);
             };
             if ui.add_sized(drag_scale_extent, egui::Button::new("+25")).clicked() {
-                self.manga.flag_scale(ui, self.manga.scale.add(SCALE_STEP).min(SCALE_MAX), viewport);
+                self.manga.flag_scale(ui, self.manga.scale_pc.add(SCALE_STEP).min(SCALE_MAX), viewport);
             };
         });
 
@@ -3867,7 +3873,7 @@ impl<'a> MediaBrowser<'a> {
             .num_columns(2)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
+                    ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
 
                     ui.label("CPU");
 
@@ -3900,7 +3906,7 @@ impl<'a> MediaBrowser<'a> {
                 });
 
                 ui.vertical(|ui| {
-                    ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
+                    ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
 
                     ui.label("GPU");
 
@@ -3915,8 +3921,50 @@ impl<'a> MediaBrowser<'a> {
             });
     }
 
+    fn tint_submenu_manga(&mut self, ui: &mut egui::Ui) {
+        ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
+
+        ui.vertical(|ui| {
+            // const SEPIA: egui::Rgba = egui::Rgba::from_rgb(1., 0.789, 0.589);
+            const SEPIA: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
+            const WHITE: egui::Rgba = egui::Rgba::WHITE;
+
+            ui.scope(|ui| {
+                ui.spacing_mut().slider_width = MANGA_SUBMENU_MIN_WIDTH -
+                    ui.spacing().interact_size.x -
+                    ui.spacing().button_padding.x;
+
+                ui.label("Sepia:");
+
+                let sepia_intensity_slider_resp = ui.add(egui::Slider::new(&mut self.manga.sepia_intensity_pc, 0.0..=100.)
+                    .clamping(egui::SliderClamping::Always)
+                    .fixed_decimals(0)
+                );
+
+                ui.label("White:");
+
+                let white_intensity_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_intensity_pc, 1.0..=100.)
+                    .clamping(egui::SliderClamping::Always)
+                    .fixed_decimals(0)
+                );
+
+                if sepia_intensity_slider_resp.union(white_intensity_slider_resp).dragged() {
+                    let sepia_intensity = self.manga.sepia_intensity_pc / 100.;
+                    let mut tint = WHITE.blend(SEPIA.multiply(sepia_intensity)).to_rgba_unmultiplied();
+
+                    let white_intensity = self.manga.white_intensity_pc / 100.;
+                    tint[0] *= white_intensity;
+                    tint[1] *= white_intensity;
+                    tint[2] *= white_intensity;
+
+                    self.manga.tint = egui::Rgba::from_rgba_unmultiplied(tint[0], tint[1], tint[2], tint[3]);
+                }
+            });
+        });
+    }
+
     fn bookmark_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
+        ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
 
         if ui.button("Set").clicked() {
             let pivot = self.get_pivot();
@@ -3932,8 +3980,7 @@ impl<'a> MediaBrowser<'a> {
             let viewport_half_height = self.central_rect.height().div_euclid(2.);
 
             let page_info = &self.manga.view[pivot.page_i];
-            let scroll_offset_y =
-                page_info.offset +
+            let scroll_offset_y = page_info.offset +
                 pivot.page_inset_pc.mul(page_info.extent.height) -
                 viewport_half_height;
 
@@ -3947,7 +3994,7 @@ impl<'a> MediaBrowser<'a> {
             Stage::Manga => (&mut self.manga.scroll_kind, &mut self.manga.spring_damper)
         };
 
-        ui.set_min_width(MANGA_CONTEXT_MENU_MIN_WIDTH);
+        ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
 
         if ui.radio(*scroll_kind == ScrollKind::SpringDamper, "Spring-Damper").clicked() {
             *scroll_kind = ScrollKind::SpringDamper;
