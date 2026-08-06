@@ -1495,24 +1495,27 @@ fn write_texture(wgpu: &egui_wgpu::RenderState, tex: &wgpu::Texture, image: &ima
 
 fn sinc(x: f64) -> f64 {
     if x.abs() < 1e-6 {
-        1.0
-    } else {
-        (PI * x).sin() / (PI * x)
+        return 1.0
     }
+
+    let pi_x = PI * x;
+
+    pi_x.sin() / pi_x
 }
 
 fn blackman(x: f64) -> f64 {
     let t = x.abs();
 
     if t >= BLACKMAN_SUPPORT {
-        0.0
-    } else {
-        let window = 0.42 +
-            0.5 * (PI * t / BLACKMAN_SUPPORT).cos() +
-            0.08 * (2.0 * PI * t / BLACKMAN_SUPPORT).cos();
-
-        sinc(t) * window
+        return 0.0
     }
+
+    let pi_t = PI * t;
+    let window = 0.42 +
+        0.5 * (pi_t / BLACKMAN_SUPPORT).cos() +
+        0.08 * (2.0 * pi_t / BLACKMAN_SUPPORT).cos();
+
+    sinc(t) * window
 }
 
 #[cfg(feature = "resize")]
@@ -4098,8 +4101,8 @@ impl<'a> MediaBrowser<'a> {
                 ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
                 ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
                 ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
-                ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
                 ui.separator();
+                ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
                 ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Manga));
             });
     }

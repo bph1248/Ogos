@@ -40,19 +40,21 @@ float blackman(float x) {
 
     if (t >= KERNEL_SUPPORT) {
         return 0.0;
-    } else {
-        let window = 0.42 +
-            0.5 * cos(float.getPi() * t / KERNEL_SUPPORT) +
-            0.08 * cos(2.0 * float.getPi() * t / KERNEL_SUPPORT);
-
-        return sinc(t) * window;
     }
+
+    let pi_t = float.getPi() * t;
+    let window = 0.42 +
+        0.5 * cos(pi_t / KERNEL_SUPPORT) +
+        0.08 * cos(2.0 * pi_t / KERNEL_SUPPORT);
+
+    return sinc(t) * window;
 }
 
 float sinc(float x) {
     if (abs(x) < 1e-6) {
         return 1.0;
     }
+
     let pi_x = float.getPi() * x;
 
     return sin(pi_x) / pi_x;
