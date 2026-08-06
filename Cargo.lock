@@ -3092,6 +3092,7 @@ dependencies = [
 name = "ogos_gui"
 version = "0.6.0"
 dependencies = [
+ "bytemuck",
  "concat-string",
  "const_format",
  "crossbeam",

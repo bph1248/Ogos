@@ -6,6 +6,7 @@ use ogos_discord as discord;
 use ogos_err::*;
 use ogos_video as video;
 
+use bytemuck::*;
 #[cfg(feature = "hotpath")]
 use const_format::*;
 use concat_string::*;
@@ -369,7 +370,7 @@ struct IrisInfo {
     index: usize,
     gen_id_check: Option<GenerationIdCheck>,
     dst_extent: Extent2dF,
-    resizer: Arc<Resizer>,
+    scaler: Arc<Scaler>,
     ship: mpmc::Sender<ScaledTexManga>,
     to_thanatos: mpmc::Sender<Soul>
 }
@@ -500,8 +501,8 @@ struct Manga {
     flagged_scale: Option<egui::Rect>,
     filter: FilterAccel,
     tint: egui::Rgba,
-    sepia_intensity_pc: f32,
-    white_intensity_pc: f32,
+    sepia_alpha_pc: f32,
+    white_level_pc: f32,
     scroll_kind: ScrollKind,
     scroll_offset: egui::Vec2,
     scroll_offset_y_anchor: Option<f32>,
@@ -517,9 +518,9 @@ impl Manga {
     fn new(spring_damper: SpringDamper) -> Self {
         Self {
             scale_pc: 100.,
-            filter: FilterAccel::Cpu(fir::FilterType::Custom(blackman_filter_fir())),
+            filter: FilterAccel::Gpu(FilterKind::Blackman),
             tint: egui::Rgba::WHITE,
-            white_intensity_pc: 100.,
+            white_level_pc: 100.,
             spring_damper,
             ..default!()
         }
@@ -628,27 +629,168 @@ impl Clone for PollReady {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct PushConstants {
+    render_pass_kind: u32,
+    src_tex_extent: [f32; 2],
+    dst_tex_extent: [f32; 2]
+}
+
+fn create_sampler_render_pipeline(device: &wgpu::Device, bind_group_layout: &wgpu::BindGroupLayout, shader_module: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
+    use wgpu::*;
+
+    let pipeline_layout_desc = PipelineLayoutDescriptor {
+        bind_group_layouts: &[Some(bind_group_layout)],
+        ..default!()
+    };
+    let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
+
+    let vertex_state = VertexState {
+        module: shader_module,
+        entry_point: Some("vertex_main"),
+        compilation_options: default!(),
+        buffers: default!()
+    };
+    let color_target_state = ColorTargetState {
+        format: TextureFormat::Rgba8UnormSrgb,
+        blend: None,
+        write_mask: ColorWrites::ALL
+    };
+    let fragment_state = FragmentState {
+        module: shader_module,
+        entry_point: Some("fragment_main"),
+        compilation_options: PipelineCompilationOptions {
+            constants: &[("0", FilterKind::Bilinear as u32 as f64)],
+            zero_initialize_workgroup_memory: default!()
+        },
+        targets: &[Some(color_target_state)]
+    };
+
+    let render_pipeline_desc = RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        vertex: vertex_state,
+        primitive: default!(), // Right hand coords - WGSL clip space +Y points up
+        depth_stencil: None,
+        multisample: default!(),
+        fragment: Some(fragment_state),
+        multiview_mask: None,
+        cache: None
+    };
+
+    device.create_render_pipeline(&render_pipeline_desc)
+}
+
+fn create_blackman_render_pipelines(device: &wgpu::Device, bind_group_layout: &wgpu::BindGroupLayout, shader_module: &wgpu::ShaderModule) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    use wgpu::*;
+
+    let pipeline_layout_desc = PipelineLayoutDescriptor {
+        bind_group_layouts: &[Some(bind_group_layout)],
+        immediate_size: (mem::size_of::<RenderPassKind>() + 2 * mem::size_of::<Extent2dF>()) as u32,
+        ..default!()
+    };
+    let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
+
+    let vertex_state = VertexState {
+        module: shader_module,
+        entry_point: Some("vertex_main"),
+        compilation_options: default!(),
+        buffers: default!()
+    };
+    let color_target_state0 = ColorTargetState {
+        format: TextureFormat::Rgba8Unorm,
+        blend: None,
+        write_mask: ColorWrites::ALL
+    };
+    let color_target_state1 = ColorTargetState {
+        format: TextureFormat::Rgba8UnormSrgb,
+        blend: None,
+        write_mask: ColorWrites::ALL
+    };
+    let fragment_state0 = FragmentState {
+        module: shader_module,
+        entry_point: Some("fragment_main"),
+        compilation_options: PipelineCompilationOptions {
+            constants: &[("0", FilterKind::Blackman as u32 as f64)],
+            zero_initialize_workgroup_memory: default!()
+        },
+        targets: &[Some(color_target_state0)]
+    };
+    let fragment_state1 = FragmentState {
+        module: shader_module,
+        entry_point: Some("fragment_main"),
+        compilation_options: PipelineCompilationOptions {
+            constants: &[("0", FilterKind::Blackman as u32 as f64)],
+            zero_initialize_workgroup_memory: default!()
+        },
+        targets: &[Some(color_target_state1)]
+    };
+
+    let render_pipeline0_desc = RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        vertex: vertex_state.clone(),
+        primitive: default!(),
+        depth_stencil: None,
+        multisample: default!(),
+        fragment: Some(fragment_state0),
+        multiview_mask: None,
+        cache: None
+    };
+    let render_pipeline1_desc = RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        vertex: vertex_state,
+        primitive: default!(),
+        depth_stencil: None,
+        multisample: default!(),
+        fragment: Some(fragment_state1),
+        multiview_mask: None,
+        cache: None
+    };
+    let render_pipeline0 = device.create_render_pipeline(&render_pipeline0_desc);
+    let render_pipeline1 = device.create_render_pipeline(&render_pipeline1_desc);
+
+    (render_pipeline0, render_pipeline1)
+}
+
 struct ResetResidence {
     row_cell_count: usize,
     visible_cell_count: usize
 }
 
-struct Resizer {
-    sampler: wgpu::Sampler,
-    bind_group_layout: wgpu::BindGroupLayout,
-    render_pipeline: wgpu::RenderPipeline
+struct ScaleImageManga {
+    extent: Extent2dF,
+    filter: fir::FilterType
 }
-impl Resizer {
+
+struct ScaledTexManga {
+    tex_id: egui::TextureId,
+    index: usize,
+    gen_id_check: Option<GenerationIdCheck>,
+    extent: Extent2dF
+}
+
+struct Scaler {
+    nearest_sampler: wgpu::Sampler,
+    linear_sampler: wgpu::Sampler,
+    bind_group_layout: wgpu::BindGroupLayout,
+    sampler_render_pipeline: wgpu::RenderPipeline,
+    blackman_render_pipeline0: wgpu::RenderPipeline,
+    blackman_render_pipeline1: wgpu::RenderPipeline
+}
+impl Scaler {
     fn new(device: &wgpu::Device) -> Self {
         use wgpu::*;
 
-        let sampler_desc = SamplerDescriptor {
+        let nearest_sampler_desc = SamplerDescriptor {
             label: None,
-            address_mode_u: AddressMode::Repeat,
-            address_mode_v: AddressMode::Repeat,
-            address_mode_w: AddressMode::Repeat,
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Nearest,
+            min_filter: FilterMode::Nearest,
             mipmap_filter: MipmapFilterMode::Nearest,
             lod_min_clamp: 0.,
             lod_max_clamp: 0.,
@@ -656,14 +798,22 @@ impl Resizer {
             anisotropy_clamp: 1,
             border_color: None
         };
-        let sampler = device.create_sampler(&sampler_desc);
-
-        // let shader_module_desc = ShaderModuleDescriptor {
-        //     label: None,
-        //     source: ShaderSource::Wgsl(include_str!("../../../assets/scale_tex.wgsl").into())
-        // };
-        let shader_module_desc = wgpu::include_spirv!("../../../assets/scale_tex.spv");
-        let shader_module = device.create_shader_module(shader_module_desc);
+        let linear_sampler_desc = SamplerDescriptor {
+            label: None,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: MipmapFilterMode::Linear,
+            lod_min_clamp: 0.,
+            lod_max_clamp: 0.,
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None
+        };
+        let nearest_sampler = device.create_sampler(&nearest_sampler_desc);
+        let linear_sampler = device.create_sampler(&linear_sampler_desc);
 
         let bind_group_layout_desc = BindGroupLayoutDescriptor {
             label: None,
@@ -688,61 +838,21 @@ impl Resizer {
         };
         let bind_group_layout = device.create_bind_group_layout(&bind_group_layout_desc);
 
-        let pipeline_layout_desc = PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0
-        };
-        let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
+        let shader_module_desc = wgpu::include_spirv!("../../../assets/scale.spv");
+        let shader_module = device.create_shader_module(shader_module_desc);
 
-        let vertex_state = VertexState {
-            module: &shader_module,
-            entry_point: Some("vertex_main"),
-            compilation_options: default!(),
-            buffers: default!()
-        };
-        let color_target_state = ColorTargetState {
-            format: TextureFormat::Rgba8UnormSrgb,
-            blend: None,
-            write_mask: ColorWrites::ALL
-        };
-        let fragment_state = FragmentState {
-            module: &shader_module,
-            entry_point: Some("fragment_main"),
-            compilation_options: default!(),
-            targets: &[Some(color_target_state)]
-        };
-        let render_pipeline_desc = RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: vertex_state,
-            primitive: default!(), // Right hand coords - WGSL clip space +Y points up
-            depth_stencil: None,
-            multisample: default!(),
-            fragment: Some(fragment_state),
-            multiview_mask: None,
-            cache: None
-        };
-        let render_pipeline = device.create_render_pipeline(&render_pipeline_desc);
+        let sampler_render_pipeline = create_sampler_render_pipeline(device, &bind_group_layout, &shader_module);
+        let blackman_render_pipelines = create_blackman_render_pipelines(device, &bind_group_layout, &shader_module);
 
         Self {
-            sampler,
+            nearest_sampler,
+            linear_sampler,
             bind_group_layout,
-            render_pipeline
+            sampler_render_pipeline,
+            blackman_render_pipeline0: blackman_render_pipelines.0,
+            blackman_render_pipeline1: blackman_render_pipelines.1
         }
     }
-}
-
-struct ScaleImageManga {
-    extent: Extent2dF,
-    filter: fir::FilterType
-}
-
-struct ScaledTexManga {
-    tex_id: egui::TextureId,
-    index: usize,
-    gen_id_check: Option<GenerationIdCheck>,
-    extent: Extent2dF
 }
 
 struct ScrollAreaInfo {
@@ -1078,22 +1188,19 @@ impl ButtonState {
 
 enum FilterAccel {
     Cpu(fir::FilterType),
-    Gpu(fir::FilterType)
+    Gpu(FilterKind)
 }
 impl Default for FilterAccel {
     fn default() -> Self {
         Self::Cpu(default!())
     }
 }
-impl Deref for FilterAccel {
-    type Target = fir::FilterType;
 
-    fn deref(&self) -> &Self::Target {
-        match self {
-            FilterAccel::Cpu(filter_type) => filter_type,
-            FilterAccel::Gpu(filter_type) => filter_type
-        }
-    }
+#[repr(u32)]
+enum FilterKind {
+    Nearest,
+    Bilinear,
+    Blackman
 }
 
 enum GridViewOp {
@@ -1177,6 +1284,13 @@ impl From<f32> for Orientation {
             false => Orientation::Tall
         }
     }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy)]
+enum RenderPassKind {
+    Horizontal,
+    Vertical
 }
 
 enum SelectionKind {
@@ -1438,10 +1552,10 @@ fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Receive
     }
 }
 
-fn iris(info: IrisInfo) {
+fn iris_sampler(info: IrisInfo, filter_mode: wgpu::FilterMode) {
     use wgpu::*;
 
-    let IrisInfo { wgpu, tex, tex_id, index, gen_id_check, dst_extent, resizer, ship, to_thanatos } = info;
+    let IrisInfo { wgpu, tex: src_tex, tex_id, index, gen_id_check, dst_extent, scaler, ship, to_thanatos } = info;
     let egui_wgpu::RenderState { device, queue, .. } = &wgpu;
 
     let dst_tex_desc = wgpu::TextureDescriptor {
@@ -1464,12 +1578,12 @@ fn iris(info: IrisInfo) {
         format: Some(TextureFormat::Rgba8UnormSrgb),
         ..default!()
     };
-    let src_tex_view = tex.create_view(&src_tex_view_desc);
+    let src_tex_view = src_tex.create_view(&src_tex_view_desc);
     let dst_tex_view = dst_tex.create_view(&default!());
 
     let bind_group_desc = BindGroupDescriptor {
         label: None,
-        layout: &resizer.bind_group_layout,
+        layout: &scaler.bind_group_layout,
         entries: &[
             BindGroupEntry {
                 binding: 0,
@@ -1477,7 +1591,10 @@ fn iris(info: IrisInfo) {
             },
             BindGroupEntry {
                 binding: 1,
-                resource: BindingResource::Sampler(&resizer.sampler)
+                resource: BindingResource::Sampler(match filter_mode {
+                    FilterMode::Nearest => &scaler.nearest_sampler,
+                    FilterMode::Linear => &scaler.linear_sampler
+                })
             }
         ]
     };
@@ -1505,7 +1622,7 @@ fn iris(info: IrisInfo) {
     let mut encoder = device.create_command_encoder(&default!());
     {
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
-        render_pass.set_pipeline(&resizer.render_pipeline);
+        render_pass.set_pipeline(&scaler.sampler_render_pipeline);
         render_pass.set_bind_group(0, &bind_group, default!());
         render_pass.draw(0..3, 0..1);
     }
@@ -1517,6 +1634,165 @@ fn iris(info: IrisInfo) {
         ..default!()
     };
     let dst_tex_view = dst_tex.create_view(&dst_tex_view_desc);
+    let dst_tex_id = register_native_texture(&wgpu, &dst_tex_view);
+
+    ship.send(ScaledTexManga {
+        tex_id: dst_tex_id,
+        index,
+        gen_id_check,
+        extent: dst_extent
+    })
+    .unwrap();
+
+    to_thanatos.send(Soul::TexId(tex_id)).unwrap();
+}
+
+fn iris_blackman(info: IrisInfo) {
+    use wgpu::*;
+
+    let IrisInfo { wgpu, tex: src_tex, tex_id, index, gen_id_check, dst_extent, scaler, ship, to_thanatos } = info;
+    let egui_wgpu::RenderState { device, queue, .. } = &wgpu;
+
+    let dst_tex0_desc = wgpu::TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: dst_extent.width as u32,
+            height: src_tex.height(),
+            depth_or_array_layers: 1
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        view_formats: default!()
+    };
+    let dst_tex1_desc = wgpu::TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: dst_extent.width as u32,
+            height: dst_extent.height as u32,
+            depth_or_array_layers: 1
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8UnormSrgb,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[TextureFormat::Rgba8Unorm]
+    };
+    let dst_tex0 = device.create_texture(&dst_tex0_desc);
+    let dst_tex1 = device.create_texture(&dst_tex1_desc);
+
+    let src_tex_view_desc = TextureViewDescriptor {
+        format: Some(TextureFormat::Rgba8UnormSrgb),
+        ..default!()
+    };
+    let src_tex_view = src_tex.create_view(&src_tex_view_desc);
+    let dst_tex_view0 = dst_tex0.create_view(&default!());
+    let dst_tex_view1 = dst_tex1.create_view(&default!());
+
+    let bind_group0_desc = BindGroupDescriptor {
+        label: None,
+        layout: &scaler.bind_group_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&src_tex_view)
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(&scaler.nearest_sampler)
+            }
+        ]
+    };
+    let bind_group1_desc = BindGroupDescriptor {
+        label: None,
+        layout: &scaler.bind_group_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&dst_tex_view0)
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Sampler(&scaler.nearest_sampler)
+            }
+        ]
+    };
+    let bind_group0 = device.create_bind_group(&bind_group0_desc);
+    let bind_group1 = device.create_bind_group(&bind_group1_desc);
+
+    let render_pass0_desc = RenderPassDescriptor {
+        label: None,
+        color_attachments: &[
+            Some(RenderPassColorAttachment {
+                view: &dst_tex_view0,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store
+                }
+            })
+        ],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None
+    };
+    let render_pass1_desc = RenderPassDescriptor {
+        label: None,
+        color_attachments: &[
+            Some(RenderPassColorAttachment {
+                view: &dst_tex_view1,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store
+                }
+            })
+        ],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None
+    };
+
+    let mut encoder = device.create_command_encoder(&default!());
+    {
+        let mut render_pass0 = encoder.begin_render_pass(&render_pass0_desc);
+        render_pass0.set_pipeline(&scaler.blackman_render_pipeline0);
+        render_pass0.set_bind_group(0, &bind_group0, default!());
+        let push_constants = PushConstants {
+            render_pass_kind: RenderPassKind::Horizontal as u32,
+            src_tex_extent: src_tex.as_::<Extent2dF>().into(),
+            dst_tex_extent: dst_tex0.as_::<Extent2dF>().into()
+        };
+        render_pass0.set_immediates(0, bytemuck::bytes_of(&push_constants));
+        render_pass0.draw(0..3, 0..1);
+    }
+    {
+        let mut render_pass1 = encoder.begin_render_pass(&render_pass1_desc);
+        render_pass1.set_pipeline(&scaler.blackman_render_pipeline1);
+        render_pass1.set_bind_group(0, &bind_group1, default!());
+        let push_constants = PushConstants {
+            render_pass_kind: RenderPassKind::Vertical as u32,
+            src_tex_extent: dst_tex0.as_::<Extent2dF>().into(),
+            dst_tex_extent: dst_tex1.as_::<Extent2dF>().into()
+        };
+        render_pass1.set_immediates(0, bytemuck::bytes_of(&push_constants));
+        render_pass1.draw(0..3, 0..1);
+    }
+    let command_buffer = encoder.finish();
+    queue.submit([command_buffer]);
+
+    let dst_tex_view_desc = TextureViewDescriptor {
+        format: Some(TextureFormat::Rgba8Unorm),
+        ..default!()
+    };
+    let dst_tex_view = dst_tex1.create_view(&dst_tex_view_desc);
     let dst_tex_id = register_native_texture(&wgpu, &dst_tex_view);
 
     ship.send(ScaledTexManga {
@@ -2420,7 +2696,7 @@ struct MediaBrowser<'a> {
     discord_state_edit: String,
     discord_display_kind: DiscordDisplayKind,
     open_error_win: bool,
-    resizer: Arc<Resizer>,
+    scaler: Arc<Scaler>,
     iris_ship: mpmc::Sender<ScaledTexManga>,
     from_iris: mpmc::Receiver<ScaledTexManga>,
     charon_ship: mpmc::Sender<ImageResult>,
@@ -2760,7 +3036,7 @@ impl<'a> MediaBrowser<'a> {
         let (error_sx, error_rx) = mpmc::unbounded();
         let error_msg = "".to_string();
 
-        let resizer = Arc::new(Resizer::new(&wgpu.device));
+        let scaler = Arc::new(Scaler::new(&wgpu.device));
         let (iris_ship, from_iris) = mpmc::unbounded();
 
         let win_inner_extent = Extent2dF::from(win_inner_extent);
@@ -2908,7 +3184,7 @@ impl<'a> MediaBrowser<'a> {
             discord_details_edit: default!(),
             discord_state_edit: default!(),
             discord_display_kind,
-            resizer,
+            scaler,
             iris_ship,
             from_iris,
             charon_ship,
@@ -2951,21 +3227,34 @@ impl<'a> MediaBrowser<'a> {
                 let cache_ready = image_states.details.take_cache_ready();
                 image_states.details = ImageState::Ready { tex_id, extent, cache_ready };
             },
-            Stage::Manga => if let FilterAccel::Gpu(_) = self.manga.filter && self.manga.scale_pc != 100. {
-                let iris_info = IrisInfo {
+            Stage::Manga => {
+                let make_iris_info = || IrisInfo {
                     wgpu: self.wgpu.clone(),
                     tex,
                     tex_id,
                     index,
                     gen_id_check,
                     dst_extent: self.manga.view[index].extent,
-                    resizer: self.resizer.clone(),
+                    scaler: self.scaler.clone(),
                     ship: self.iris_ship.clone(),
                     to_thanatos: self.to_thanatos.clone()
                 };
-                self.thread_pool.enqueue_high(|| iris(iris_info));
-            } else {
-                self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
+
+                match self.manga.filter {
+                    FilterAccel::Gpu(FilterKind::Nearest) if self.manga.scale_pc != 100. => {
+                        let iris_info = make_iris_info();
+                        self.thread_pool.enqueue_high(|| iris_sampler(iris_info, wgpu::FilterMode::Nearest));
+                    },
+                    FilterAccel::Gpu(FilterKind::Bilinear) if self.manga.scale_pc != 100. => {
+                        let iris_info = make_iris_info();
+                        self.thread_pool.enqueue_high(|| iris_sampler(iris_info, wgpu::FilterMode::Linear));
+                    },
+                    FilterAccel::Gpu(FilterKind::Blackman) if self.manga.scale_pc != 100. => {
+                        let iris_info = make_iris_info();
+                        self.thread_pool.enqueue_high(|| iris_blackman(iris_info));
+                    },
+                    _ => self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent }
+                }
             }
         }
     }
@@ -3288,7 +3577,7 @@ impl<'a> MediaBrowser<'a> {
         ferry_images(make_ferry_images_info(&self.stream.load_after, false));
     }
 
-    fn stream_manga(&mut self, ctx: &egui::Context, scale: bool) {
+    fn stream_manga(&mut self, ctx: &egui::Context, should_scale: bool) {
         if !self.manga.stream.drop.is_empty() {
             for view_i in self.manga.stream.drop.iter() {
                 let page_info = &mut self.manga.view[*view_i];
@@ -3303,11 +3592,17 @@ impl<'a> MediaBrowser<'a> {
                 .map(|view_i| {
                     let ViewPageInfo { archive_i, image_kind, extent, ref gen_id, .. } = self.manga.view[view_i];
 
+                    let scale = if should_scale && let FilterAccel::Cpu(filter) = self.manga.filter {
+                        Some(ScaleImageManga { extent, filter })
+                    } else {
+                        None
+                    };
+
                     FerryImageInfoManga {
                         archive_i,
                         image_kind,
                         view_i,
-                        scale: scale.then_some(ScaleImageManga { extent, filter: *self.manga.filter }),
+                        scale,
                         gen_id_check: gen_id.get_next_check(),
                         signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
                     }
@@ -3850,6 +4145,9 @@ impl<'a> MediaBrowser<'a> {
             if ui.button("50").clicked() {
                 self.manga.flag_scale(ui, SCALE_MIN, viewport);
             }
+            if ui.button("75").clicked() {
+                self.manga.flag_scale(ui, 75., viewport);
+            }
             if ui.button("100").clicked() {
                 self.manga.flag_scale(ui, 100., viewport);
             }
@@ -3912,8 +4210,16 @@ impl<'a> MediaBrowser<'a> {
 
                     ui.separator();
 
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(fir::FilterType::Bilinear)), "Bilinear").clicked() {
-                        self.manga.filter = FilterAccel::Gpu(fir::FilterType::Bilinear);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Nearest)), "Nearest").clicked() {
+                        self.manga.filter = FilterAccel::Gpu(FilterKind::Nearest);
+                    }
+
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Bilinear)), "Bilinear").clicked() {
+                        self.manga.filter = FilterAccel::Gpu(FilterKind::Bilinear);
+                    }
+
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Blackman)), "Blackman 3").clicked() {
+                        self.manga.filter = FilterAccel::Gpu(FilterKind::Blackman);
                     }
                 });
 
@@ -3925,7 +4231,6 @@ impl<'a> MediaBrowser<'a> {
         ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
 
         ui.vertical(|ui| {
-            // const SEPIA: egui::Rgba = egui::Rgba::from_rgb(1., 0.789, 0.589);
             const SEPIA: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
             const WHITE: egui::Rgba = egui::Rgba::WHITE;
 
@@ -3936,28 +4241,28 @@ impl<'a> MediaBrowser<'a> {
 
                 ui.label("Sepia:");
 
-                let sepia_intensity_slider_resp = ui.add(egui::Slider::new(&mut self.manga.sepia_intensity_pc, 0.0..=100.)
+                let sepia_alpha_slider_resp = ui.add(egui::Slider::new(&mut self.manga.sepia_alpha_pc, 0.0..=100.)
                     .clamping(egui::SliderClamping::Always)
                     .fixed_decimals(0)
                 );
 
                 ui.label("White:");
 
-                let white_intensity_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_intensity_pc, 1.0..=100.)
+                let white_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_level_pc, 0.0..=100.)
                     .clamping(egui::SliderClamping::Always)
                     .fixed_decimals(0)
                 );
 
-                if sepia_intensity_slider_resp.union(white_intensity_slider_resp).dragged() {
-                    let sepia_intensity = self.manga.sepia_intensity_pc / 100.;
-                    let mut tint = WHITE.blend(SEPIA.multiply(sepia_intensity)).to_rgba_unmultiplied();
+                if sepia_alpha_slider_resp.union(white_level_slider_resp).dragged() {
+                    let sepia_alpha = self.manga.sepia_alpha_pc / 100.;
+                    let mut tint = WHITE.blend(SEPIA.multiply(sepia_alpha));
 
-                    let white_intensity = self.manga.white_intensity_pc / 100.;
-                    tint[0] *= white_intensity;
-                    tint[1] *= white_intensity;
-                    tint[2] *= white_intensity;
+                    let white_level = (self.manga.white_level_pc / 100.).powf(2.2);
+                    tint[0] *= white_level;
+                    tint[1] *= white_level;
+                    tint[2] *= white_level;
 
-                    self.manga.tint = egui::Rgba::from_rgba_unmultiplied(tint[0], tint[1], tint[2], tint[3]);
+                    self.manga.tint = tint;
                 }
             });
         });
@@ -5033,6 +5338,17 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
     let mut wgpu_setup_create_new = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     wgpu_setup_create_new.instance_descriptor.backends = wgpu::Backends::VULKAN;
     wgpu_setup_create_new.instance_descriptor.flags = wgpu::InstanceFlags::empty();
+    wgpu_setup_create_new.device_descriptor = Arc::new(|_| {
+        wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_texture_dimension_2d: 8192,
+                max_immediate_size: 32,
+                ..default!()
+            },
+            required_features: wgpu::Features::IMMEDIATES,
+            ..default!()
+        }
+    });
     let wgpu_setup = egui_wgpu::WgpuSetup::CreateNew(wgpu_setup_create_new);
     let wgpu_options = egui_wgpu::WgpuConfiguration {
         surface: egui_wgpu::SurfaceConfig {

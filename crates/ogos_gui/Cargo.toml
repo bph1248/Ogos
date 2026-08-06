@@ -9,6 +9,7 @@ version = { workspace = true }
 crate-type = ["lib"]
 
 [dependencies]
+bytemuck = { workspace = true }
 concat-string = { workspace = true }
 const_format = { workspace = true }
 crossbeam = { workspace = true }
