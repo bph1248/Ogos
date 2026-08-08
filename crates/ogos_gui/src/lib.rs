@@ -70,7 +70,7 @@ const DETAILS_ENTRY_COUNT: usize = 64;
 const FRAME_INNER_MARGIN: f32 = 15.;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
-const MANGA_SUBMENU_MIN_WIDTH: f32 = 201.;
+const MANGA_SUBMENU_MIN_WIDTH: f32 = 210.;
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
 
@@ -4110,36 +4110,23 @@ impl<'a> MediaBrowser<'a> {
     fn scale_submenu_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
         const SCALE_MIN: f32 = 50.;
         const SCALE_MAX: f32 = 300.;
-        const SCALE_STEP: f32 = 25.;
 
         ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
 
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.;
+        ui.scope(|ui| {
+            ui.spacing_mut().slider_width = MANGA_SUBMENU_MIN_WIDTH - ui.spacing().interact_size.x;
 
-            let drag_scale_resp = ui.add(egui::DragValue::new(&mut self.manga.scale_pc)
-                .range(SCALE_MIN..=SCALE_MAX)
+            let scale_slider_resp = ui.add(egui::Slider::new(&mut self.manga.scale_pc, SCALE_MIN..=SCALE_MAX)
+                .clamping(egui::SliderClamping::Always)
                 .fixed_decimals(0)
-                .speed(0.25));
-            if drag_scale_resp.drag_started() {
+                .step_by(5.));
+
+            if scale_slider_resp.drag_started() {
                 self.manga.scale_drag_anchor = self.manga.scale_pc;
             }
-            if drag_scale_resp.dragged() {
-                self.manga.scale_pc = self.manga.scale_pc.div(SCALE_STEP).floor() * SCALE_STEP;
-            }
-            if drag_scale_resp.drag_stopped() && self.manga.scale_drag_anchor != self.manga.scale_pc {
+            if scale_slider_resp.drag_stopped() && self.manga.scale_drag_anchor != self.manga.scale_pc {
                 self.manga.flagged_scale = Some(viewport);
             }
-
-            ui.separator();
-
-            let drag_scale_extent = drag_scale_resp.rect.size();
-            if ui.add_sized(drag_scale_extent, egui::Button::new("-25")).clicked() {
-                self.manga.flag_scale(ui, self.manga.scale_pc.sub(SCALE_STEP).max(SCALE_MIN), viewport);
-            };
-            if ui.add_sized(drag_scale_extent, egui::Button::new("+25")).clicked() {
-                self.manga.flag_scale(ui, self.manga.scale_pc.add(SCALE_STEP).min(SCALE_MAX), viewport);
-            };
         });
 
         ui.separator();
@@ -4154,9 +4141,15 @@ impl<'a> MediaBrowser<'a> {
             if ui.button("100").clicked() {
                 self.manga.flag_scale(ui, 100., viewport);
             }
+            if ui.button("125").clicked() {
+                self.manga.flag_scale(ui, 125., viewport);
+            }
             if ui.button("150").clicked() {
                 self.manga.flag_scale(ui, 150., viewport);
             }
+
+            ui.separator();
+
             if ui.button("200").clicked() {
                 self.manga.flag_scale(ui, 200., viewport);
             }
@@ -4238,9 +4231,7 @@ impl<'a> MediaBrowser<'a> {
             const WHITE: egui::Rgba = egui::Rgba::WHITE;
 
             ui.scope(|ui| {
-                ui.spacing_mut().slider_width = MANGA_SUBMENU_MIN_WIDTH -
-                    ui.spacing().interact_size.x -
-                    ui.spacing().button_padding.x;
+                ui.spacing_mut().slider_width = MANGA_SUBMENU_MIN_WIDTH - ui.spacing().interact_size.x;
 
                 ui.label("Sepia:");
 
