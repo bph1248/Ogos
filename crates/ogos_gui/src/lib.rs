@@ -4272,10 +4272,8 @@ impl<'a> MediaBrowser<'a> {
             grid_entry_info.bookmark = Some(pivot);
         }
 
-        let bookmark = self.grid_entries[self.details_grid_entry_i].bookmark;
-        if let Some(pivot) = bookmark &&
-            ui.button("Jump").clicked()
-        {
+        let bookmark = &mut self.grid_entries[self.details_grid_entry_i].bookmark;
+        if let Some(pivot) = bookmark && ui.button("Jump").clicked() {
             let viewport_half_height = self.central_rect.height().div_euclid(2.);
 
             let page_info = &self.manga.view[pivot.page_i];
@@ -4284,6 +4282,10 @@ impl<'a> MediaBrowser<'a> {
                 viewport_half_height;
 
             self.manga.go_to_scroll_offset_y = Some(scroll_offset_y);
+        }
+
+        if bookmark.is_some() && ui.button("Clear").clicked() {
+            *bookmark = None;
         }
     }
 
