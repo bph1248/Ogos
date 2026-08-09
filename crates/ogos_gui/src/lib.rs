@@ -70,9 +70,9 @@ const DETAILS_ENTRY_COUNT: usize = 64;
 const FRAME_INNER_MARGIN: f32 = 15.;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
-const MANGA_SUBMENU_MIN_WIDTH: f32 = 210.;
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
+const SUBMENU_MIN_WIDTH: f32 = 200.;
 
 thread_local! {
     static WORKER_THREAD_STATE: RefCell<WorkerThreadState> = RefCell::new({
@@ -121,6 +121,7 @@ const fn spring_damper_manga() -> SpringDamperCache {
 
 #[derive(Serialize, Deserialize)]
 struct Cache {
+    library: Vec<PathBuf>,
     grid_cell_size: egui::Vec2,
     details_cell_size: egui::Vec2,
     #[serde(default = "spring_damper")]
@@ -2645,6 +2646,7 @@ struct MediaBrowser<'a> {
     deferred_metadata_rx: mpmc::Receiver<MetadataInfo>,
     cache_path: PathBuf,
     cache: Cache,
+    selected_library_entries: HashSet<usize>,
     missing_base_images: Vec<Rc<str>>,
     frame: egui::Frame,
     central_rect: egui::Rect,
@@ -2820,8 +2822,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 impl<'a> MediaBrowser<'a> {
     fn new(ctx: &egui::Context, wgpu: &egui_wgpu::RenderState, refresh_rate: u32, win_inner_extent: Extent2dU) -> Res<Self> {
         let config = config::get().read()?;
-        let (media_dirs,
-            grid_cell_width,
+        let (grid_cell_width,
             details_cell_width,
             scroll_multiplier,
             lookahead,
@@ -2830,7 +2831,6 @@ impl<'a> MediaBrowser<'a> {
         ) = config.media_browser.as_ref()
             .map(|media_browser_config| {
                 (
-                    &media_browser_config.dirs,
                     media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
                     media_browser_config.details_cell_width.next_multiple_of(2) as f32,
                     media_browser_config.scroll_multiplier,
@@ -2841,7 +2841,6 @@ impl<'a> MediaBrowser<'a> {
             })
             .ok_or(ErrVar::MissingConfigOption { name: config::MediaBrowser::NAME })?;
 
-        if media_dirs.is_empty() { Err(ErrVar::MissingDirs)?; }
         if lookahead < 2 { Err(ErrVar::InvalidLookahead(lookahead))?; }
         let proximity_range = 1..lookahead;
         if !(proximity_range.contains(&proximity)) { Err(ErrVar::InvalidProximity(proximity))?; }
@@ -2900,6 +2899,8 @@ impl<'a> MediaBrowser<'a> {
         let mut cache: Cache = serde_json::from_slice(&cache_slc)?;
         let mut missing_base_images = Vec::new();
 
+        if cache.library.is_empty() { Err(ErrVar::MissingDirs)?; }
+
         let spring_damper = cache.spring_damper.into();
         let spring_damper_manga = cache.spring_damper_manga.into();
 
@@ -2927,8 +2928,8 @@ impl<'a> MediaBrowser<'a> {
             })
             .collect::<Res<IndexMap::<Arc<str>, ImageStates>>>()?;
 
-        let mut grid_entries = media_dirs.iter()
-            .map(|dir| Path::new(dir).read_dir())
+        let mut grid_entries = cache.library.iter()
+            .map(|dir| dir.read_dir())
             .filter_map(|read_dir| match read_dir {
                 Ok(read_dir) => Some(read_dir),
                 Err(err) => {
@@ -3136,6 +3137,7 @@ impl<'a> MediaBrowser<'a> {
             deferred_metadata_rx,
             cache_path,
             cache,
+            selected_library_entries: default!(),
             missing_base_images,
             frame,
             central_rect: egui::Rect::ZERO,
@@ -4111,10 +4113,10 @@ impl<'a> MediaBrowser<'a> {
         const SCALE_MIN: f32 = 50.;
         const SCALE_MAX: f32 = 300.;
 
-        ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
+        ui.set_min_width(SUBMENU_MIN_WIDTH);
 
         ui.scope(|ui| {
-            ui.spacing_mut().slider_width = MANGA_SUBMENU_MIN_WIDTH - ui.spacing().interact_size.x;
+            ui.spacing_mut().slider_width = SUBMENU_MIN_WIDTH - ui.spacing().interact_size.x;
 
             let scale_slider_resp = ui.add(egui::Slider::new(&mut self.manga.scale_pc, SCALE_MIN..=SCALE_MAX)
                 .clamping(egui::SliderClamping::Always)
@@ -4167,7 +4169,7 @@ impl<'a> MediaBrowser<'a> {
             .num_columns(2)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
+                    ui.set_min_width(SUBMENU_MIN_WIDTH);
 
                     ui.label("CPU");
 
@@ -4200,7 +4202,7 @@ impl<'a> MediaBrowser<'a> {
                 });
 
                 ui.vertical(|ui| {
-                    ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
+                    ui.set_min_width(SUBMENU_MIN_WIDTH);
 
                     ui.label("GPU");
 
@@ -4224,14 +4226,14 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn tint_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
+        ui.set_min_width(SUBMENU_MIN_WIDTH);
 
         ui.vertical(|ui| {
             const SEPIA: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
             const WHITE: egui::Rgba = egui::Rgba::WHITE;
 
             ui.scope(|ui| {
-                ui.spacing_mut().slider_width = MANGA_SUBMENU_MIN_WIDTH - ui.spacing().interact_size.x;
+                ui.spacing_mut().slider_width = SUBMENU_MIN_WIDTH - ui.spacing().interact_size.x;
 
                 ui.label("Sepia:");
 
@@ -4263,7 +4265,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn bookmark_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
+        ui.set_min_width(SUBMENU_MIN_WIDTH);
 
         if ui.button("Set").clicked() {
             let pivot = self.get_pivot();
@@ -4290,12 +4292,12 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn scroll_submenu_common(&mut self, ui: &mut egui::Ui, stage: Stage) {
+        ui.set_min_width(SUBMENU_MIN_WIDTH);
+
         let (scroll_kind, spring_damper) = match stage {
             Stage::Grid | Stage::Details => (&mut self.scroll_kind, &mut self.spring_damper),
             Stage::Manga => (&mut self.manga.scroll_kind, &mut self.manga.spring_damper)
         };
-
-        ui.set_min_width(MANGA_SUBMENU_MIN_WIDTH);
 
         if ui.radio(*scroll_kind == ScrollKind::SpringDamper, "Spring-Damper").clicked() {
             *scroll_kind = ScrollKind::SpringDamper;
@@ -4775,6 +4777,7 @@ impl<'a> MediaBrowser<'a> {
                 self.grid_cell_tag_submenus(ui);
                 ui.separator();
                 self.grid_cell_scroll_submenu(ui);
+                self.grid_cell_library_submenu(ui);
             });
 
         egui::Popup::new(ui.make_persistent_id("multi"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
@@ -4984,6 +4987,53 @@ impl<'a> MediaBrowser<'a> {
 
     fn grid_cell_scroll_submenu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Grid));
+    }
+
+    fn grid_cell_library_submenu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Library", |ui| {
+            ui.set_min_width(SUBMENU_MIN_WIDTH);
+
+            let new_button_resp = ui.button("New");
+            let remove_button_resp = ui.add_enabled(!self.selected_library_entries.is_empty(), egui::Button::new("Remove"));
+
+            ui.separator();
+
+            for (i, dir) in self.cache.library.iter().enumerate() {
+                let mut checked = self.selected_library_entries.contains(&i);
+                let dir_label_resp = ui.checkbox(&mut checked, dir.to_string_lossy());
+
+                if dir_label_resp.clicked() {
+                    match checked {
+                        true => self.selected_library_entries.insert(i),
+                        false => self.selected_library_entries.remove(&i)
+                    };
+                }
+            }
+
+            if new_button_resp.clicked() {
+                let dirs = rfd::FileDialog::new()
+                    .pick_folders();
+
+                if let Some(dirs) = dirs {
+                    for dir in dirs {
+                        self.cache.library.push(dir);
+                    }
+                }
+
+                self.cache.library.sort();
+            }
+
+            if remove_button_resp.clicked() {
+                let mut i = 0;
+                self.cache.library.retain(|_| {
+                    let retain = !self.selected_library_entries.contains(&i);
+                    i +=1 ;
+
+                    retain
+                });
+                self.selected_library_entries.clear();
+            }
+        });
     }
 
     fn grid_cell_single_selection_tags_submenu(&mut self, ui: &mut egui::Ui) {

@@ -448,9 +448,7 @@ const fn proximity() -> usize { 1 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MediaBrowser<'a> {
-    #[serde(borrow)]
-    pub dirs: Vec<&'a str>,
+pub struct MediaBrowser {
     pub window_inner_size: Option<Extent2dU>,
     pub grid_cell_width: u32,
     pub details_cell_width: u32,
@@ -462,7 +460,7 @@ pub struct MediaBrowser<'a> {
     pub proximity: usize,
     pub animation: Option<AnimationInfo>
 }
-impl_name!(MediaBrowser, 'a);
+impl_name!(MediaBrowser);
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -735,7 +733,7 @@ pub struct Config<'a> {
     pub discord: Discord<'a>,
     pub display_modes: Option<DisplayModes>,
     pub games: Option<Games<'a>>,
-    pub media_browser: Option<MediaBrowser<'a>>,
+    pub media_browser: Option<MediaBrowser>,
     pub mpv: Option<Mpv<'a>>,
     pub pixel_cleaning: Option<PixelCleaning>,
     pub taskbar: Option<Taskbar>,
