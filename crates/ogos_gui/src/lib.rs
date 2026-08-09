@@ -72,7 +72,7 @@ const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
-const SUBMENU_MIN_WIDTH: f32 = 200.;
+const SUBMENU_MIN_WIDTH: f32 = 180.;
 
 thread_local! {
     static WORKER_THREAD_STATE: RefCell<WorkerThreadState> = RefCell::new({
@@ -4113,10 +4113,8 @@ impl<'a> MediaBrowser<'a> {
         const SCALE_MIN: f32 = 50.;
         const SCALE_MAX: f32 = 300.;
 
-        ui.set_min_width(SUBMENU_MIN_WIDTH);
-
         ui.scope(|ui| {
-            ui.spacing_mut().slider_width = SUBMENU_MIN_WIDTH - ui.spacing().interact_size.x;
+            ui.spacing_mut().slider_width = 180.;
 
             let scale_slider_resp = ui.add(egui::Slider::new(&mut self.manga.scale_pc, SCALE_MIN..=SCALE_MAX)
                 .clamping(egui::SliderClamping::Always)
@@ -4149,9 +4147,9 @@ impl<'a> MediaBrowser<'a> {
             if ui.button("150").clicked() {
                 self.manga.flag_scale(ui, 150., viewport);
             }
-
-            ui.separator();
-
+            if ui.button("175").clicked() {
+                self.manga.flag_scale(ui, 175., viewport);
+            }
             if ui.button("200").clicked() {
                 self.manga.flag_scale(ui, 200., viewport);
             }
@@ -4171,9 +4169,7 @@ impl<'a> MediaBrowser<'a> {
                 ui.vertical(|ui| {
                     ui.set_min_width(SUBMENU_MIN_WIDTH);
 
-                    ui.label("CPU");
-
-                    ui.separator();
+                    ui.label("CPU:");
 
                     if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Box)), "Box").clicked() {
                         self.manga.filter = FilterAccel::Cpu(fir::FilterType::Box);
@@ -4204,9 +4200,7 @@ impl<'a> MediaBrowser<'a> {
                 ui.vertical(|ui| {
                     ui.set_min_width(SUBMENU_MIN_WIDTH);
 
-                    ui.label("GPU");
-
-                    ui.separator();
+                    ui.label("GPU:");
 
                     if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Nearest)), "Nearest").clicked() {
                         self.manga.filter = FilterAccel::Gpu(FilterKind::Nearest);
@@ -4226,28 +4220,24 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn tint_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(SUBMENU_MIN_WIDTH);
-
         ui.vertical(|ui| {
             const SEPIA: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
             const WHITE: egui::Rgba = egui::Rgba::WHITE;
 
             ui.scope(|ui| {
-                ui.spacing_mut().slider_width = SUBMENU_MIN_WIDTH - ui.spacing().interact_size.x;
+                ui.spacing_mut().slider_width = 200.;
 
                 ui.label("Sepia:");
 
                 let sepia_alpha_slider_resp = ui.add(egui::Slider::new(&mut self.manga.sepia_alpha_pc, 0.0..=100.)
                     .clamping(egui::SliderClamping::Always)
-                    .fixed_decimals(0)
-                );
+                    .fixed_decimals(0));
 
                 ui.label("White:");
 
                 let white_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_level_pc, 0.0..=100.)
                     .clamping(egui::SliderClamping::Always)
-                    .fixed_decimals(0)
-                );
+                    .fixed_decimals(0));
 
                 if sepia_alpha_slider_resp.union(white_level_slider_resp).dragged() {
                     let sepia_alpha = self.manga.sepia_alpha_pc / 100.;
@@ -4275,6 +4265,15 @@ impl<'a> MediaBrowser<'a> {
         }
 
         let bookmark = &mut self.grid_entries[self.details_grid_entry_i].bookmark;
+
+        if bookmark.is_some() {
+            ui.separator();
+
+            if ui.button("Clear").clicked() {
+                *bookmark = None;
+            }
+        }
+
         if let Some(pivot) = bookmark && ui.button("Jump").clicked() {
             let viewport_half_height = self.central_rect.height().div_euclid(2.);
 
@@ -4284,10 +4283,6 @@ impl<'a> MediaBrowser<'a> {
                 viewport_half_height;
 
             self.manga.go_to_scroll_offset_y = Some(scroll_offset_y);
-        }
-
-        if bookmark.is_some() && ui.button("Clear").clicked() {
-            *bookmark = None;
         }
     }
 
@@ -5433,6 +5428,7 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                 style.spacing.icon_spacing = (style.spacing.icon_spacing * factor).round();
                 style.spacing.icon_width = (style.spacing.icon_width * factor).round();
                 style.spacing.icon_width_inner = (style.spacing.icon_width_inner * factor).round();
+                // style.visuals.handle_shape = egui::style::HandleShape::Circle;
 
                 for font_id in style.text_styles.values_mut() {
                     font_id.size = (font_id.size * factor).round();
