@@ -121,7 +121,7 @@ const fn spring_damper_manga() -> SpringDamperCache {
 
 #[derive(Serialize, Deserialize)]
 struct Cache {
-    library: Vec<PathBuf>,
+    library: BTreeSet<PathBuf>,
     grid_cell_size: egui::Vec2,
     details_cell_size: egui::Vec2,
     #[serde(default = "spring_damper")]
@@ -5060,9 +5060,8 @@ impl<'a> MediaBrowser<'a> {
 
                 if let Some(dirs) = dirs {
                     for dir in dirs {
-                        self.cache.library.push(dir);
+                        self.cache.library.insert(dir);
                     }
-                    self.cache.library.sort();
 
                     self. view_kind = ViewKind::Restart;
                 }
