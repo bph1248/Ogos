@@ -1332,7 +1332,8 @@ enum ViewKind {
     Details,
     InitManga { selected_details_dir_entry_i: usize },
     WaitManga,
-    Manga
+    Manga,
+    Restart
 }
 
 #[derive(Default, Deserialize, PartialEq)]
@@ -2636,6 +2637,95 @@ impl ThreadPool {
     }
 }
 
+fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, images: &mut IndexMap<Arc<str>, ImageStates>, missing_base_images: &mut Vec<Rc<str>>, grid_cell_size: egui::Vec2, details_cell_size: egui::Vec2) {
+    let grid_entry_info_iter = cache.library.iter()
+        .map(|dir| dir.read_dir())
+        .filter_map(|read_dir| match read_dir {
+            Ok(read_dir) => Some(read_dir),
+            Err(err) => {
+                error!("{}: failed to read dir: {}", module_path!(), err);
+
+                None
+            }
+        })
+        .flatten()
+        .filter_map(|dir_entry| {
+            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
+                let path = dir_entry.path();
+
+                if let Some(ext) = path.extension() && ext == "ini" {
+                    return Ok(None)
+                }
+
+                let stem = Rc::from(path.get_file_stem()?);
+                let file_kind = path.get_file_kind()?;
+
+                let try_get_image_i = |images: &mut IndexMap<Arc<str>, ImageStates>| {
+                    for ext in IMAGE_EXTS {
+                        let attempt = concat_string!(stem, ".", ext);
+
+                        if let Some((image_i, _, states)) = images.get_full_mut(attempt.as_str()) {
+                            states.ref_count += 1;
+
+                            return Some(image_i)
+                        }
+                    }
+
+                    None
+                };
+
+                let grid_entry_info = match cache.entries.get_mut(&path) {
+                    Some(cache_entry_info) => {
+                        let sort_name = cache_entry_info.sort_name.clone();
+                        let image_i = cache_entry_info.image_i
+                            .and_then(|cache_image_i| cache.images.get_index(cache_image_i))
+                            .and_then(|image_file_name| images.get_full_mut(image_file_name.as_ref())
+                                .tap_none(|| missing_base_images.push(image_file_name.clone()))
+                            )
+                            .map(|(image_i, _, image_states)| {
+                                if cache_entry_info.should_scale.grid || cache.grid_cell_size != grid_cell_size {
+                                    image_states.grid = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
+                                }
+                                if cache_entry_info.should_scale.details || cache.details_cell_size != details_cell_size {
+                                    image_states.details = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
+                                }
+                                image_states.ref_count += 1;
+
+                                image_i
+                            });
+                        let metadata = cache_entry_info.metadata.clone();
+                        let bookmark = cache_entry_info.bookmark;
+
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
+                    },
+                    None => { // This entry is new. If a base image exists, scale and cache it
+                        let sort_name = None;
+                        let image_i = try_get_image_i(images);
+                        let metadata = None;
+                        let bookmark = None;
+
+                        if let Some(image_states) = get_image_states_mut(images, image_i) {
+                            image_states.grid = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
+                            image_states.details = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
+                        }
+
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
+                    }
+                };
+
+                Ok(Some(grid_entry_info))
+            })
+            .unwrap_or_else(|err| {
+                error!("{}: failed to read dir entry: {}", module_path!(), err);
+
+                None
+            })
+        });
+
+    grid_entries.clear();
+    grid_entries.extend(grid_entry_info_iter);
+}
+
 struct MediaBrowser<'a> {
     wgpu: egui_wgpu::RenderState,
     thread_pool: Arc<ThreadPool>,
@@ -2743,7 +2833,32 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                             self.view_kind = ViewKind::Details;
                         },
                     ViewKind::WaitManga => self.wait_manga(),
-                    ViewKind::Manga => self.central_panel_manga(ui)
+                    ViewKind::Manga => self.central_panel_manga(ui),
+                    ViewKind::Restart => {
+                        // Reset tag sets - indices are invalidated
+                        for set in self.tags.values_mut() {
+                            set.clear();
+                        }
+
+                        self.init_grid_entries();
+                        self.reset_grid_view(ui);
+
+                        // Refil tags with new indices
+                        for (grid_entry_i, grid_entry_info) in self.grid_entries.iter().enumerate() {
+                            if let Some(CacheEntryInfo { tags: tag_is, .. }) = self.cache.entries.get_mut(&grid_entry_info.path) {
+                                for tag_i in tag_is {
+                                    let tag = &self.cache.tags[*tag_i];
+                                    let set = self.tags.get_mut(tag);
+
+                                    if let Some(set) = set {
+                                        set.insert(grid_entry_i);
+                                    }
+                                }
+                            }
+                        }
+
+                        self.view_kind = ViewKind::Grid;
+                    }
                 }
             });
 
@@ -2883,6 +2998,23 @@ impl<'a> MediaBrowser<'a> {
             });
         }
 
+        let ctx_ = ctx.clone();
+        let wgpu_ = wgpu.clone();
+        let (to_hephaestus, hephaestus_port) = mpmc::unbounded();
+        thread::spawn(move || hephaestus(ctx_, wgpu_, hephaestus_port));
+
+        let ctx_ = ctx.clone();
+        let wgpu_ = wgpu.clone();
+        let chunk_size = PCIE_TRANSFER_LIMIT_MIBS / refresh_rate as usize * 1024_usize.pow(2);
+        let (charon_ship, from_charon) = mpmc::unbounded();
+        let (to_demeter, demeter_port) = mpmc::unbounded();
+        let (demeter_ship, from_demeter) = mpmc::unbounded();
+        thread::spawn(move || demeter(ctx_, wgpu_, demeter_port, demeter_ship, chunk_size));
+
+        let (to_thanatos, thanatos_port) = mpmc::unbounded();
+        let wgpu_ = wgpu.clone();
+        thread::spawn(move || thanatos(wgpu_, thanatos_port));
+
         let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
         let base_images_dir = current_exe_dir.join("images");
         let grid_images_dir = base_images_dir.join("grid");
@@ -2899,14 +3031,25 @@ impl<'a> MediaBrowser<'a> {
         let mut cache: Cache = serde_json::from_slice(&cache_slc)?;
         let mut missing_base_images = Vec::new();
 
-        if cache.library.is_empty() { Err(ErrVar::MissingDirs)?; }
-
         let spring_damper = cache.spring_damper.into();
         let spring_damper_manga = cache.spring_damper_manga.into();
+
+        let scaler = Arc::new(Scaler::new(&wgpu.device));
+        let (iris_ship, from_iris) = mpmc::unbounded();
 
         let frame = egui::Frame::central_panel(&ctx.global_style()).inner_margin(
             egui::Margin::symmetric(FRAME_INNER_MARGIN as i8, FRAME_INNER_MARGIN as i8)
         );
+        let win_inner_extent = Extent2dF::from(win_inner_extent);
+        let central_size = egui::vec2(
+            win_inner_extent.width.sub(2. * FRAME_INNER_MARGIN).max(0.),
+            win_inner_extent.height.sub(2. * FRAME_INNER_MARGIN).max(0.),
+        );
+
+        let (error_sx, error_rx) = mpmc::unbounded();
+        let error_msg = "".to_string();
+
+        if cache.library.is_empty() { Err(ErrVar::MissingDirs)?; }
 
         let mut tags = cache.tags.iter()
             .map(|tag| (tag.clone(), default!())) // Clone these - cache entries need to reference them later
@@ -2928,126 +3071,14 @@ impl<'a> MediaBrowser<'a> {
             })
             .collect::<Res<IndexMap::<Arc<str>, ImageStates>>>()?;
 
-        let mut grid_entries = cache.library.iter()
-            .map(|dir| dir.read_dir())
-            .filter_map(|read_dir| match read_dir {
-                Ok(read_dir) => Some(read_dir),
-                Err(err) => {
-                    error!("{}: failed to read dir: {}", module_path!(), err);
-
-                    None
-                }
-            })
-            .flatten()
-            .filter_map(|dir_entry| {
-                dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
-                    let path = dir_entry.path();
-
-                    if let Some(ext) = path.extension() && ext == "ini" {
-                        return Ok(None)
-                    }
-
-                    let stem = Rc::from(path.get_file_stem()?);
-                    let file_kind = path.get_file_kind()?;
-
-                    let try_get_image_i = |images: &mut IndexMap<Arc<str>, ImageStates>| {
-                        for ext in IMAGE_EXTS {
-                            let attempt = concat_string!(stem, ".", ext);
-
-                            if let Some((image_i, _, states)) = images.get_full_mut(attempt.as_str()) {
-                                states.ref_count += 1;
-
-                                return Some(image_i)
-                            }
-                        }
-
-                        None
-                    };
-
-                    let cache_entry_info = cache.entries.get_mut(&path);
-                    let grid_entry_info = match cache_entry_info {
-                        Some(cache_entry_info) => {
-                            let sort_name = cache_entry_info.sort_name.clone();
-                            let image_i = cache_entry_info.image_i
-                                .and_then(|cache_image_i| cache.images.get_index(cache_image_i))
-                                .and_then(|image_file_name| images.get_full_mut(image_file_name.as_ref())
-                                    .tap_none(|| missing_base_images.push(image_file_name.clone()))
-                                )
-                                .map(|(image_i, _, image_states)| {
-                                    if cache_entry_info.should_scale.grid || cache.grid_cell_size != grid_cell_size {
-                                        image_states.grid = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
-                                    }
-                                    if cache_entry_info.should_scale.details || cache.details_cell_size != details_cell_size {
-                                        image_states.details = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
-                                    }
-                                    image_states.ref_count += 1;
-
-                                    image_i
-                                });
-                            let metadata = cache_entry_info.metadata.clone();
-                            let bookmark = cache_entry_info.bookmark;
-
-                            GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
-                        },
-                        None => { // This entry is new. If a base image exists, scale and cache it
-                            let sort_name = None;
-                            let image_i = try_get_image_i(&mut images);
-                            let metadata = None;
-                            let bookmark = None;
-
-                            if let Some(image_states) = get_image_states_mut(&mut images, image_i) {
-                                image_states.grid = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
-                                image_states.details = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
-                            }
-
-                            GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
-                        }
-                    };
-
-                    Ok(Some(grid_entry_info))
-                })
-                .unwrap_or_else(|err| {
-                    error!("{}: failed to read dir entry: {}", module_path!(), err);
-
-                    None
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut grid_entries = Vec::new();
+        init_grid_entries(&mut grid_entries, &mut cache, &mut images, &mut missing_base_images, grid_cell_size, details_cell_size);
 
         let mut grid_view = Vec::with_capacity(grid_entries.len());
         grid_view.extend(0..grid_entries.len());
         sort_grid_view(&mut grid_view, &grid_entries);
 
         drop(config);
-
-        let ctx_ = ctx.clone();
-        let wgpu_ = wgpu.clone();
-        let (to_hephaestus, hephaestus_port) = mpmc::unbounded();
-        thread::spawn(move || hephaestus(ctx_, wgpu_, hephaestus_port));
-
-        let ctx_ = ctx.clone();
-        let wgpu_ = wgpu.clone();
-        let chunk_size = PCIE_TRANSFER_LIMIT_MIBS / refresh_rate as usize * 1024_usize.pow(2);
-        let (charon_ship, from_charon) = mpmc::unbounded();
-        let (to_demeter, demeter_port) = mpmc::unbounded();
-        let (demeter_ship, from_demeter) = mpmc::unbounded();
-        thread::spawn(move || demeter(ctx_, wgpu_, demeter_port, demeter_ship, chunk_size));
-
-        let (to_thanatos, thanatos_port) = mpmc::unbounded();
-        let wgpu_ = wgpu.clone();
-        thread::spawn(move || thanatos(wgpu_, thanatos_port));
-
-        let (error_sx, error_rx) = mpmc::unbounded();
-        let error_msg = "".to_string();
-
-        let scaler = Arc::new(Scaler::new(&wgpu.device));
-        let (iris_ship, from_iris) = mpmc::unbounded();
-
-        let win_inner_extent = Extent2dF::from(win_inner_extent);
-        let central_size = egui::vec2(
-            win_inner_extent.width.sub(2. * FRAME_INNER_MARGIN).max(0.),
-            win_inner_extent.height.sub(2. * FRAME_INNER_MARGIN).max(0.),
-        );
         let residence = init_residence(grid_view.len(), central_size, grid_cell_size, grid_cell_space, lookahead);
         let (resident_grid_sx, resident_grid_rx) = mpmc::unbounded();
         let ferry_image_infos = grid_view.iter().enumerate()
@@ -3303,6 +3334,10 @@ impl<'a> MediaBrowser<'a> {
             page_i,
             page_inset_pc
         }
+    }
+
+    fn init_grid_entries(&mut self) {
+        init_grid_entries(&mut self.grid_entries, &mut self.cache, &mut self.images, &mut self.missing_base_images, self.grid_cell_size, self.details_cell_size);
     }
 
     #[hotpath::measure]
@@ -5013,9 +5048,10 @@ impl<'a> MediaBrowser<'a> {
                     for dir in dirs {
                         self.cache.library.push(dir);
                     }
-                }
+                    self.cache.library.sort();
 
-                self.cache.library.sort();
+                    self. view_kind = ViewKind::Restart;
+                }
             }
 
             if remove_button_resp.clicked() {
@@ -5027,6 +5063,8 @@ impl<'a> MediaBrowser<'a> {
                     retain
                 });
                 self.selected_library_entries.clear();
+
+                self. view_kind = ViewKind::Restart;
             }
         });
     }
