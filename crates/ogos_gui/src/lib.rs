@@ -2835,7 +2835,21 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     ViewKind::WaitManga => self.wait_manga(),
                     ViewKind::Manga => self.central_panel_manga(ui),
                     ViewKind::Restart => {
-                        // Reset tag sets - indices are invalidated
+                        // Backup entry tag indices (akin to cache)
+                        let tags = self.tags.keys().cloned().collect::<Vec<_>>();
+                        let mut grid_entry_tag_is = vec![Vec::with_capacity(self.tags.len()); self.grid_entries.len()];
+                        for (tag_i, (_, set)) in self.tags.iter().enumerate() {
+                            for grid_entry_i in set {
+                                grid_entry_tag_is[*grid_entry_i].push(tag_i);
+                            }
+                        }
+                        let mut grid_entry_tag_is = grid_entry_tag_is.into_iter().enumerate()
+                            .map(|(grid_entry_i, tag_is)| {
+                                (mem::take(&mut self.grid_entries[grid_entry_i].path), tag_is)
+                            })
+                            .collect::<HashMap<_, _>>();
+
+                        // Reset tag sets - indices are invalid
                         for set in self.tags.values_mut() {
                             set.clear();
                         }
@@ -2843,11 +2857,11 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                         self.init_grid_entries();
                         self.reset_grid_view(ui);
 
-                        // Refil tags with new indices
+                        // Refill tag sets with new indices
                         for (grid_entry_i, grid_entry_info) in self.grid_entries.iter().enumerate() {
-                            if let Some(CacheEntryInfo { tags: tag_is, .. }) = self.cache.entries.get_mut(&grid_entry_info.path) {
+                            if let Some(tag_is) = grid_entry_tag_is.get_mut(&grid_entry_info.path) {
                                 for tag_i in tag_is {
-                                    let tag = &self.cache.tags[*tag_i];
+                                    let tag = &tags[*tag_i];
                                     let set = self.tags.get_mut(tag);
 
                                     if let Some(set) = set {
@@ -2895,7 +2909,6 @@ impl<'a> eframe::App for MediaBrowser<'a> {
         self.cache.spring_damper_manga = self.manga.spring_damper.as_ref().into();
         self.cache.tags = self.tags.keys().cloned().collect();
         self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
-        self.cache.entries.clear();
 
         let mut grid_entry_tags = vec![Vec::with_capacity(self.tags.len()); self.grid_entries.len()];
         for (tag_i, (_, set)) in self.tags.iter().enumerate() {
@@ -2908,7 +2921,8 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             self.grid_entries[grid_entry_i].metadata = Some(metadata);
         }
 
-        for (i, info) in mem::take(&mut self.grid_entries).into_iter().enumerate() {
+        self.cache.entries.clear();
+        for (grid_entry_i, info) in mem::take(&mut self.grid_entries).into_iter().enumerate() {
             let image_states = self.get_image_states_mut(info.image_i);
             let should_scale = image_states.as_ref()
                 .map(|image_states| image_states.should_scale())
@@ -2921,7 +2935,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     should_scale,
                     sort_name: info.sort_name,
                     metadata: info.image_i.map(|_| info.metadata).unwrap_or_default(),
-                    tags: mem::take(&mut grid_entry_tags[i]),
+                    tags: mem::take(&mut grid_entry_tags[grid_entry_i]),
                     bookmark: info.bookmark
                 }
             );
