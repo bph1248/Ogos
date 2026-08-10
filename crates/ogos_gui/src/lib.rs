@@ -3902,15 +3902,24 @@ impl<'a> MediaBrowser<'a> {
 
         self.tag_win(ui);
 
-        let background_resp = ui.scope_builder(
-            egui::UiBuilder::new().sense(egui::Sense::click()),
-            |ui| self.grid_view(ui)
-        )
-        .response;
+        let background_builder = egui::UiBuilder::new().sense(egui::Sense::click());
+        let background_resp = ui.scope_builder(background_builder, |ui| self.grid_view(ui)).response;
 
-        if background_resp.clicked() {
+        if background_resp.clicked() || background_resp.secondary_clicked() {
             self.reset_grid_entries_selection();
         }
+
+        let close_behaviour = match background_resp.clicked_elsewhere() {
+            true => egui::PopupCloseBehavior::CloseOnClickOutside,
+            false => egui::PopupCloseBehavior::IgnoreClicks
+        };
+
+        egui::Popup::context_menu(&background_resp)
+            .close_behavior(close_behaviour)
+            .show(|ui| {
+                self.grid_cell_scroll_submenu(ui);
+                self.grid_cell_library_submenu(ui);
+            });
     }
 
     fn central_panel_details(&mut self, ui: &mut egui::Ui) {
