@@ -441,6 +441,14 @@ pub struct AnimationInfo {
     pub dur: f32,
     pub kind: AnimationKind
 }
+impl Default for AnimationInfo {
+    fn default() -> Self {
+        Self {
+            dur: 0.37,
+            kind: AnimationKind::Cubic
+        }
+    }
+}
 
 const fn scroll_multiplier() -> f32 { 3.0 }
 const fn lookahead() -> usize { 2 }
@@ -458,7 +466,8 @@ pub struct MediaBrowser {
     pub lookahead: usize,
     #[serde(default = "proximity")]
     pub proximity: usize,
-    pub animation: Option<AnimationInfo>
+    #[serde(default)]
+    pub animation: AnimationInfo
 }
 impl_name!(MediaBrowser);
 

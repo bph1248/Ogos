@@ -119,6 +119,21 @@ const fn spring_damper_manga() -> SpringDamperCache {
     }
 }
 
+struct AnimationInfo {
+    dur: f32,
+    kind: AnimationKind,
+    target: bool
+}
+impl From<config::AnimationInfo> for AnimationInfo {
+    fn from(value: config::AnimationInfo) -> Self {
+        Self {
+            dur: value.dur,
+            kind: value.kind,
+            target: false
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Cache {
     library: BTreeSet<PathBuf>,
@@ -1344,10 +1359,15 @@ enum Watching {
     Words
 }
 
-fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, label: &str, poll_ready: &PollReady) -> egui::Response {
+fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, label: &str, poll_ready: &PollReady, animation: Option<&mut AnimationInfo>) -> egui::Response {
     match image_state {
         ImageState::Ready { tex_id, extent, .. } => {
             if poll_ready.is_ready() {
+                if let Some(animation) = animation {
+                    let opacity = get_animation_opacity(ui, animation);
+                    ui.set_opacity(opacity);
+                }
+
                 let tex = egui::load::SizedTexture::new(*tex_id, *extent);
                 let image = egui::Image::new(tex).sense(egui::Sense::click());
 
@@ -1856,6 +1876,18 @@ fn thanatos(wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<Soul>) {
                 Soul::TexId(tex_id) => renderer.write().free_texture(&tex_id)
             }
         });
+    }
+}
+
+fn get_animation_opacity(ui: &mut egui::Ui, info: &mut AnimationInfo) -> f32 {
+    match info.target {
+        true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, info.dur, info.kind.as_easing()),
+        false => {
+            ui.ctx().clear_animations();
+            info.target = true; // For future calls
+
+            ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, info.dur, info.kind.as_easing())
+        }
     }
 }
 
@@ -2756,10 +2788,9 @@ struct MediaBrowser<'a> {
     grid_view_pending_op: Option<GridViewOp>,
     lookahead: usize,
     proximity: usize,
-    animation: Option<AnimationInfo>,
+    animation: AnimationInfo,
     residence: Range<usize>,
     stream: Stream,
-    animate_bool: bool,
     sort_name_edit: String,
     new_tag_edit: String,
     /// Sets of indices into [`grid_entries`]
@@ -2855,7 +2886,6 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                         }
 
                         self.init_grid_entries();
-                        self.reset_grid_view(ui);
 
                         // Refill tag sets with new indices
                         for (grid_entry_i, grid_entry_info) in self.grid_entries.iter().enumerate() {
@@ -2870,6 +2900,8 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                                 }
                             }
                         }
+
+                        self.reset_grid_view(ui);
 
                         self.view_kind = ViewKind::Grid;
                     }
@@ -2965,7 +2997,7 @@ impl<'a> MediaBrowser<'a> {
                     media_browser_config.scroll_multiplier,
                     media_browser_config.lookahead,
                     media_browser_config.proximity,
-                    media_browser_config.animation
+                    media_browser_config.animation.into()
                 )
             })
             .ok_or(ErrVar::MissingConfigOption { name: config::MediaBrowser::NAME })?;
@@ -3202,7 +3234,6 @@ impl<'a> MediaBrowser<'a> {
             animation,
             residence,
             stream: default!(),
-            animate_bool: true,
             sort_name_edit: default!(),
             new_tag_edit: default!(),
             tags,
@@ -3305,20 +3336,6 @@ impl<'a> MediaBrowser<'a> {
                 }
             }
         }
-    }
-
-    fn get_animation_opacity(&mut self, ui: &mut egui::Ui) -> Option<f32> {
-        self.animation.as_ref().map(|animation| {
-            match self.animate_bool {
-                true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, animation.dur, animation.kind.as_easing()),
-                false => {
-                    ui.ctx().clear_animations();
-                    self.animate_bool = true; // For future calls
-
-                    ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, animation.dur, animation.kind.as_easing())
-                }
-            }
-        })
     }
 
     fn get_image_states_mut(&mut self, image_i: Option<usize>) -> Option<&mut ImageStates> {
@@ -3483,7 +3500,7 @@ impl<'a> MediaBrowser<'a> {
         self.stream_textures_stepped();
 
         if self.poll_ready.is_ready() {
-            self.animate_bool = false;
+            self.animation.target = false;
             self.view_kind = ViewKind::Manga;
         }
     }
@@ -3532,7 +3549,7 @@ impl<'a> MediaBrowser<'a> {
 
         self.reset_grid_entries_selection();
         self.grid_scroll_offset = 0.;
-        self.animate_bool = false;
+        self.animation.target = false;
         self.active_tag = None;
 
         GridViewCellCounts { row: row_cell_count, max: self.grid_view.len() }
@@ -3941,9 +3958,8 @@ impl<'a> MediaBrowser<'a> {
 
         self.stream_textures_stepped();
 
-        if let Some(opacity) = self.get_animation_opacity(ui) {
-            ui.set_opacity(opacity);
-        }
+        let opacity = get_animation_opacity(ui, &mut self.animation);
+        ui.set_opacity(opacity);
 
         if let Some(viewport) = self.manga.flagged_scale.take() {
             let scale = self.manga.scale_pc / 100.;
@@ -4584,7 +4600,7 @@ impl<'a> MediaBrowser<'a> {
                     self.reset_grid_entries_selection();
                     self.grid_scroll_offset = 0.;
                     self.active_tag = Some(tag.clone());
-                    self.animate_bool = false;
+                    self.animation.target = false;
                 }
 
                 if let Some(active_tag) = self.active_tag.as_ref() && active_tag == tag {
@@ -4662,10 +4678,6 @@ impl<'a> MediaBrowser<'a> {
                         self.stream(ui);
                     }
 
-                    if let Some(opacity) = self.get_animation_opacity(ui) {
-                        ui.set_opacity(opacity);
-                    }
-
                     let available_rect = ui.available_rect_before_wrap();
 
                     #[allow(clippy::cast_precision_loss)]
@@ -4729,7 +4741,7 @@ impl<'a> MediaBrowser<'a> {
 
         let cell_resp = match image_states {
             Some(ImageStates { grid: grid_state, .. }) =>
-                try_add_image(ui, grid_state, &grid_entry_info.stem, &self.poll_ready),
+                try_add_image(ui, grid_state, &grid_entry_info.stem, &self.poll_ready, Some(&mut self.animation)),
             None => add_label(ui, &grid_entry_info.stem)
         };
 
@@ -5078,15 +5090,14 @@ impl<'a> MediaBrowser<'a> {
             }
 
             if new_button_resp.clicked() {
-                let dirs = rfd::FileDialog::new()
-                    .pick_folders();
+                let dirs = rfd::FileDialog::new().pick_folders();
 
                 if let Some(dirs) = dirs {
                     for dir in dirs {
                         self.cache.library.insert(dir);
                     }
 
-                    self. view_kind = ViewKind::Restart;
+                    self.view_kind = ViewKind::Restart;
                 }
             }
 
@@ -5100,7 +5111,7 @@ impl<'a> MediaBrowser<'a> {
                 });
                 self.selected_library_entries.clear();
 
-                self. view_kind = ViewKind::Restart;
+                self.view_kind = ViewKind::Restart;
             }
         });
     }
@@ -5219,7 +5230,7 @@ impl<'a> MediaBrowser<'a> {
             let dir_name = self.grid_entries[self.details_grid_entry_i].stem.as_ref();
 
             match details_state {
-                Some(details_state) => try_add_image(ui, details_state, dir_name, &self.poll_ready),
+                Some(details_state) => try_add_image(ui, details_state, dir_name, &self.poll_ready, None),
                 None => add_label(ui, dir_name)
             }
         });
