@@ -2457,7 +2457,7 @@ fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect, clip_rect: Option<egui::Rect
 fn init_residence(max_cell_count: usize, central_size: egui::Vec2, grid_cell_size: egui::Vec2, grid_cell_space: egui::Vec2, lookahead: usize) -> Residence {
     let available_row_cell_count = (central_size.x - grid_cell_size.x).div(grid_cell_space.x).ceil() as usize;
     let available_col_cell_count = central_size.y.div(grid_cell_space.y).ceil() as usize;
-    let visible_cell_count = (available_row_cell_count * available_col_cell_count).clamp(1, max_cell_count);
+    let visible_cell_count = (available_row_cell_count * available_col_cell_count).min(max_cell_count);
 
     let resident_cell_count = (visible_cell_count + lookahead * available_row_cell_count).min(max_cell_count);
     let residence = 0..resident_cell_count;
@@ -3063,8 +3063,6 @@ impl<'a> MediaBrowser<'a> {
         let (error_sx, error_rx) = mpmc::unbounded();
         let error_msg = "".to_string();
 
-        if cache.library.is_empty() { Err(ErrVar::MissingDirs)?; }
-
         let mut tags = cache.tags.iter()
             .map(|tag| (tag.clone(), default!())) // Clone these - cache entries need to reference them later
             .collect::<BTreeMap::<Rc<str>, BTreeSet<_>>>();
@@ -3546,8 +3544,8 @@ impl<'a> MediaBrowser<'a> {
         let available_row_cell_count = (self.central_rect.width() - self.grid_cell_size.x).div(self.grid_cell_space.x).ceil() as usize;
             // ui.available_width() - (self.grid_cell_size.x * avail_row_cell_count - GRID_IMAGE_SPACING.x) <= self.grid_cell_size.x
         let available_col_cell_count = self.central_rect.height().div(self.grid_cell_space.y).ceil() as usize;
-        let visible_cell_count = (available_row_cell_count * available_col_cell_count).clamp(1, max_cell_count);
-        let row_cell_count = available_row_cell_count.clamp(1, max_cell_count);
+        let visible_cell_count = (available_row_cell_count * available_col_cell_count).min(max_cell_count);
+        let row_cell_count = available_row_cell_count.min(max_cell_count);
 
         let resident_cell_count = (visible_cell_count + self.lookahead * available_row_cell_count).min(max_cell_count);
         self.residence = 0..resident_cell_count;
@@ -4604,6 +4602,20 @@ impl<'a> MediaBrowser<'a> {
             self.reset_grid_view(ui);
         }
 
+        if self.grid_view.is_empty() {
+            let (_, background_rect) = ui.allocate_space(ui.available_size());
+
+            let msg = "Library is currently empty - right-click to add directories.";
+            let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap().clone();
+            let text_color = ui.visuals().text_color();
+            let galley = ui.painter().layout_no_wrap(msg.to_string(), font_id, text_color);
+
+            let galley_pos = egui::Align2::CENTER_CENTER.align_size_within_rect(galley.size(), background_rect).min;
+            ui.painter().galley(galley_pos, galley, text_color);
+
+            return
+        }
+
         let GridViewCellCounts { row: row_cell_count, max: max_cell_count } = match self.grid_view_pending_op.take() {
             Some(GridViewOp::Reset) => self.reset_grid_view(ui),
             Some(GridViewOp::Refresh) => self.refresh_grid_view(ui),
@@ -5049,17 +5061,19 @@ impl<'a> MediaBrowser<'a> {
             let new_button_resp = ui.button("New");
             let remove_button_resp = ui.add_enabled(!self.selected_library_entries.is_empty(), egui::Button::new("Remove"));
 
-            ui.separator();
+            if !self.cache.library.is_empty() {
+                ui.separator();
 
-            for (i, dir) in self.cache.library.iter().enumerate() {
-                let mut checked = self.selected_library_entries.contains(&i);
-                let dir_label_resp = ui.checkbox(&mut checked, dir.to_string_lossy());
+                for (i, dir) in self.cache.library.iter().enumerate() {
+                    let mut checked = self.selected_library_entries.contains(&i);
+                    let dir_label_resp = ui.checkbox(&mut checked, dir.to_string_lossy());
 
-                if dir_label_resp.clicked() {
-                    match checked {
-                        true => self.selected_library_entries.insert(i),
-                        false => self.selected_library_entries.remove(&i)
-                    };
+                    if dir_label_resp.clicked() {
+                        match checked {
+                            true => self.selected_library_entries.insert(i),
+                            false => self.selected_library_entries.remove(&i)
+                        };
+                    }
                 }
             }
 
