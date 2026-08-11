@@ -1018,7 +1018,7 @@ impl SpringDamper {
         if self.delta.abs() < EPSILON {
             self.stop();
         } else {
-          ui.request_repaint();
+            ui.request_repaint();
         }
     }
 
@@ -1359,29 +1359,24 @@ enum Watching {
     Words
 }
 
-fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, label: &str, poll_ready: &PollReady, animation: Option<&mut AnimationInfo>) -> egui::Response {
+fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, text: &str, poll_ready: &PollReady, animation: Option<&mut AnimationInfo>) -> egui::Response {
     match image_state {
-        ImageState::Ready { tex_id, extent, .. } => {
-            if poll_ready.is_ready() {
-                if let Some(animation) = animation {
-                    let opacity = get_animation_opacity(ui, animation);
-                    ui.set_opacity(opacity);
-                }
+        ImageState::Ready { tex_id, extent, .. } if poll_ready.is_ready() => {
+            if let Some(animation) = animation {
+                let opacity = get_animation_opacity(ui, animation);
+                ui.set_opacity(opacity);
+            }
 
-                let tex = egui::load::SizedTexture::new(*tex_id, *extent);
-                let image = egui::Image::new(tex).sense(egui::Sense::click());
+            let tex = egui::load::SizedTexture::new(*tex_id, *extent);
+            let image = egui::Image::new(tex).sense(egui::Sense::click());
 
-                match extent.orientation() {
-                    Orientation::Tall => ui.add(image),
-                    Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)).inner
-                }
-            } else {
-                alloc_hover_response(ui)
+            match extent.orientation() {
+                Orientation::Tall => ui.add(image),
+                Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)).inner
             }
         },
-        ImageState::Failed => add_label(ui, label),
-        _ => alloc_hover_response(ui)
-        // _ => add_label(ui, label)
+        ImageState::Failed => alloc_painted_text(ui, text),
+        _ => alloc_painted_text(ui, "...")
     }
 }
 
@@ -1399,18 +1394,27 @@ fn try_add_image_manga(ui: &mut egui::Ui, image_state: &mut ImageStateManga, rec
     None
 }
 
-fn add_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+fn alloc_painted_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let (space_id, space_rect) = ui.allocate_space(ui.available_size());
+    let space_resp = ui.interact(space_rect, space_id, egui::Sense::click());
 
-        let label = egui::Label::new(text);
-        ui.add(label).on_hover_cursor(egui::CursorIcon::Default)
-    })
-    .inner
-}
+    let text_place_rect = space_rect.shrink(15.);
+    let mut layout_job = egui::text::LayoutJob {
+        wrap: egui::text::TextWrapping {
+            max_width: text_place_rect.width(),
+            ..default!()
+        },
+        ..default!()
+    };
+    let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap().clone();
+    let text_color = ui.visuals().text_color();
+    layout_job.append(text, 0.0, egui::TextFormat::simple(font_id, text_color));
 
-fn alloc_hover_response(ui: &mut egui::Ui) -> egui::Response {
-    ui.allocate_response(ui.available_size(), egui::Sense::hover())
+    let galley = ui.painter().layout_job(layout_job);
+    let galley_pos = egui::Align2::CENTER_CENTER.align_size_within_rect(galley.size(), text_place_rect).min;
+    ui.painter().galley(galley_pos, galley, text_color);
+
+    space_resp
 }
 
 #[hotpath::measure]
@@ -4742,7 +4746,7 @@ impl<'a> MediaBrowser<'a> {
         let cell_resp = match image_states {
             Some(ImageStates { grid: grid_state, .. }) =>
                 try_add_image(ui, grid_state, &grid_entry_info.stem, &self.poll_ready, Some(&mut self.animation)),
-            None => add_label(ui, &grid_entry_info.stem)
+            None => alloc_painted_text(ui, &grid_entry_info.stem)
         };
 
         // Select cell or switch view
@@ -5231,7 +5235,7 @@ impl<'a> MediaBrowser<'a> {
 
             match details_state {
                 Some(details_state) => try_add_image(ui, details_state, dir_name, &self.poll_ready, None),
-                None => add_label(ui, dir_name)
+                None => alloc_painted_text(ui, dir_name)
             }
         });
 
