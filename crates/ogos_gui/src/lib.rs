@@ -417,10 +417,10 @@ struct ImageStates {
     gen_id: GenerationId
 }
 impl ImageStates {
-    fn clone_cache_readies_on_scale(&mut self) -> CacheReadies {
+    fn clone_cache_readies_on_should_scale(&mut self) -> CacheReadies {
         CacheReadies {
-            grid: self.grid.clone_cache_ready_on_scale(),
-            details: self.details.clone_cache_ready_on_scale()
+            grid: self.grid.clone_cache_ready_on_should_scale(),
+            details: self.details.clone_cache_ready_on_should_scale()
         }
     }
 
@@ -447,17 +447,17 @@ impl ImageStates {
         }
     }
 
-    fn take_cache_readies_on_not_scale(&mut self) -> CacheReadies {
+    fn take_cache_readies_on_not_should_scale(&mut self) -> CacheReadies {
         CacheReadies {
-            grid: self.grid.take_cache_ready_on_not_scale(),
-            details: self.details.take_cache_ready_on_not_scale()
+            grid: self.grid.take_cache_ready_on_not_should_scale(),
+            details: self.details.take_cache_ready_on_not_should_scale()
         }
     }
 
     fn should_scale(&self) -> ShouldScale {
         ShouldScale {
-            grid: matches!(self.grid, ImageState::Scale { .. }),
-            details: matches!(self.details, ImageState::Scale { .. })
+            grid: matches!(self.grid, ImageState::ShouldScale { .. }),
+            details: matches!(self.details, ImageState::ShouldScale { .. })
         }
     }
 }
@@ -1241,14 +1241,14 @@ enum ImageState {
     #[default]
     None,
     NoneCheckCache { cache_ready: CacheReady },
-    Scale { cache_ready: CacheReady },
+    ShouldScale { cache_ready: CacheReady },
     Ready { tex_id: egui::TextureId, extent: Extent2dF, cache_ready: CacheReady },
     Failed
 }
 impl ImageState {
-    fn clone_cache_ready_on_scale(&self) -> CacheReady {
+    fn clone_cache_ready_on_should_scale(&self) -> CacheReady {
         match self {
-            Self::Scale { cache_ready } => cache_ready.clone(),
+            Self::ShouldScale { cache_ready } => cache_ready.clone(),
             _ => None
         }
     }
@@ -1256,16 +1256,16 @@ impl ImageState {
     fn take_cache_ready(&mut self) -> CacheReady {
         match self {
             Self::NoneCheckCache { cache_ready } |
-            Self::Scale { cache_ready } |
+            Self::ShouldScale { cache_ready } |
             Self::Ready { cache_ready, .. } =>
                 mem::take(cache_ready),
             _ => None
         }
     }
 
-    fn take_cache_ready_on_not_scale(&mut self) -> CacheReady {
+    fn take_cache_ready_on_not_should_scale(&mut self) -> CacheReady {
         match self {
-            Self::Scale { .. } => None,
+            Self::ShouldScale { .. } => None,
             _ => self.take_cache_ready()
         }
     }
@@ -2716,10 +2716,10 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
                             )
                             .map(|(image_i, _, image_states)| {
                                 if cache_entry_info.should_scale.grid || cache.grid_cell_size != grid_cell_size {
-                                    image_states.grid = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
+                                    image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
                                 }
                                 if cache_entry_info.should_scale.details || cache.details_cell_size != details_cell_size {
-                                    image_states.details = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
+                                    image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
                                 }
                                 image_states.ref_count += 1;
 
@@ -2737,8 +2737,8 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
                         let bookmark = None;
 
                         if let Some(image_states) = get_image_states_mut(images, image_i) {
-                            image_states.grid = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
-                            image_states.details = ImageState::Scale { cache_ready: Some(WaitGroup::new()) };
+                            image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
+                            image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
                         }
 
                         GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
@@ -3149,7 +3149,7 @@ impl<'a> MediaBrowser<'a> {
                         expected_metadata: grid_entry_info.metadata.clone(),
                         grid_entry_i,
                         gen_id_check: Some(image_states.gen_id.get_next_check()),
-                        signal_cache_readies: image_states.clone_cache_readies_on_scale(),
+                        signal_cache_readies: image_states.clone_cache_readies_on_should_scale(),
                         wait_cache_readies: CacheReadies::NONE,
                         signal_tex_ready: None
                     })
@@ -3618,8 +3618,8 @@ impl<'a> MediaBrowser<'a> {
                             expected_metadata: grid_entry_info.metadata.clone(),
                             grid_entry_i,
                             gen_id_check: Some(image_states.gen_id.get_next_check()),
-                            signal_cache_readies: image_states.clone_cache_readies_on_scale(),
-                            wait_cache_readies: image_states.take_cache_readies_on_not_scale(),
+                            signal_cache_readies: image_states.clone_cache_readies_on_should_scale(),
+                            wait_cache_readies: image_states.take_cache_readies_on_not_should_scale(),
                             signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
                         })
                     }
