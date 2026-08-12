@@ -515,11 +515,10 @@ struct Manga {
     view: Vec<ViewPageInfo>,
     view_extent: Extent2dF,
     scale_pc: f32,
-    scale_drag_anchor: f32,
     flagged_scale: Option<egui::Rect>,
     filter: FilterAccel,
     tint: egui::Rgba,
-    sepia_alpha_pc: f32,
+    night_light_alpha_pc: f32,
     white_level_pc: f32,
     scroll_kind: ScrollKind,
     scroll_offset: egui::Vec2,
@@ -921,14 +920,14 @@ impl SpringDamper {
     fn step(&mut self, ui: &mut egui::Ui, refresh_rate: u32) {
         const EPSILON: f32 = 0.0001;
 
-        let (dt, delta) = ui.input(|i| {
-            let dt = i.unstable_dt.min(1. / refresh_rate as f32);
+        let (dt, delta) = ui.input(|state| {
+            let dt = state.unstable_dt.min(1. / refresh_rate as f32);
 
             let delta = match self.should_smooth {
-                true => i.smooth_scroll_delta,
+                true => state.smooth_scroll_delta,
                 false => {
                     let mut delta_ = egui::Vec2::default();
-                    for event in i.events.iter() {
+                    for event in state.events.iter() {
                         if let egui::Event::MouseWheel { delta, .. } = event {
                             delta_ += *delta;
                         }
@@ -1885,6 +1884,10 @@ fn thanatos(wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<Soul>) {
     }
 }
 
+fn enter_pressed(ui: &mut egui::Ui) -> bool {
+    ui.input(|state| state.key_pressed(egui::Key::Enter))
+}
+
 fn get_animation_opacity(ui: &mut egui::Ui, info: &mut AnimationInfo) -> f32 {
     match info.target {
         true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, info.dur, info.kind.as_easing()),
@@ -2641,7 +2644,7 @@ struct Info {
 impl eframe::App for Info {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if !self.resized_viewport {
-            let screen_size = ui.input(|i| i.viewport().monitor_size).unwrap();
+            let screen_size = ui.input(|state| state.viewport().monitor_size).unwrap();
             let win_size = screen_size.div(2.0).yx();
 
             let content_size = egui::CentralPanel::default()
@@ -4244,10 +4247,9 @@ impl<'a> MediaBrowser<'a> {
                 .fixed_decimals(0)
                 .step_by(5.));
 
-            if scale_slider_resp.drag_started() {
-                self.manga.scale_drag_anchor = self.manga.scale_pc;
-            }
-            if scale_slider_resp.drag_stopped() && self.manga.scale_drag_anchor != self.manga.scale_pc {
+            if scale_slider_resp.drag_stopped() ||
+                scale_slider_resp.lost_focus() && enter_pressed(ui)
+            {
                 self.manga.flagged_scale = Some(viewport);
             }
         });
@@ -4344,15 +4346,15 @@ impl<'a> MediaBrowser<'a> {
 
     fn tint_submenu_manga(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            const SEPIA: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
+            const NIGHT_LIGHT: egui::Rgba = egui::Rgba::from_rgb(1., 0.3, 0.);
             const WHITE: egui::Rgba = egui::Rgba::WHITE;
 
             ui.scope(|ui| {
                 ui.spacing_mut().slider_width = 200.;
 
-                ui.label("Sepia:");
+                ui.label("Night light:");
 
-                let sepia_alpha_slider_resp = ui.add(egui::Slider::new(&mut self.manga.sepia_alpha_pc, 0.0..=100.)
+                let night_light_alpha_slider_resp = ui.add(egui::Slider::new(&mut self.manga.night_light_alpha_pc, 0.0..=100.)
                     .clamping(egui::SliderClamping::Always)
                     .fixed_decimals(0));
 
@@ -4362,9 +4364,12 @@ impl<'a> MediaBrowser<'a> {
                     .clamping(egui::SliderClamping::Always)
                     .fixed_decimals(0));
 
-                if sepia_alpha_slider_resp.union(white_level_slider_resp).dragged() {
-                    let sepia_alpha = self.manga.sepia_alpha_pc / 100.;
-                    let mut tint = WHITE.blend(SEPIA.multiply(sepia_alpha));
+                let union_resp = night_light_alpha_slider_resp.union(white_level_slider_resp);
+                if union_resp.dragged() ||
+                    union_resp.lost_focus() && enter_pressed(ui)
+                {
+                    let night_light_alpha = self.manga.night_light_alpha_pc / 100.;
+                    let mut tint = WHITE.blend(NIGHT_LIGHT.multiply(night_light_alpha));
 
                     let white_level = (self.manga.white_level_pc / 100.).powf(2.2);
                     tint[0] *= white_level;
@@ -4516,7 +4521,7 @@ impl<'a> MediaBrowser<'a> {
                                 .hint_text(&self.scroll_multiplier_display)
                                 .show(ui)
                                 .response;
-                            if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = self.scroll_multiplier_edit.parse::<f32>() {
+                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(multiplier) = self.scroll_multiplier_edit.parse::<f32>() {
                                 self.scroll_multiplier_edit.clear();
                                 self.scroll_multiplier = multiplier.max(0.1);
                             }
@@ -4533,7 +4538,7 @@ impl<'a> MediaBrowser<'a> {
                                 .hint_text(&spring_damper.multiplier_display)
                                 .show(ui)
                                 .response;
-                            if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = spring_damper.multiplier_edit.parse::<f32>() {
+                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(multiplier) = spring_damper.multiplier_edit.parse::<f32>() {
                                 spring_damper.multiplier_edit.clear();
                                 spring_damper.multiplier = multiplier.max(0.1);
                             }
@@ -4544,7 +4549,7 @@ impl<'a> MediaBrowser<'a> {
                                 .hint_text(&spring_damper.stiffness_display)
                                 .show(ui)
                                 .response;
-                            if stiffness_edit_resp.lost_focus() && let Ok(omega) = spring_damper.stiffness_edit.parse::<f32>() {
+                            if stiffness_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(omega) = spring_damper.stiffness_edit.parse::<f32>() {
                                 spring_damper.stiffness_edit.clear();
                                 spring_damper.update_stiffness(omega.max(0.1));
                             }
@@ -4555,7 +4560,7 @@ impl<'a> MediaBrowser<'a> {
                                 .hint_text(&spring_damper.bounce_display)
                                 .show(ui)
                                 .response;
-                            if bounce_edit_resp.lost_focus() && let Ok(bounce) = spring_damper.bounce_edit.parse::<f32>() {
+                            if bounce_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(bounce) = spring_damper.bounce_edit.parse::<f32>() {
                                 spring_damper.bounce_edit.clear();
                                 spring_damper.update_bounce(bounce.max(0.1));
                             }
