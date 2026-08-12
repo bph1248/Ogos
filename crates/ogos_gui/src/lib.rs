@@ -2603,7 +2603,7 @@ fn requested_clear_selection(ui: &mut egui::Ui) -> bool {
     ui.ctx().input(|state| state.modifiers.ctrl && state.key_released(egui::Key::D))
 }
 
-fn requested_go_back(ui: & mut egui::Ui) -> bool {
+fn requested_go_back(ui: &mut egui::Ui) -> bool {
     ui.ctx().input(|state|
         state.pointer.button_released(egui::PointerButton::Extra1) || state.key_released(egui::Key::Escape))
 }
@@ -4014,6 +4014,7 @@ impl<'a> MediaBrowser<'a> {
         let opacity = get_animation_opacity(ui, &mut self.animation);
         ui.set_opacity(opacity);
 
+        // Scale
         if let Some(viewport) = self.manga.flagged_scale.take() {
             let scale = self.manga.scale_pc / 100.;
             let pivot = self.get_pivot();
@@ -4077,10 +4078,17 @@ impl<'a> MediaBrowser<'a> {
             self.stream_manga(ui, self.manga.scale_pc != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
         }
 
+        // Bookmark
         if let Some(scroll_offset_y) = self.manga.go_to_scroll_offset_y.take() {
             self.manga.scroll_offset.y = scroll_offset_y;
         }
 
+        // Snap to top of first visible page
+        if ui.input(|state| state.pointer.button_released(egui::PointerButton::Extra2)) {
+            self.manga.scroll_offset.y = self.manga.view[self.manga.visible_view.start].offset;
+        }
+
+        // Scroll
         let scroll_offset_x_centered = self.manga.view_extent.width.sub(self.central_rect.width()).div_euclid(2.).max(0.);
         let (secondary_state, dragging) = ui.input(|state|
             (
