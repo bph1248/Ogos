@@ -4244,11 +4244,11 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn scale_submenu_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
-        const SCALE_MIN: f32 = 50.;
+        const SCALE_MIN: f32 = 25.;
         const SCALE_MAX: f32 = 300.;
 
         ui.scope(|ui| {
-            ui.spacing_mut().slider_width = 180.;
+            ui.spacing_mut().slider_width = 165.;
 
             let scale_slider_resp = ui.add(egui::Slider::new(&mut self.manga.scale_pc, SCALE_MIN..=SCALE_MAX)
                 .clamping(egui::SliderClamping::Always)
@@ -4265,8 +4265,11 @@ impl<'a> MediaBrowser<'a> {
         ui.separator();
 
         ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
-            if ui.button("50").clicked() {
+            if ui.button("25").clicked() {
                 self.manga.flag_scale(ui, SCALE_MIN, viewport);
+            }
+            if ui.button("50").clicked() {
+                self.manga.flag_scale(ui, 50., viewport);
             }
             if ui.button("75").clicked() {
                 self.manga.flag_scale(ui, 75., viewport);
@@ -4274,6 +4277,9 @@ impl<'a> MediaBrowser<'a> {
             if ui.button("100").clicked() {
                 self.manga.flag_scale(ui, 100., viewport);
             }
+
+            ui.separator();
+
             if ui.button("125").clicked() {
                 self.manga.flag_scale(ui, 125., viewport);
             }
@@ -4286,8 +4292,17 @@ impl<'a> MediaBrowser<'a> {
             if ui.button("200").clicked() {
                 self.manga.flag_scale(ui, 200., viewport);
             }
+
+            ui.separator();
+
+            if ui.button("225").clicked() {
+                self.manga.flag_scale(ui, 225., viewport);
+            }
             if ui.button("250").clicked() {
                 self.manga.flag_scale(ui, 250., viewport);
+            }
+            if ui.button("275").clicked() {
+                self.manga.flag_scale(ui, 275., viewport);
             }
             if ui.button("300").clicked() {
                 self.manga.flag_scale(ui, SCALE_MAX, viewport);
