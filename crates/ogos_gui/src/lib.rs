@@ -4369,7 +4369,7 @@ impl<'a> MediaBrowser<'a> {
 
     fn tint_submenu_manga(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            const NIGHT_LIGHT: egui::Rgba = egui::Rgba::from_rgb(1., 0.3, 0.);
+            const NIGHT_LIGHT: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
             const WHITE: egui::Rgba = egui::Rgba::WHITE;
 
             ui.scope(|ui| {
