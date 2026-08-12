@@ -2898,7 +2898,9 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     ViewKind::WaitManga => self.wait_manga(),
                     ViewKind::Manga => self.central_panel_manga(ui),
                     ViewKind::Restart => {
-                        // Backup entry tag indices (akin to cache)
+                        self.reset_images();
+
+                        // Backup entry tag indices
                         let tags = self.tags.keys().cloned().collect::<Vec<_>>();
                         let mut grid_entry_tag_is = vec![Vec::with_capacity(self.tags.len()); self.grid_entries.len()];
                         for (tag_i, (_, set)) in self.tags.iter().enumerate() {
@@ -3585,6 +3587,15 @@ impl<'a> MediaBrowser<'a> {
         self.active_tag = None;
 
         GridViewCellCounts { row: row_cell_count, max: self.grid_view.len() }
+    }
+
+    fn reset_images(&mut self) {
+        for image_states in self.images.values_mut() {
+            let image_states = mem::take(image_states);
+
+            image_states.gen_id.fetch_add(1, Ordering::Relaxed); // Cancel jobs in flight
+            self.to_thanatos.send(Soul::ImageStates(image_states)).unwrap(); // Destroy resident textures
+        }
     }
 
     fn reset_residence(&mut self) -> ResetResidence {
