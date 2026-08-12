@@ -306,9 +306,11 @@ struct FerryBaseImageInfo<'a> {
     stage: Stage,
     grid_entry_i: usize,
     ship: mpmc::Sender<ImageResult>,
+    thread_pool: Arc<ThreadPool>,
     signal_cache_ready: CacheReady,
     signal_tex_ready: Option<PollReady>,
-    metadata: Option<Metadata>
+    metadata: Option<Metadata>,
+    error_sx: mpmc::Sender<String>
 }
 
 struct FerryImageMangaInfo {
@@ -2095,7 +2097,7 @@ fn resize_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::
 }
 
 fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
-    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, ship, signal_cache_ready, signal_tex_ready, metadata } = info;
+    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, ship, thread_pool, signal_cache_ready, signal_tex_ready, metadata, error_sx } = info;
 
     let inner = || -> Res1<image::RgbaImage> {
         let src_image = load_rgba_image(src_path)?;
@@ -2118,12 +2120,24 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
                 ctx.request_repaint();
             }
 
-            let image_file = fs::File::create(dst_path)?;
-            let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
-            let (width, height) = image.dimensions();
-            encoder.encode(image.as_raw(), width, height, image::ExtendedColorType::Rgba8)?;
+            let dst_path = dst_path.to_path_buf();
+            let encode = move || {
+                (|| -> Res<()> {
+                    let image_file = fs::File::create(&dst_path)?;
+                    let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
+                    let (width, height) = image.dimensions();
+                    encoder.encode(image.as_raw(), width, height, image::ExtendedColorType::Rgba8)?;
 
-            drop(signal_cache_ready)
+                    drop(signal_cache_ready);
+
+                    Ok(())
+                })()
+                .unwrap_or_else(|err| {
+                    let msg = format!("{}: failed to encode scaled image: {}: {}", module_path!(), dst_path.display(), err);
+                    send_log_err_msg(&error_sx, msg);
+                });
+            };
+            thread_pool.enqueue_low(encode); // Requeue for later
         },
         Err(err) => {
             _ = ship.send(Err((stage, grid_entry_i)));
@@ -2243,12 +2257,11 @@ fn ferry_images(info: FerryImagesInfo) {
         } = info;
 
         let ctx = ctx.clone();
-        let thread_pool_ = thread_pool.clone();
+        let thread_pool_1 = thread_pool.clone();
         let base_image_kind = base_image_kind.clone();
         let grid_ship = grid_ship.clone();
         let details_ship = details_ship.clone();
-        let error_sx_high = error_sx.clone();
-        let error_sx_low = error_sx.clone();
+        let error_sx_1 = error_sx.clone();
 
         thread_pool.enqueue_high(move || {
             (|| -> Res<()> {
@@ -2279,14 +2292,19 @@ fn ferry_images(info: FerryImagesInfo) {
                             stage: Stage::Grid,
                             grid_entry_i,
                             ship: grid_ship,
+                            thread_pool: thread_pool_1.clone(),
                             signal_cache_ready: signal_cache_readies.grid,
                             signal_tex_ready,
-                            metadata: Some(metadata)
+                            metadata: Some(metadata),
+                            error_sx: error_sx_1.clone()
                         };
                         ferry_base_image(ferry_base_image_info)?;
 
-                        thread_pool_.enqueue_low(move || {
-                            let ferry_base_image_info = FerryBaseImageInfo {
+                        let thread_pool_2 = thread_pool_1.clone();
+                        let error_sx_2 = error_sx_1.clone();
+                        let error_sx_3 = error_sx_1.clone();
+                        thread_pool_1.enqueue_low(move || {
+                            let ferry_base_image_info: FerryBaseImageInfo<'_> = FerryBaseImageInfo {
                                 ctx,
                                 src_path: &base_image_path,
                                 dst_path: &details_image_path,
@@ -2294,11 +2312,13 @@ fn ferry_images(info: FerryImagesInfo) {
                                 stage: Stage::Details,
                                 grid_entry_i,
                                 ship: details_ship,
+                                thread_pool: thread_pool_2,
                                 signal_cache_ready: signal_cache_readies.details,
                                 signal_tex_ready: None,
-                                metadata: None
+                                metadata: None,
+                                error_sx: error_sx_2
                             };
-                            ferry_base_image(ferry_base_image_info).unwrap_or_else(|err| handle_err(error_sx_low, err));
+                            ferry_base_image(ferry_base_image_info).unwrap_or_else(|err| handle_err(error_sx_3, err));
                         });
                     },
                     false => {
@@ -2312,9 +2332,11 @@ fn ferry_images(info: FerryImagesInfo) {
                                     stage: Stage::Grid,
                                     grid_entry_i,
                                     ship: grid_ship,
+                                    thread_pool: thread_pool_1.clone(),
                                     signal_cache_ready: signal_cache_readies.grid,
                                     signal_tex_ready,
-                                    metadata: None
+                                    metadata: None,
+                                    error_sx: error_sx_1.clone()
                                 };
                                 ferry_base_image(ferry_base_image_info)?
                             },
@@ -2336,7 +2358,10 @@ fn ferry_images(info: FerryImagesInfo) {
                         }
                         match signal_cache_readies.details.is_some() {
                             true => { // Scale details
-                                thread_pool_.enqueue_low(move || {
+                                let thread_pool_2 = thread_pool_1.clone();
+                                let error_sx_2 = error_sx_1.clone();
+                                let error_sx_3 = error_sx_1.clone();
+                                thread_pool_1.enqueue_low(move || {
                                     let ferry_base_image_info = FerryBaseImageInfo {
                                         ctx,
                                         src_path: &base_image_path,
@@ -2345,17 +2370,20 @@ fn ferry_images(info: FerryImagesInfo) {
                                         stage: Stage::Details,
                                         grid_entry_i,
                                         ship: details_ship,
+                                        thread_pool: thread_pool_2,
                                         signal_cache_ready: signal_cache_readies.details,
                                         signal_tex_ready: None,
-                                        metadata: None
+                                        metadata: None,
+                                        error_sx: error_sx_2
                                     };
-                                    ferry_base_image(ferry_base_image_info).unwrap_or_else(|err| handle_err(error_sx_low, err));
+                                    ferry_base_image(ferry_base_image_info).unwrap_or_else(|err| handle_err(error_sx_3, err));
                                 });
                             },
                             false => {
                                 drop(signal_cache_readies.details);
 
-                                thread_pool_.enqueue_low(move || {
+                                let error_sx = error_sx_1.clone();
+                                thread_pool_1.enqueue_low(move || {
                                     let ferry_cached_image_info = FerryCachedImageInfo {
                                         ctx,
                                         path: &details_image_path,
@@ -2366,7 +2394,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                         wait_cache_ready: wait_cache_readies.details,
                                         signal_tex_ready: None
                                     };
-                                    ferry_cached_image(ferry_cached_image_info).unwrap_or_else(|err| handle_err(error_sx_low, err));
+                                    ferry_cached_image(ferry_cached_image_info).unwrap_or_else(|err| handle_err(error_sx, err));
                                 });
                             }
                         }
@@ -2375,7 +2403,7 @@ fn ferry_images(info: FerryImagesInfo) {
 
                 Ok(())
             })()
-            .unwrap_or_else(|err| handle_err(error_sx_high, err));
+            .unwrap_or_else(|err| handle_err(error_sx_1, err));
         });
     }
 }
