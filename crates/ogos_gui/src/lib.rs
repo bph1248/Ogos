@@ -2794,6 +2794,8 @@ struct MediaBrowser<'a> {
     wgpu: egui_wgpu::RenderState,
     thread_pool: Arc<ThreadPool>,
     refresh_rate: u32,
+    enable_fullscreen: bool,
+    enable_reactive_mode: bool,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
     deferred_metadata_sx: mpmc::Sender<MetadataInfo>,
@@ -2953,6 +2955,10 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             .open(&mut self.open_error_win)
             .auto_sized()
             .show(ui, |ui| ui.label(self.error_msg.as_str()));
+
+        if !self.enable_reactive_mode {
+            ui.request_repaint();
+        }
 
         self.frame_count += 1;
     }
@@ -3239,6 +3245,8 @@ impl<'a> MediaBrowser<'a> {
         Ok(Self {
             wgpu: wgpu.clone(),
             refresh_rate,
+            enable_fullscreen: default!(),
+            enable_reactive_mode: true,
             thread_pool,
             image_dirs,
             images,
@@ -3975,8 +3983,7 @@ impl<'a> MediaBrowser<'a> {
         egui::Popup::context_menu(&background_resp)
             .close_behavior(close_behaviour)
             .show(|ui| {
-                self.grid_cell_scroll_submenu(ui);
-                self.grid_cell_library_submenu(ui);
+                self.common_submenus(ui, Stage::Grid);
             });
     }
 
@@ -4220,7 +4227,8 @@ impl<'a> MediaBrowser<'a> {
                 ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
                 ui.separator();
                 ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
-                ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Manga));
+                self.display_submenu_common(ui);
+                self.scroll_submenu_common(ui, Stage::Manga);
             });
     }
 
@@ -4401,83 +4409,161 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn scroll_submenu_common(&mut self, ui: &mut egui::Ui, stage: Stage) {
-        ui.set_min_width(SUBMENU_MIN_WIDTH);
+    fn common_submenus(&mut self, ui: &mut egui::Ui, stage: Stage) {
+        self.display_submenu_common(ui);
+        self.library_submenu_common(ui);
+        self.scroll_submenu_common(ui, stage);
+    }
 
-        let (scroll_kind, spring_damper) = match stage {
-            Stage::Grid | Stage::Details => (&mut self.scroll_kind, &mut self.spring_damper),
-            Stage::Manga => (&mut self.manga.scroll_kind, &mut self.manga.spring_damper)
-        };
+    fn display_submenu_common(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Display", |ui| {
+            ui.set_min_width(SUBMENU_MIN_WIDTH);
 
-        if ui.radio(*scroll_kind == ScrollKind::SpringDamper, "Spring-Damper").clicked() {
-            *scroll_kind = ScrollKind::SpringDamper;
-        }
-        if ui.radio(*scroll_kind == ScrollKind::EaseInOut, "Ease In-Out").clicked() {
-            *scroll_kind = ScrollKind::EaseInOut;
-        }
+            let mut checked = self.enable_fullscreen;
+            let enable_fullscreen_checkbox_resp = ui.checkbox(&mut checked, "Fullscreen");
+            if enable_fullscreen_checkbox_resp.clicked() {
+                ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(checked));
 
-        ui.separator();
+                self.enable_fullscreen = checked;
+            }
 
-        egui::Grid::new("grid")
-            .num_columns(2)
-            .show(ui, |ui| {
-                match scroll_kind {
-                    ScrollKind::EaseInOut => {
-                        ui.label("Distance:");
+            let mut checked = self.enable_reactive_mode;
+            let enable_reactive_mode_checkbox_resp = ui.checkbox(&mut checked, "Reactive mode");
+            if enable_reactive_mode_checkbox_resp.clicked() {
+                self.enable_reactive_mode = checked;
+            }
+        });
+    }
 
-                        self.scroll_multiplier_display.clear();
-                        write!(self.scroll_multiplier_display, "{}", self.scroll_multiplier).unwrap();
-                        let multiplier_edit_resp = egui::TextEdit::singleline(&mut self.scroll_multiplier_edit)
-                            .hint_text(&self.scroll_multiplier_display)
-                            .show(ui)
-                            .response;
-                        if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = self.scroll_multiplier_edit.parse::<f32>() {
-                            self.scroll_multiplier_edit.clear();
-                            self.scroll_multiplier = multiplier.max(0.1);
-                        }
-                        ui.end_row();
-                    },
-                    ScrollKind::SpringDamper => {
-                        spring_damper.update_display();
+    fn library_submenu_common(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Library", |ui| {
+            ui.set_min_width(SUBMENU_MIN_WIDTH);
 
-                        ui.checkbox(&mut spring_damper.should_smooth, "Smooth");
-                        ui.end_row();
+            let new_button_resp = ui.button("New");
+            let remove_button_resp = ui.add_enabled(!self.selected_library_entries.is_empty(), egui::Button::new("Remove"));
 
-                        ui.label("Distance:");
-                        let multiplier_edit_resp = egui::TextEdit::singleline(&mut spring_damper.multiplier_edit)
-                            .hint_text(&spring_damper.multiplier_display)
-                            .show(ui)
-                            .response;
-                        if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = spring_damper.multiplier_edit.parse::<f32>() {
-                            spring_damper.multiplier_edit.clear();
-                            spring_damper.multiplier = multiplier.max(0.1);
-                        }
-                        ui.end_row();
+            if !self.cache.library.is_empty() {
+                ui.separator();
 
-                        ui.label("Stiffness:");
-                        let stiffness_edit_resp = egui::TextEdit::singleline(&mut spring_damper.stiffness_edit)
-                            .hint_text(&spring_damper.stiffness_display)
-                            .show(ui)
-                            .response;
-                        if stiffness_edit_resp.lost_focus() && let Ok(omega) = spring_damper.stiffness_edit.parse::<f32>() {
-                            spring_damper.stiffness_edit.clear();
-                            spring_damper.update_stiffness(omega.max(0.1));
-                        }
-                        ui.end_row();
+                for (i, dir) in self.cache.library.iter().enumerate() {
+                    let mut checked = self.selected_library_entries.contains(&i);
+                    let dir_checkbox_resp = ui.checkbox(&mut checked, dir.to_string_lossy());
 
-                        ui.label("Bounce:");
-                        let bounce_edit_resp = egui::TextEdit::singleline(&mut spring_damper.bounce_edit)
-                            .hint_text(&spring_damper.bounce_display)
-                            .show(ui)
-                            .response;
-                        if bounce_edit_resp.lost_focus() && let Ok(bounce) = spring_damper.bounce_edit.parse::<f32>() {
-                            spring_damper.bounce_edit.clear();
-                            spring_damper.update_bounce(bounce.max(0.1));
-                        }
-                        ui.end_row();
+                    if dir_checkbox_resp.clicked() {
+                        match checked {
+                            true => self.selected_library_entries.insert(i),
+                            false => self.selected_library_entries.remove(&i)
+                        };
                     }
                 }
-            });
+            }
+
+            if new_button_resp.clicked() {
+                let dirs = rfd::FileDialog::new().pick_folders();
+
+                if let Some(dirs) = dirs {
+                    for dir in dirs {
+                        self.cache.library.insert(dir);
+                    }
+
+                    self.view_kind = ViewKind::Restart;
+                }
+            }
+
+            if remove_button_resp.clicked() {
+                let mut i = 0;
+                self.cache.library.retain(|_| {
+                    let retain = !self.selected_library_entries.contains(&i);
+                    i +=1 ;
+
+                    retain
+                });
+                self.selected_library_entries.clear();
+
+                self.view_kind = ViewKind::Restart;
+            }
+        });
+    }
+
+    fn scroll_submenu_common(&mut self, ui: &mut egui::Ui, stage: Stage) {
+        ui.menu_button("Scroll", |ui| {
+            ui.set_min_width(SUBMENU_MIN_WIDTH);
+
+            let (scroll_kind, spring_damper) = match stage {
+                Stage::Grid | Stage::Details => (&mut self.scroll_kind, &mut self.spring_damper),
+                Stage::Manga => (&mut self.manga.scroll_kind, &mut self.manga.spring_damper)
+            };
+
+            if ui.radio(*scroll_kind == ScrollKind::SpringDamper, "Spring-Damper").clicked() {
+                *scroll_kind = ScrollKind::SpringDamper;
+            }
+            if ui.radio(*scroll_kind == ScrollKind::EaseInOut, "Ease In-Out").clicked() {
+                *scroll_kind = ScrollKind::EaseInOut;
+            }
+
+            ui.separator();
+
+            egui::Grid::new("grid")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    match scroll_kind {
+                        ScrollKind::EaseInOut => {
+                            ui.label("Distance:");
+
+                            self.scroll_multiplier_display.clear();
+                            write!(self.scroll_multiplier_display, "{}", self.scroll_multiplier).unwrap();
+                            let multiplier_edit_resp = egui::TextEdit::singleline(&mut self.scroll_multiplier_edit)
+                                .hint_text(&self.scroll_multiplier_display)
+                                .show(ui)
+                                .response;
+                            if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = self.scroll_multiplier_edit.parse::<f32>() {
+                                self.scroll_multiplier_edit.clear();
+                                self.scroll_multiplier = multiplier.max(0.1);
+                            }
+                            ui.end_row();
+                        },
+                        ScrollKind::SpringDamper => {
+                            spring_damper.update_display();
+
+                            ui.checkbox(&mut spring_damper.should_smooth, "Smooth");
+                            ui.end_row();
+
+                            ui.label("Distance:");
+                            let multiplier_edit_resp = egui::TextEdit::singleline(&mut spring_damper.multiplier_edit)
+                                .hint_text(&spring_damper.multiplier_display)
+                                .show(ui)
+                                .response;
+                            if multiplier_edit_resp.lost_focus() && let Ok(multiplier) = spring_damper.multiplier_edit.parse::<f32>() {
+                                spring_damper.multiplier_edit.clear();
+                                spring_damper.multiplier = multiplier.max(0.1);
+                            }
+                            ui.end_row();
+
+                            ui.label("Stiffness:");
+                            let stiffness_edit_resp = egui::TextEdit::singleline(&mut spring_damper.stiffness_edit)
+                                .hint_text(&spring_damper.stiffness_display)
+                                .show(ui)
+                                .response;
+                            if stiffness_edit_resp.lost_focus() && let Ok(omega) = spring_damper.stiffness_edit.parse::<f32>() {
+                                spring_damper.stiffness_edit.clear();
+                                spring_damper.update_stiffness(omega.max(0.1));
+                            }
+                            ui.end_row();
+
+                            ui.label("Bounce:");
+                            let bounce_edit_resp = egui::TextEdit::singleline(&mut spring_damper.bounce_edit)
+                                .hint_text(&spring_damper.bounce_display)
+                                .show(ui)
+                                .response;
+                            if bounce_edit_resp.lost_focus() && let Ok(bounce) = spring_damper.bounce_edit.parse::<f32>() {
+                                spring_damper.bounce_edit.clear();
+                                spring_damper.update_bounce(bounce.max(0.1));
+                            }
+                            ui.end_row();
+                        }
+                    }
+                });
+        });
     }
 
     fn tag_win(&mut self, ui: &mut egui::Ui) {
@@ -4896,8 +4982,7 @@ impl<'a> MediaBrowser<'a> {
                 self.grid_cell_sort_submenu(ui);
                 self.grid_cell_tag_submenus(ui);
                 ui.separator();
-                self.grid_cell_scroll_submenu(ui);
-                self.grid_cell_library_submenu(ui);
+                self.common_submenus(ui, Stage::Grid);
             });
 
         egui::Popup::new(ui.make_persistent_id("multi"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
@@ -5101,60 +5186,6 @@ impl<'a> MediaBrowser<'a> {
                 Some(SelectionKind::Single) => self.grid_cell_single_selection_tags_submenu(ui),
                 Some(SelectionKind::Multi) => self.grid_cell_multi_selection_tags_submenu(ui),
                 _ => ()
-            }
-        });
-    }
-
-    fn grid_cell_scroll_submenu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Scroll", |ui| self.scroll_submenu_common(ui, Stage::Grid));
-    }
-
-    fn grid_cell_library_submenu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Library", |ui| {
-            ui.set_min_width(SUBMENU_MIN_WIDTH);
-
-            let new_button_resp = ui.button("New");
-            let remove_button_resp = ui.add_enabled(!self.selected_library_entries.is_empty(), egui::Button::new("Remove"));
-
-            if !self.cache.library.is_empty() {
-                ui.separator();
-
-                for (i, dir) in self.cache.library.iter().enumerate() {
-                    let mut checked = self.selected_library_entries.contains(&i);
-                    let dir_label_resp = ui.checkbox(&mut checked, dir.to_string_lossy());
-
-                    if dir_label_resp.clicked() {
-                        match checked {
-                            true => self.selected_library_entries.insert(i),
-                            false => self.selected_library_entries.remove(&i)
-                        };
-                    }
-                }
-            }
-
-            if new_button_resp.clicked() {
-                let dirs = rfd::FileDialog::new().pick_folders();
-
-                if let Some(dirs) = dirs {
-                    for dir in dirs {
-                        self.cache.library.insert(dir);
-                    }
-
-                    self.view_kind = ViewKind::Restart;
-                }
-            }
-
-            if remove_button_resp.clicked() {
-                let mut i = 0;
-                self.cache.library.retain(|_| {
-                    let retain = !self.selected_library_entries.contains(&i);
-                    i +=1 ;
-
-                    retain
-                });
-                self.selected_library_entries.clear();
-
-                self.view_kind = ViewKind::Restart;
             }
         });
     }
