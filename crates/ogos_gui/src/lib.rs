@@ -802,9 +802,13 @@ struct SpringDamper {
 }
 impl SpringDamper {
     fn step(&mut self, ui: &mut egui::Ui, dt: f32, delta: f32) {
+        self.step_mul(ui, dt, delta, self.multiplier);
+    }
+
+    fn step_mul(&mut self, ui: &mut egui::Ui, dt: f32, delta: f32, multiplier: f32) {
         const EPSILON: f32 = 0.0001;
 
-        self.equilibrium_pos -= delta * self.multiplier;
+        self.equilibrium_pos -= delta * multiplier;
 
         // Force values into legal range
         let angular_frequency = self.angular_frequency.max(0.);
@@ -4026,6 +4030,8 @@ impl<'a> MediaBrowser<'a> {
         let opacity = get_animation_opacity(ui, &mut self.animation);
         ui.set_opacity(opacity);
 
+        let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui, self.refresh_rate);
+
         // Scale
         if let Some(viewport) = self.manga.flagged_scale.take() {
             let scale = self.manga.scale_pc / 100.;
@@ -4097,7 +4103,8 @@ impl<'a> MediaBrowser<'a> {
 
         // Snap to top of first visible page
         if ui.input(|state| state.pointer.button_released(egui::PointerButton::Extra2)) {
-            self.manga.scroll_offset.y = self.manga.view[self.manga.visible_view.start].offset;
+            let delta = self.manga.scroll_offset.y - self.manga.view[self.manga.visible_view.start].offset;
+            self.manga.spring_damper.step_mul(ui, dt, delta, 1.);
         }
 
         // Auto scroll
@@ -4117,7 +4124,6 @@ impl<'a> MediaBrowser<'a> {
             )
         );
 
-        let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui, self.refresh_rate);
         let scroll_area_info = if self.manga.enable_auto_scroll {
             self.manga.auto_scroll_vel -= wheel_delta_smoothed; // Wheel down -> content up
             ui.request_repaint();
