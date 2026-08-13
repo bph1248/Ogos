@@ -525,6 +525,8 @@ struct Manga {
     scroll_offset_y_anchor: Option<f32>,
     go_to_scroll_offset_y: Option<f32>,
     spring_damper: SpringDamper,
+    enable_auto_scroll: bool,
+    auto_scroll_vel: f32,
     secondary_was_down: bool,
     residence: Range<usize>,
     visible_view: Range<usize>,
@@ -652,124 +654,6 @@ struct PushConstants {
     render_pass_kind: u32,
     src_tex_extent: [f32; 2],
     dst_tex_extent: [f32; 2]
-}
-
-fn create_sampler_render_pipeline(device: &wgpu::Device, bind_group_layout: &wgpu::BindGroupLayout, shader_module: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
-    use wgpu::*;
-
-    let pipeline_layout_desc = PipelineLayoutDescriptor {
-        bind_group_layouts: &[Some(bind_group_layout)],
-        ..default!()
-    };
-    let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
-
-    let vertex_state = VertexState {
-        module: shader_module,
-        entry_point: Some("vertex_main"),
-        compilation_options: default!(),
-        buffers: default!()
-    };
-    let color_target_state = ColorTargetState {
-        format: TextureFormat::Rgba8UnormSrgb,
-        blend: None,
-        write_mask: ColorWrites::ALL
-    };
-    let fragment_state = FragmentState {
-        module: shader_module,
-        entry_point: Some("fragment_main"),
-        compilation_options: PipelineCompilationOptions {
-            constants: &[("0", FilterKind::Bilinear as u32 as f64)],
-            zero_initialize_workgroup_memory: default!()
-        },
-        targets: &[Some(color_target_state)]
-    };
-
-    let render_pipeline_desc = RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: vertex_state,
-        primitive: default!(), // Right hand coords - WGSL clip space +Y points up
-        depth_stencil: None,
-        multisample: default!(),
-        fragment: Some(fragment_state),
-        multiview_mask: None,
-        cache: None
-    };
-
-    device.create_render_pipeline(&render_pipeline_desc)
-}
-
-fn create_blackman_render_pipelines(device: &wgpu::Device, bind_group_layout: &wgpu::BindGroupLayout, shader_module: &wgpu::ShaderModule) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
-    use wgpu::*;
-
-    let pipeline_layout_desc = PipelineLayoutDescriptor {
-        bind_group_layouts: &[Some(bind_group_layout)],
-        immediate_size: (mem::size_of::<RenderPassKind>() + 2 * mem::size_of::<Extent2dF>()) as u32,
-        ..default!()
-    };
-    let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
-
-    let vertex_state = VertexState {
-        module: shader_module,
-        entry_point: Some("vertex_main"),
-        compilation_options: default!(),
-        buffers: default!()
-    };
-    let color_target_state0 = ColorTargetState {
-        format: TextureFormat::Rgba8Unorm,
-        blend: None,
-        write_mask: ColorWrites::ALL
-    };
-    let color_target_state1 = ColorTargetState {
-        format: TextureFormat::Rgba8UnormSrgb,
-        blend: None,
-        write_mask: ColorWrites::ALL
-    };
-    let fragment_state0 = FragmentState {
-        module: shader_module,
-        entry_point: Some("fragment_main"),
-        compilation_options: PipelineCompilationOptions {
-            constants: &[("0", FilterKind::Blackman as u32 as f64)],
-            zero_initialize_workgroup_memory: default!()
-        },
-        targets: &[Some(color_target_state0)]
-    };
-    let fragment_state1 = FragmentState {
-        module: shader_module,
-        entry_point: Some("fragment_main"),
-        compilation_options: PipelineCompilationOptions {
-            constants: &[("0", FilterKind::Blackman as u32 as f64)],
-            zero_initialize_workgroup_memory: default!()
-        },
-        targets: &[Some(color_target_state1)]
-    };
-
-    let render_pipeline0_desc = RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: vertex_state.clone(),
-        primitive: default!(),
-        depth_stencil: None,
-        multisample: default!(),
-        fragment: Some(fragment_state0),
-        multiview_mask: None,
-        cache: None
-    };
-    let render_pipeline1_desc = RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: vertex_state,
-        primitive: default!(),
-        depth_stencil: None,
-        multisample: default!(),
-        fragment: Some(fragment_state1),
-        multiview_mask: None,
-        cache: None
-    };
-    let render_pipeline0 = device.create_render_pipeline(&render_pipeline0_desc);
-    let render_pipeline1 = device.create_render_pipeline(&render_pipeline1_desc);
-
-    (render_pipeline0, render_pipeline1)
 }
 
 struct ResetResidence {
@@ -917,29 +801,10 @@ struct SpringDamper {
     bounce_display: String
 }
 impl SpringDamper {
-    fn step(&mut self, ui: &mut egui::Ui, refresh_rate: u32) {
+    fn step(&mut self, ui: &mut egui::Ui, dt: f32, delta: f32) {
         const EPSILON: f32 = 0.0001;
 
-        let (dt, delta) = ui.input(|state| {
-            let dt = state.unstable_dt.min(1. / refresh_rate as f32);
-
-            let delta = match self.should_smooth {
-                true => state.smooth_scroll_delta,
-                false => {
-                    let mut delta_ = egui::Vec2::default();
-                    for event in state.events.iter() {
-                        if let egui::Event::MouseWheel { delta, .. } = event {
-                            delta_ += *delta;
-                        }
-                    }
-
-                    delta_ * 40.
-                }
-            };
-
-            (dt, delta)
-        });
-        self.equilibrium_pos -= delta.y * self.multiplier;
+        self.equilibrium_pos -= delta * self.multiplier;
 
         // Force values into legal range
         let angular_frequency = self.angular_frequency.max(0.);
@@ -1171,6 +1036,12 @@ impl StreamBuilder {
 
         self
     }
+}
+
+struct WheelState {
+    dt: f32,
+    wheel_delta_raw: f32,
+    wheel_delta_smoothed: f32
 }
 
 struct WorkerThreadState {
@@ -1559,6 +1430,124 @@ fn blackman_filter_fir() -> fir::Filter {
     fir::Filter::new("Blackman", blackman, BLACKMAN_SUPPORT).unwrap()
 }
 
+fn create_sampler_render_pipeline(device: &wgpu::Device, bind_group_layout: &wgpu::BindGroupLayout, shader_module: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
+    use wgpu::*;
+
+    let pipeline_layout_desc = PipelineLayoutDescriptor {
+        bind_group_layouts: &[Some(bind_group_layout)],
+        ..default!()
+    };
+    let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
+
+    let vertex_state = VertexState {
+        module: shader_module,
+        entry_point: Some("vertex_main"),
+        compilation_options: default!(),
+        buffers: default!()
+    };
+    let color_target_state = ColorTargetState {
+        format: TextureFormat::Rgba8UnormSrgb,
+        blend: None,
+        write_mask: ColorWrites::ALL
+    };
+    let fragment_state = FragmentState {
+        module: shader_module,
+        entry_point: Some("fragment_main"),
+        compilation_options: PipelineCompilationOptions {
+            constants: &[("0", FilterKind::Bilinear as u32 as f64)],
+            zero_initialize_workgroup_memory: default!()
+        },
+        targets: &[Some(color_target_state)]
+    };
+
+    let render_pipeline_desc = RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        vertex: vertex_state,
+        primitive: default!(), // Right hand coords - WGSL clip space +Y points up
+        depth_stencil: None,
+        multisample: default!(),
+        fragment: Some(fragment_state),
+        multiview_mask: None,
+        cache: None
+    };
+
+    device.create_render_pipeline(&render_pipeline_desc)
+}
+
+fn create_blackman_render_pipelines(device: &wgpu::Device, bind_group_layout: &wgpu::BindGroupLayout, shader_module: &wgpu::ShaderModule) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    use wgpu::*;
+
+    let pipeline_layout_desc = PipelineLayoutDescriptor {
+        bind_group_layouts: &[Some(bind_group_layout)],
+        immediate_size: (mem::size_of::<RenderPassKind>() + 2 * mem::size_of::<Extent2dF>()) as u32,
+        ..default!()
+    };
+    let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
+
+    let vertex_state = VertexState {
+        module: shader_module,
+        entry_point: Some("vertex_main"),
+        compilation_options: default!(),
+        buffers: default!()
+    };
+    let color_target_state0 = ColorTargetState {
+        format: TextureFormat::Rgba8Unorm,
+        blend: None,
+        write_mask: ColorWrites::ALL
+    };
+    let color_target_state1 = ColorTargetState {
+        format: TextureFormat::Rgba8UnormSrgb,
+        blend: None,
+        write_mask: ColorWrites::ALL
+    };
+    let fragment_state0 = FragmentState {
+        module: shader_module,
+        entry_point: Some("fragment_main"),
+        compilation_options: PipelineCompilationOptions {
+            constants: &[("0", FilterKind::Blackman as u32 as f64)],
+            zero_initialize_workgroup_memory: default!()
+        },
+        targets: &[Some(color_target_state0)]
+    };
+    let fragment_state1 = FragmentState {
+        module: shader_module,
+        entry_point: Some("fragment_main"),
+        compilation_options: PipelineCompilationOptions {
+            constants: &[("0", FilterKind::Blackman as u32 as f64)],
+            zero_initialize_workgroup_memory: default!()
+        },
+        targets: &[Some(color_target_state1)]
+    };
+
+    let render_pipeline0_desc = RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        vertex: vertex_state.clone(),
+        primitive: default!(),
+        depth_stencil: None,
+        multisample: default!(),
+        fragment: Some(fragment_state0),
+        multiview_mask: None,
+        cache: None
+    };
+    let render_pipeline1_desc = RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        vertex: vertex_state,
+        primitive: default!(),
+        depth_stencil: None,
+        multisample: default!(),
+        fragment: Some(fragment_state1),
+        multiview_mask: None,
+        cache: None
+    };
+    let render_pipeline0 = device.create_render_pipeline(&render_pipeline0_desc);
+    let render_pipeline1 = device.create_render_pipeline(&render_pipeline1_desc);
+
+    (render_pipeline0, render_pipeline1)
+}
+
 fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<ImageInfo>, ship: mpmc::Sender<PartialTex>, chunk_size: usize) {
     for ImageInfo { image, stage, index: view_i, gen_id_check, signal_tex_ready, .. } in port.iter() {
         hotpath::measure_block!(formatcp!("{}::demeter", module_path!()), {
@@ -1898,6 +1887,29 @@ fn get_animation_opacity(ui: &mut egui::Ui, info: &mut AnimationInfo) -> f32 {
             ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, info.dur, info.kind.as_easing())
         }
     }
+}
+
+fn get_wheel_state(ui: &mut egui::Ui, refresh_rate: u32) -> WheelState {
+    ui.input(|state| {
+        let dt = state.unstable_dt.min(1. / refresh_rate as f32);
+
+        let wheel_delta_raw = {
+            let mut acc = 0.;
+            for event in state.events.iter() {
+                if let egui::Event::MouseWheel { delta, .. } = event {
+                    acc += delta.y;
+                }
+            }
+
+            acc * 40.
+        };
+
+        WheelState {
+            dt,
+            wheel_delta_raw,
+            wheel_delta_smoothed: state.smooth_scroll_delta.y
+        }
+    })
 }
 
 #[hotpath::measure]
@@ -4088,7 +4100,15 @@ impl<'a> MediaBrowser<'a> {
             self.manga.scroll_offset.y = self.manga.view[self.manga.visible_view.start].offset;
         }
 
-        // Scroll
+        // Auto scroll
+        if ui.input(|state| state.pointer.button_released(egui::PointerButton::Middle)) {
+            self.manga.enable_auto_scroll = !self.manga.enable_auto_scroll;
+
+            if self.manga.enable_auto_scroll {
+                self.manga.auto_scroll_vel = default!();
+            }
+        }
+
         let scroll_offset_x_centered = self.manga.view_extent.width.sub(self.central_rect.width()).div_euclid(2.).max(0.);
         let (secondary_state, dragging) = ui.input(|state|
             (
@@ -4096,59 +4116,86 @@ impl<'a> MediaBrowser<'a> {
                 state.pointer.is_decidedly_dragging()
             )
         );
-        let scroll_area_info = match secondary_state {
-            ButtonState::Up => {
-                if self.manga.secondary_was_down.take() {
-                    ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
-                }
-                let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
-                    ScrollKind::EaseInOut =>
-                        (ScrollSource::ALL, self.scroll_multiplier),
-                    ScrollKind::SpringDamper => {
-                        self.manga.spring_damper.step(ui, self.refresh_rate);
 
-                        (ScrollSource::DRAG | ScrollSource::SCROLL_BAR, self.manga.spring_damper.multiplier)
+        let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui, self.refresh_rate);
+        let scroll_area_info = if self.manga.enable_auto_scroll {
+            self.manga.auto_scroll_vel -= wheel_delta_smoothed; // Wheel down -> content up
+            ui.request_repaint();
+
+            let max_scroll_offset = self.manga.view_extent.height - self.central_rect.height();
+            let scroll_offset_y = (self.manga.scroll_offset.y + dt * self.manga.auto_scroll_vel).clamp(0., max_scroll_offset);
+
+            if [0., max_scroll_offset].contains(&self.manga.scroll_offset.y) {
+                self.manga.auto_scroll_vel = default!();
+            }
+
+            ScrollAreaInfo {
+                scroll_source: ScrollSource::NONE,
+                drag_by: egui::PointerButton::Primary,
+                stop_kinesis: false,
+                scroll_offset: [scroll_offset_x_centered, scroll_offset_y].into(),
+                scroll_multiplier: default!()
+            }
+        } else {
+            match secondary_state {
+                ButtonState::Up => {
+                    if self.manga.secondary_was_down.take() {
+                        ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
                     }
-                };
-                let scroll_offset_y = self.manga.scroll_offset_y_anchor.take().unwrap_or(self.manga.scroll_offset.y);
+                    let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
+                        ScrollKind::EaseInOut =>
+                            (ScrollSource::ALL, self.scroll_multiplier),
+                        ScrollKind::SpringDamper => {
+                            let delta = if self.manga.spring_damper.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
+                            self.manga.spring_damper.step(ui, dt, delta);
 
-                ScrollAreaInfo {
-                    scroll_source,
-                    drag_by: egui::PointerButton::Primary,
-                    stop_kinesis: false,
-                    scroll_offset: [scroll_offset_x_centered, scroll_offset_y + self.manga.spring_damper.delta].into(),
-                    scroll_multiplier: [1.0, scroll_multiplier].into()
-                }
-            },
-            ButtonState::Down => {
-                if dragging {
-                    ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
-                }
-                let stop_kinesis = !self.manga.secondary_was_down;
-                let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
-                    ScrollKind::EaseInOut =>
-                        (ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL, self.scroll_multiplier),
-                    ScrollKind::SpringDamper => {
-                        match stop_kinesis {
-                            true => self.manga.spring_damper.stop(),
-                            false => self.manga.spring_damper.step(ui, self.refresh_rate)
+                            (ScrollSource::DRAG | ScrollSource::SCROLL_BAR, self.manga.spring_damper.multiplier)
                         }
+                    };
+                    let scroll_offset_y = self.manga.scroll_offset_y_anchor.take().unwrap_or(self.manga.scroll_offset.y);
 
-                        (ScrollSource::DRAG, self.manga.spring_damper.multiplier)
+                    ScrollAreaInfo {
+                        scroll_source,
+                        drag_by: egui::PointerButton::Primary,
+                        stop_kinesis: false,
+                        scroll_offset: [scroll_offset_x_centered, scroll_offset_y + self.manga.spring_damper.delta].into(),
+                        scroll_multiplier: [1.0, scroll_multiplier].into()
                     }
-                };
-                self.manga.scroll_offset_y_anchor.get_or_insert(self.manga.scroll_offset.y.round());
-                self.manga.secondary_was_down = true;
+                },
+                ButtonState::Down => {
+                    if dragging {
+                        ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
+                    }
+                    let stop_kinesis = !self.manga.secondary_was_down;
+                    let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
+                        ScrollKind::EaseInOut =>
+                            (ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL, self.scroll_multiplier),
+                        ScrollKind::SpringDamper => {
+                            match stop_kinesis {
+                                true => self.manga.spring_damper.stop(),
+                                false => {
+                                    let delta = if self.manga.spring_damper.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
+                                    self.manga.spring_damper.step(ui, dt, delta);
+                                }
+                            }
 
-                ScrollAreaInfo {
-                    scroll_source,
-                    drag_by: egui::PointerButton::Secondary,
-                    stop_kinesis,
-                    scroll_offset: self.manga.scroll_offset + [0., self.manga.spring_damper.delta].into(),
-                    scroll_multiplier: [1.0, scroll_multiplier].into()
+                            (ScrollSource::DRAG, self.manga.spring_damper.multiplier)
+                        }
+                    };
+                    self.manga.scroll_offset_y_anchor.get_or_insert(self.manga.scroll_offset.y.round());
+                    self.manga.secondary_was_down = true;
+
+                    ScrollAreaInfo {
+                        scroll_source,
+                        drag_by: egui::PointerButton::Secondary,
+                        stop_kinesis,
+                        scroll_offset: self.manga.scroll_offset + [0., self.manga.spring_damper.delta].into(),
+                        scroll_multiplier: [1.0, scroll_multiplier].into()
+                    }
                 }
             }
         };
+
         let ScrollAreaInfo { scroll_source, drag_by, stop_kinesis, scroll_offset, scroll_multiplier } = scroll_area_info;
         let new_scroll_offset = egui::ScrollArea::both()
             .auto_shrink(false)
@@ -4814,7 +4861,10 @@ impl<'a> MediaBrowser<'a> {
                     )
                 },
                 ScrollKind::SpringDamper => {
-                    self.spring_damper.step(ui, self.refresh_rate);
+                    let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui, self.refresh_rate);
+                    let delta = if self.manga.spring_damper.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
+                    self.spring_damper.step(ui, dt, delta);
+
                     let scroll_offset = self.grid_scroll_offset + self.spring_damper.delta;
                     let scroll_offset = scroll_offset.clamp(0., max_scroll_offset);
 

@@ -15,10 +15,8 @@ const_format = { workspace = true }
 crossbeam = { workspace = true }
 discord-rich-presence = { workspace = true }
 eframe = { workspace = true }
-egui = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false, features = ["serde"] }
-egui_extras = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false }
-# egui = { path = "B:/dev/egui/crates/egui", default-features = false, features = ["serde"] }
-# egui_extras = { path = "B:/dev/egui/crates/egui_extras", default-features = false }
+egui = { workspace = true }
+egui_extras = { workspace = true }
 fast_image_resize = { workspace = true }
 hotpath = { workspace = true }
 image = { workspace = true }
