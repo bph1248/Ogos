@@ -67,7 +67,6 @@ Settings used in conjunction with `ogos --game <name>`, where `<name>` is an arb
 
 A GUI to collate files and folders into a unified view. Launch videos with `mpv` or invoke a file's default handler.
 
-- `dirs`: A list of directories to collate.
 - `window_inner_size`: The size of the window, excluding any border or decorations.
 - `grid_cell_width`: The width to which images in 'grid view' are scaled and displayed, rounded to the next multiple of 2. Images are placed in a 2:3 cell and are resized to fit while maintaining their aspect ratio. Scaling is performed using Blackman filtering.
 - `details_cell_width`: Same as above but for 'details view'.
@@ -255,7 +254,6 @@ Window shift is disabled if the foreground window is full screen or `left_button
     },
     // Optional
     media_browser: (
-        dirs: ["<path>", ..],
         // Optional
         window_inner_size: (<uint>, <uint>),
         grid_cell_width: <uint>,
