@@ -450,7 +450,6 @@ impl Default for AnimationInfo {
     }
 }
 
-const fn scroll_multiplier() -> f32 { 3.0 }
 const fn lookahead() -> usize { 2 }
 const fn proximity() -> usize { 1 }
 
@@ -460,8 +459,6 @@ pub struct MediaBrowser {
     pub window_inner_size: Option<Extent2dU>,
     pub grid_cell_width: u32,
     pub details_cell_width: u32,
-    #[serde(default = "scroll_multiplier", deserialize_with = "deserialize_positive_f32")]
-    pub scroll_multiplier: f32,
     #[serde(default = "lookahead")]
     pub lookahead: usize,
     #[serde(default = "proximity")]

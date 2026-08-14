@@ -102,23 +102,6 @@ type ShouldStream = bool;
 type VisiblePageCount = usize;
 type WrittenSize = usize;
 
-const fn spring_damper() -> SpringDamperCache {
-    SpringDamperCache {
-        multiplier: 5.,
-        angular_frequency: 50.,
-        damping_ratio: 1. / 0.6,
-        should_smooth: false
-    }
-}
-const fn spring_damper_manga() -> SpringDamperCache {
-     SpringDamperCache {
-        multiplier: 9.,
-        angular_frequency: 40.,
-        damping_ratio: 1. / 0.4,
-        should_smooth: true
-    }
-}
-
 struct AnimationInfo {
     dur: f32,
     kind: AnimationKind,
@@ -139,10 +122,14 @@ struct Cache {
     library: BTreeSet<PathBuf>,
     grid_cell_size: egui::Vec2,
     details_cell_size: egui::Vec2,
-    #[serde(default = "spring_damper")]
-    spring_damper: SpringDamperCache,
-    #[serde(default = "spring_damper_manga")]
-    spring_damper_manga: SpringDamperCache,
+    #[serde(default)]
+    scroll_kind: ScrollKind,
+    #[serde(default)]
+    ease_in_out_scroller: EaseInOutScrollerCache,
+    #[serde(alias = "spring_damper", default)]
+    spring_damper_scroller: SpringDamperScrollerCache,
+    #[serde(default)]
+    manga: MangaCache,
     images: IndexSet<Rc<str>>,
     tags: Vec<Rc<str>>,
     entries: HashMap<PathBuf, CacheEntryInfo>
@@ -524,7 +511,8 @@ struct Manga {
     scroll_offset: egui::Vec2,
     scroll_offset_y_anchor: Option<f32>,
     go_to_scroll_offset_y: Option<f32>,
-    spring_damper: SpringDamper,
+    ease_in_out_scroller: EaseInOutScroller,
+    spring_damper_scroller: SpringDamperScroller,
     enable_auto_scroll: bool,
     auto_scroll_vel: f32,
     secondary_was_down: bool,
@@ -534,26 +522,31 @@ struct Manga {
     to_thanatos: LateInit<mpmc::Sender<Soul>>
 }
 impl Manga {
-    fn new(spring_damper: SpringDamper) -> Self {
+    fn new(scroll_kind: ScrollKind, ease_in_out_scroller: EaseInOutScroller, spring_damper_scroller: SpringDamperScroller) -> Self {
         Self {
             scale_pc: 100.,
             filter: FilterAccel::Gpu(FilterKind::Blackman),
             tint: egui::Rgba::WHITE,
             white_level_pc: 100.,
-            spring_damper,
+            scroll_kind,
+            ease_in_out_scroller,
+            spring_damper_scroller,
             ..default!()
         }
     }
 
-    fn reset(&mut self) {
-        let view = mem::take(&mut self.view);
-        for page_info in view {
+    fn reset(self) -> Self {
+        for page_info in self.view {
             if let ImageStateManga::Ready { .. } = page_info.image_state {
                 self.to_thanatos.send(Soul::ImageState(page_info.image_state.into())).unwrap();
             }
         }
 
-        *self = Manga::new(mem::take(&mut self.spring_damper))
+        Manga::new(
+            self.scroll_kind,
+            self.ease_in_out_scroller,
+            self.spring_damper_scroller
+        )
     }
 
     fn flag_scale(&mut self, ui: &mut egui::Ui, scale_pc: f32, viewport: egui::Rect) {
@@ -565,6 +558,22 @@ impl Manga {
         self.flagged_scale = Some(viewport);
 
         ui.close();
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct MangaCache {
+    scroll_kind: ScrollKind,
+    ease_in_out_scroller: EaseInOutScrollerCache,
+    spring_damper_scroller: SpringDamperScrollerCache
+}
+impl Default for MangaCache {
+    fn default() -> Self {
+        Self {
+            scroll_kind: ScrollKind::SpringDamper,
+            ease_in_out_scroller: EaseInOutScrollerCache::default_manga(),
+            spring_damper_scroller: SpringDamperScrollerCache::default_manga()
+        }
     }
 }
 
@@ -776,7 +785,49 @@ impl ShouldScale {
 }
 
 #[derive(Default)]
-struct SpringDamper {
+struct EaseInOutScroller {
+    multiplier: f32,
+    multiplier_edit: String,
+    multiplier_display: String
+}
+impl From<EaseInOutScrollerCache> for EaseInOutScroller {
+    fn from(value: EaseInOutScrollerCache) -> Self {
+        Self {
+            multiplier: value.multiplier,
+            multiplier_display: format!("{}", value.multiplier),
+            ..default!()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+struct EaseInOutScrollerCache {
+    multiplier: f32
+}
+impl EaseInOutScrollerCache {
+    const fn default_manga() -> Self {
+        Self {
+            multiplier: 5.
+        }
+    }
+}
+impl Default for EaseInOutScrollerCache {
+    fn default() -> Self {
+        Self {
+            multiplier: 3.0
+        }
+    }
+}
+impl From<&EaseInOutScroller> for EaseInOutScrollerCache {
+    fn from(value: &EaseInOutScroller) -> Self {
+        Self {
+            multiplier: value.multiplier
+        }
+    }
+}
+
+#[derive(Default)]
+struct SpringDamperScroller {
     multiplier: f32,
     pos: f32,
     vel: f32,
@@ -800,7 +851,7 @@ struct SpringDamper {
     stiffness_display: String,
     bounce_display: String
 }
-impl SpringDamper {
+impl SpringDamperScroller {
     fn step(&mut self, ui: &mut egui::Ui, dt: f32, delta: f32) {
         self.step_mul(ui, dt, delta, self.multiplier);
     }
@@ -918,13 +969,8 @@ impl SpringDamper {
         write!(self.bounce_display, "{}", self.damping_ratio.recip()).unwrap();
     }
 }
-impl AsRef<Self> for SpringDamper {
-    fn as_ref(&self) -> &Self {
-        self
-    }
-}
-impl From<SpringDamperCache> for SpringDamper {
-    fn from(value: SpringDamperCache) -> Self {
+impl From<SpringDamperScrollerCache> for SpringDamperScroller {
+    fn from(value: SpringDamperScrollerCache) -> Self {
         Self {
             multiplier: value.multiplier,
             angular_frequency: value.angular_frequency,
@@ -939,14 +985,34 @@ impl From<SpringDamperCache> for SpringDamper {
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
-struct SpringDamperCache {
+struct SpringDamperScrollerCache {
     multiplier: f32,
     angular_frequency: f32,
     damping_ratio: f32,
     should_smooth: bool
 }
-impl From<&SpringDamper> for SpringDamperCache {
-    fn from(value: &SpringDamper) -> Self {
+impl SpringDamperScrollerCache {
+    const fn default_manga() -> Self {
+        Self {
+            multiplier: 9.,
+            angular_frequency: 40.,
+            damping_ratio: 1. / 0.4,
+            should_smooth: true
+        }
+    }
+}
+impl Default for SpringDamperScrollerCache {
+    fn default() -> Self {
+        Self {
+            multiplier: 5.,
+            angular_frequency: 60.,
+            damping_ratio: 1. / 0.6,
+            should_smooth: false
+        }
+    }
+}
+impl From<&SpringDamperScroller> for SpringDamperScrollerCache {
+    fn from(value: &SpringDamperScroller) -> Self {
         Self {
             multiplier: value.multiplier,
             angular_frequency: value.angular_frequency,
@@ -1190,7 +1256,7 @@ enum SelectionKind {
     Multi
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Clone, Copy, Default, PartialEq, Deserialize, Serialize)]
 enum ScrollKind {
     EaseInOut,
     #[default]
@@ -2861,10 +2927,8 @@ struct MediaBrowser<'a> {
     details_hovered_dir_entry_i: usize,
     details_levels: Vec<PathBuf>,
     scroll_kind: ScrollKind,
-    scroll_multiplier: f32,
-    scroll_multiplier_display: String,
-    scroll_multiplier_edit: String,
-    spring_damper: SpringDamper,
+    ease_in_out_scroller: EaseInOutScroller,
+    spring_damper_scroller: SpringDamperScroller,
     maintain_sample_rate: bool,
     override_glsl_shaders: bool,
     enable_override_glsl_shaders_checkbox: bool,
@@ -2996,8 +3060,15 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 
         self.cache.grid_cell_size = self.grid_cell_size;
         self.cache.details_cell_size = self.details_cell_size;
-        self.cache.spring_damper = self.spring_damper.as_ref().into();
-        self.cache.spring_damper_manga = self.manga.spring_damper.as_ref().into();
+
+        self.cache.scroll_kind = self.scroll_kind;
+        self.cache.ease_in_out_scroller = self.ease_in_out_scroller.as_();
+        self.cache.spring_damper_scroller = self.spring_damper_scroller.as_();
+        self.cache.manga = MangaCache {
+            scroll_kind: self.manga.scroll_kind,
+            ease_in_out_scroller: self.manga.ease_in_out_scroller.as_(),
+            spring_damper_scroller: self.manga.spring_damper_scroller.as_()
+        };
         self.cache.tags = self.tags.keys().cloned().collect();
         self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
 
@@ -3044,7 +3115,6 @@ impl<'a> MediaBrowser<'a> {
         let config = config::get().read()?;
         let (grid_cell_width,
             details_cell_width,
-            scroll_multiplier,
             lookahead,
             proximity,
             animation
@@ -3053,7 +3123,6 @@ impl<'a> MediaBrowser<'a> {
                 (
                     media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
                     media_browser_config.details_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.scroll_multiplier,
                     media_browser_config.lookahead,
                     media_browser_config.proximity,
                     media_browser_config.animation.into()
@@ -3136,8 +3205,14 @@ impl<'a> MediaBrowser<'a> {
         let mut cache: Cache = serde_json::from_slice(&cache_slc)?;
         let mut missing_base_images = Vec::new();
 
-        let spring_damper = cache.spring_damper.into();
-        let spring_damper_manga = cache.spring_damper_manga.into();
+        let scroll_kind = cache.scroll_kind;
+        let scroll_kind_manga = cache.manga.scroll_kind;
+        let ease_in_out_scroller = cache.ease_in_out_scroller.into();
+        let ease_in_out_scroller_manga = cache.manga.ease_in_out_scroller.into();
+        let spring_damper_scroller = cache.spring_damper_scroller.into();
+        let spring_damper_scroller_manga = cache.manga.spring_damper_scroller.into();
+
+        let manga = Manga::new(scroll_kind_manga, ease_in_out_scroller_manga, spring_damper_scroller_manga);
 
         let scaler = Arc::new(Scaler::new(&wgpu.device));
         let (iris_ship, from_iris) = mpmc::unbounded();
@@ -3310,11 +3385,9 @@ impl<'a> MediaBrowser<'a> {
             details_cell_size,
             details_hovered_dir_entry_i: default!(),
             details_levels: Vec::with_capacity(16),
-            scroll_kind: default!(),
-            scroll_multiplier,
-            scroll_multiplier_display: default!(),
-            scroll_multiplier_edit: default!(),
-            spring_damper,
+            scroll_kind,
+            ease_in_out_scroller,
+            spring_damper_scroller,
             maintain_sample_rate: default!(),
             override_glsl_shaders: default!(),
             enable_override_glsl_shaders_checkbox,
@@ -3337,7 +3410,7 @@ impl<'a> MediaBrowser<'a> {
             to_demeter_stash: default!(),
             chunk_size,
             poll_ready: PollReady::new(),
-            manga: Manga::new(spring_damper_manga),
+            manga,
             open_error_win: default!(),
             error_sx,
             error_rx,
@@ -4019,7 +4092,7 @@ impl<'a> MediaBrowser<'a> {
     #[hotpath::measure]
     fn central_panel_manga(&mut self, ui: &mut egui::Ui) {
         if requested_go_back(ui) {
-            self.manga.reset();
+            self.manga = mem::take(&mut self.manga).reset();
             self.view_kind = ViewKind::Details;
 
             return
@@ -4104,7 +4177,7 @@ impl<'a> MediaBrowser<'a> {
         // Snap to top of first visible page
         if ui.input(|state| state.pointer.button_released(egui::PointerButton::Extra2)) {
             let delta = self.manga.scroll_offset.y - self.manga.view[self.manga.visible_view.start].offset;
-            self.manga.spring_damper.step_mul(ui, dt, delta, 1.);
+            self.manga.spring_damper_scroller.step_mul(ui, dt, delta, 1.);
         }
 
         // Auto scroll
@@ -4150,12 +4223,12 @@ impl<'a> MediaBrowser<'a> {
                     }
                     let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
                         ScrollKind::EaseInOut =>
-                            (ScrollSource::ALL, self.scroll_multiplier),
+                            (ScrollSource::ALL, self.manga.ease_in_out_scroller.multiplier),
                         ScrollKind::SpringDamper => {
-                            let delta = if self.manga.spring_damper.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
-                            self.manga.spring_damper.step(ui, dt, delta);
+                            let delta = if self.manga.spring_damper_scroller.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
+                            self.manga.spring_damper_scroller.step(ui, dt, delta);
 
-                            (ScrollSource::DRAG | ScrollSource::SCROLL_BAR, self.manga.spring_damper.multiplier)
+                            (ScrollSource::DRAG | ScrollSource::SCROLL_BAR, self.manga.spring_damper_scroller.multiplier)
                         }
                     };
                     let scroll_offset_y = self.manga.scroll_offset_y_anchor.take().unwrap_or(self.manga.scroll_offset.y);
@@ -4164,7 +4237,7 @@ impl<'a> MediaBrowser<'a> {
                         scroll_source,
                         drag_by: egui::PointerButton::Primary,
                         stop_kinesis: false,
-                        scroll_offset: [scroll_offset_x_centered, scroll_offset_y + self.manga.spring_damper.delta].into(),
+                        scroll_offset: [scroll_offset_x_centered, scroll_offset_y + self.manga.spring_damper_scroller.delta].into(),
                         scroll_multiplier: [1.0, scroll_multiplier].into()
                     }
                 },
@@ -4175,17 +4248,17 @@ impl<'a> MediaBrowser<'a> {
                     let stop_kinesis = !self.manga.secondary_was_down;
                     let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
                         ScrollKind::EaseInOut =>
-                            (ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL, self.scroll_multiplier),
+                            (ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL, self.manga.ease_in_out_scroller.multiplier),
                         ScrollKind::SpringDamper => {
                             match stop_kinesis {
-                                true => self.manga.spring_damper.stop(),
+                                true => self.manga.spring_damper_scroller.stop(),
                                 false => {
-                                    let delta = if self.manga.spring_damper.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
-                                    self.manga.spring_damper.step(ui, dt, delta);
+                                    let delta = if self.manga.spring_damper_scroller.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
+                                    self.manga.spring_damper_scroller.step(ui, dt, delta);
                                 }
                             }
 
-                            (ScrollSource::DRAG, self.manga.spring_damper.multiplier)
+                            (ScrollSource::DRAG, self.manga.spring_damper_scroller.multiplier)
                         }
                     };
                     self.manga.scroll_offset_y_anchor.get_or_insert(self.manga.scroll_offset.y.round());
@@ -4195,7 +4268,7 @@ impl<'a> MediaBrowser<'a> {
                         scroll_source,
                         drag_by: egui::PointerButton::Secondary,
                         stop_kinesis,
-                        scroll_offset: self.manga.scroll_offset + [0., self.manga.spring_damper.delta].into(),
+                        scroll_offset: self.manga.scroll_offset + [0., self.manga.spring_damper_scroller.delta].into(),
                         scroll_multiplier: [1.0, scroll_multiplier].into()
                     }
                 }
@@ -4570,10 +4643,21 @@ impl<'a> MediaBrowser<'a> {
         ui.menu_button("Scroll", |ui| {
             ui.set_min_width(SUBMENU_MIN_WIDTH);
 
-            let (scroll_kind, spring_damper) = match stage {
-                Stage::Grid | Stage::Details => (&mut self.scroll_kind, &mut self.spring_damper),
-                Stage::Manga => (&mut self.manga.scroll_kind, &mut self.manga.spring_damper)
-            };
+            let scroll_kind;
+            let ease_in_out_scroller;
+            let spring_damper_scroller;
+            match stage {
+                Stage::Grid | Stage::Details => {
+                    scroll_kind = &mut self.scroll_kind;
+                    ease_in_out_scroller = &mut self.ease_in_out_scroller;
+                    spring_damper_scroller = &mut self.spring_damper_scroller;
+                },
+                Stage::Manga => {
+                    scroll_kind = &mut self.manga.scroll_kind;
+                    ease_in_out_scroller = &mut self.manga.ease_in_out_scroller;
+                    spring_damper_scroller = &mut self.manga.spring_damper_scroller;
+                }
+            }
 
             if ui.radio(*scroll_kind == ScrollKind::SpringDamper, "Spring-Damper").clicked() {
                 *scroll_kind = ScrollKind::SpringDamper;
@@ -4591,54 +4675,54 @@ impl<'a> MediaBrowser<'a> {
                         ScrollKind::EaseInOut => {
                             ui.label("Distance:");
 
-                            self.scroll_multiplier_display.clear();
-                            write!(self.scroll_multiplier_display, "{}", self.scroll_multiplier).unwrap();
-                            let multiplier_edit_resp = egui::TextEdit::singleline(&mut self.scroll_multiplier_edit)
-                                .hint_text(&self.scroll_multiplier_display)
+                            ease_in_out_scroller.multiplier_display.clear();
+                            write!(ease_in_out_scroller.multiplier_display, "{}", ease_in_out_scroller.multiplier).unwrap();
+                            let multiplier_edit_resp = egui::TextEdit::singleline(&mut ease_in_out_scroller.multiplier_edit)
+                                .hint_text(&ease_in_out_scroller.multiplier_display)
                                 .show(ui)
                                 .response;
-                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(multiplier) = self.scroll_multiplier_edit.parse::<f32>() {
-                                self.scroll_multiplier_edit.clear();
-                                self.scroll_multiplier = multiplier.max(0.1);
+                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(multiplier) = ease_in_out_scroller.multiplier_edit.parse::<f32>() {
+                                ease_in_out_scroller.multiplier_edit.clear();
+                                ease_in_out_scroller.multiplier = multiplier.max(0.1);
                             }
                             ui.end_row();
                         },
                         ScrollKind::SpringDamper => {
-                            spring_damper.update_display();
+                            spring_damper_scroller.update_display();
 
-                            ui.checkbox(&mut spring_damper.should_smooth, "Smooth");
+                            ui.checkbox(&mut spring_damper_scroller.should_smooth, "Smooth");
                             ui.end_row();
 
                             ui.label("Distance:");
-                            let multiplier_edit_resp = egui::TextEdit::singleline(&mut spring_damper.multiplier_edit)
-                                .hint_text(&spring_damper.multiplier_display)
+                            let multiplier_edit_resp = egui::TextEdit::singleline(&mut spring_damper_scroller.multiplier_edit)
+                                .hint_text(&spring_damper_scroller.multiplier_display)
                                 .show(ui)
                                 .response;
-                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(multiplier) = spring_damper.multiplier_edit.parse::<f32>() {
-                                spring_damper.multiplier_edit.clear();
-                                spring_damper.multiplier = multiplier.max(0.1);
+                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(multiplier) = spring_damper_scroller.multiplier_edit.parse::<f32>() {
+                                spring_damper_scroller.multiplier_edit.clear();
+                                spring_damper_scroller.multiplier = multiplier.max(0.1);
                             }
                             ui.end_row();
 
                             ui.label("Stiffness:");
-                            let stiffness_edit_resp = egui::TextEdit::singleline(&mut spring_damper.stiffness_edit)
-                                .hint_text(&spring_damper.stiffness_display)
+                            let stiffness_edit_resp = egui::TextEdit::singleline(&mut spring_damper_scroller.stiffness_edit)
+                                .hint_text(&spring_damper_scroller.stiffness_display)
                                 .show(ui)
                                 .response;
-                            if stiffness_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(omega) = spring_damper.stiffness_edit.parse::<f32>() {
-                                spring_damper.stiffness_edit.clear();
-                                spring_damper.update_stiffness(omega.max(0.1));
+                            if stiffness_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(omega) = spring_damper_scroller.stiffness_edit.parse::<f32>() {
+                                spring_damper_scroller.stiffness_edit.clear();
+                                spring_damper_scroller.update_stiffness(omega.max(0.1));
                             }
                             ui.end_row();
 
                             ui.label("Bounce:");
-                            let bounce_edit_resp = egui::TextEdit::singleline(&mut spring_damper.bounce_edit)
-                                .hint_text(&spring_damper.bounce_display)
+                            let bounce_edit_resp = egui::TextEdit::singleline(&mut spring_damper_scroller.bounce_edit)
+                                .hint_text(&spring_damper_scroller.bounce_display)
                                 .show(ui)
                                 .response;
-                            if bounce_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(bounce) = spring_damper.bounce_edit.parse::<f32>() {
-                                spring_damper.bounce_edit.clear();
-                                spring_damper.update_bounce(bounce.max(0.1));
+                            if bounce_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(bounce) = spring_damper_scroller.bounce_edit.parse::<f32>() {
+                                spring_damper_scroller.bounce_edit.clear();
+                                spring_damper_scroller.update_bounce(bounce.max(0.1));
                             }
                             ui.end_row();
                         }
@@ -4868,10 +4952,10 @@ impl<'a> MediaBrowser<'a> {
                 },
                 ScrollKind::SpringDamper => {
                     let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui, self.refresh_rate);
-                    let delta = if self.manga.spring_damper.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
-                    self.spring_damper.step(ui, dt, delta);
+                    let delta = if self.manga.spring_damper_scroller.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
+                    self.spring_damper_scroller.step(ui, dt, delta);
 
-                    let scroll_offset = self.grid_scroll_offset + self.spring_damper.delta;
+                    let scroll_offset = self.grid_scroll_offset + self.spring_damper_scroller.delta;
                     let scroll_offset = scroll_offset.clamp(0., max_scroll_offset);
 
                     (
@@ -4884,7 +4968,7 @@ impl<'a> MediaBrowser<'a> {
             let new_grid_scroll_offset = egui::ScrollArea::new([false, true])
                 .auto_shrink(false)
                 .scroll_source(scroll_source)
-                .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
+                .wheel_scroll_multiplier([1.0, self.ease_in_out_scroller.multiplier].into())
                 .vertical_scroll_offset(scroll_offset)
                 .show_rows(ui, self.grid_cell_size.y, max_row_count, |ui, row_range| {
                     if self.update_residence(&row_range, row_cell_count, max_cell_count) {
@@ -5413,7 +5497,7 @@ impl<'a> MediaBrowser<'a> {
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(right_subd_rect), |ui| {
             egui::ScrollArea::vertical()
-                .wheel_scroll_multiplier([1.0, self.scroll_multiplier].into())
+                .wheel_scroll_multiplier([1.0, self.ease_in_out_scroller.multiplier].into())
                 .show(ui, |ui| {
                     let button_height = ui.spacing().interact_size.y;
                     let button_spacing = ui.spacing().item_spacing[1];
