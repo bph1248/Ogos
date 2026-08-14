@@ -2879,6 +2879,7 @@ struct MediaBrowser<'a> {
     wgpu: egui_wgpu::RenderState,
     thread_pool: Arc<ThreadPool>,
     refresh_rate: u32,
+    enable_decorations: bool,
     enable_fullscreen: bool,
     enable_reactive_mode: bool,
     image_dirs: &'static ImageDirs,
@@ -3339,6 +3340,7 @@ impl<'a> MediaBrowser<'a> {
         Ok(Self {
             wgpu: wgpu.clone(),
             refresh_rate,
+            enable_decorations: true,
             enable_fullscreen: default!(),
             enable_reactive_mode: true,
             thread_pool,
@@ -4573,7 +4575,15 @@ impl<'a> MediaBrowser<'a> {
         ui.menu_button("Display", |ui| {
             ui.set_min_width(SUBMENU_MIN_WIDTH);
 
-            let mut checked = self.enable_fullscreen;
+            let mut checked = self.enable_decorations;
+            let enable_decorations_checkbox_resp = ui.checkbox(&mut checked, "Decorations");
+            if enable_decorations_checkbox_resp.clicked() {
+                ui.send_viewport_cmd(egui::ViewportCommand::Decorations(checked));
+
+                self.enable_decorations = checked;
+            }
+
+            checked = self.enable_fullscreen;
             let enable_fullscreen_checkbox_resp = ui.checkbox(&mut checked, "Fullscreen");
             if enable_fullscreen_checkbox_resp.clicked() {
                 ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(checked));
@@ -4581,7 +4591,7 @@ impl<'a> MediaBrowser<'a> {
                 self.enable_fullscreen = checked;
             }
 
-            let mut checked = self.enable_reactive_mode;
+            checked = self.enable_reactive_mode;
             let enable_reactive_mode_checkbox_resp = ui.checkbox(&mut checked, "Reactive mode");
             if enable_reactive_mode_checkbox_resp.clicked() {
                 self.enable_reactive_mode = checked;
