@@ -117,9 +117,20 @@ impl From<config::AnimationInfo> for AnimationInfo {
     }
 }
 
+const fn default_true() -> bool { true }
+
 #[derive(Serialize, Deserialize)]
 struct Cache {
     library: BTreeSet<PathBuf>,
+    #[serde(default)]
+    enable_fullscreen: bool,
+    #[serde(default = "default_true")]
+    enable_reactive_mode: bool,
+    #[serde(default = "default_true")]
+    center_window: bool,
+    #[serde(default = "default_true")]
+    enable_decorations: bool,
+    window_inner_extent: Option<Extent2dF>,
     grid_cell_size: egui::Vec2,
     details_cell_size: egui::Vec2,
     #[serde(default)]
@@ -169,7 +180,7 @@ struct DirEntryInfo {
     file_kind: FileKind
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
 pub struct Extent2dF {
     pub width: f32,
     pub height: f32
@@ -209,6 +220,14 @@ impl From<Extent2dU> for Extent2dF {
         }
     }
 }
+impl From<egui::Rect> for Extent2dF {
+    fn from(value: egui::Rect) -> Self {
+        Self {
+            width: value.width(),
+            height: value.height()
+        }
+    }
+}
 impl From<egui::Vec2> for Extent2dF {
     fn from(value: egui::Vec2) -> Self {
         Self {
@@ -222,6 +241,14 @@ impl From<&wgpu::Texture> for Extent2dF {
         Self {
             width: value.width() as f32,
             height: value.height() as f32
+        }
+    }
+}
+impl From<winit::dpi::PhysicalSize<u32>> for Extent2dF {
+    fn from(value: winit::dpi::PhysicalSize<u32>) -> Self {
+        Self {
+            width: value.width as f32,
+            height: value.height as f32
         }
     }
 }
@@ -2875,6 +2902,16 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
     grid_entries.extend(grid_entry_info_iter);
 }
 
+struct MediaBrowserInfo<'a> {
+    ctx: &'a egui::Context,
+    wgpu: &'a egui_wgpu::RenderState,
+    refresh_rate: u32,
+    window_inner_extent: Extent2dF,
+    image_dirs: &'static mut ImageDirs,
+    cache_path: PathBuf,
+    cache: Cache
+}
+
 struct MediaBrowser<'a> {
     wgpu: egui_wgpu::RenderState,
     thread_pool: Arc<ThreadPool>,
@@ -2882,6 +2919,14 @@ struct MediaBrowser<'a> {
     enable_decorations: bool,
     enable_fullscreen: bool,
     enable_reactive_mode: bool,
+    center_window: bool,
+    screen_extent: Extent2dF,
+    window_inner_extent: Extent2dF,
+    window_outer_extent: Extent2dF,
+    window_inner_extent_width_edit: String,
+    window_inner_extent_height_edit: String,
+    window_inner_extent_width_display: String,
+    window_inner_extent_height_display: String,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
     deferred_metadata_sx: mpmc::Sender<MetadataInfo>,
@@ -2966,6 +3011,25 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 
     #[hotpath::measure]
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        ui.input(|state| {
+            let viewport = state.viewport();
+
+            let screen_extent = viewport.monitor_size.unwrap();
+            let window_outer_rect = viewport.outer_rect.unwrap();
+            let window_inner_rect = viewport.inner_rect.unwrap();
+
+            let screen_center = screen_extent / 2.;
+            let window_outer_center = window_outer_rect.center();
+            let delta = window_outer_center.distance(screen_center.to_pos2());
+            if delta > 0.75 {
+                self.center_window = false;
+            }
+
+            self.screen_extent = screen_extent.into();
+            self.window_outer_extent = window_outer_rect.into();
+            self.window_inner_extent = window_inner_rect.into();
+        });
+
         egui::CentralPanel::default()
             .frame(self.frame)
             .show(ui, |ui: &mut egui::Ui| {
@@ -3059,9 +3123,13 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             }
         }
 
+        self.cache.enable_fullscreen = self.enable_fullscreen;
+        self.cache.enable_reactive_mode = self.enable_reactive_mode;
+        self.cache.center_window = self.center_window;
+        self.cache.enable_decorations = self.enable_decorations;
+        self.cache.window_inner_extent = Some(self.window_inner_extent);
         self.cache.grid_cell_size = self.grid_cell_size;
         self.cache.details_cell_size = self.details_cell_size;
-
         self.cache.scroll_kind = self.scroll_kind;
         self.cache.ease_in_out_scroller = self.ease_in_out_scroller.as_();
         self.cache.spring_damper_scroller = self.spring_damper_scroller.as_();
@@ -3112,7 +3180,9 @@ impl<'a> eframe::App for MediaBrowser<'a> {
     }
 }
 impl<'a> MediaBrowser<'a> {
-    fn new(ctx: &egui::Context, wgpu: &egui_wgpu::RenderState, refresh_rate: u32, win_inner_extent: Extent2dU) -> Res<Self> {
+    fn new(info: MediaBrowserInfo) -> Res<Self> {
+        let MediaBrowserInfo { ctx, wgpu, refresh_rate, window_inner_extent, image_dirs, cache_path, mut cache } = info;
+
         let config = config::get().read()?;
         let (grid_cell_width,
             details_cell_width,
@@ -3190,20 +3260,6 @@ impl<'a> MediaBrowser<'a> {
         let wgpu_ = wgpu.clone();
         thread::spawn(move || thanatos(wgpu_, thanatos_port));
 
-        let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
-        let base_images_dir = current_exe_dir.join("images");
-        let grid_images_dir = base_images_dir.join("grid");
-        let details_images_dir = base_images_dir.join("details");
-        let image_dirs = ImageDirs {
-            base: base_images_dir,
-            grid: grid_images_dir,
-            details: details_images_dir
-        };
-        let image_dirs = Box::leak(Box::new(image_dirs));
-
-        let cache_path = image_dirs.base.join("cache").with_extension("json");
-        let cache_slc = fs::read(&cache_path)?;
-        let mut cache: Cache = serde_json::from_slice(&cache_slc)?;
         let mut missing_base_images = Vec::new();
 
         let scroll_kind = cache.scroll_kind;
@@ -3221,10 +3277,9 @@ impl<'a> MediaBrowser<'a> {
         let frame = egui::Frame::central_panel(&ctx.global_style()).inner_margin(
             egui::Margin::symmetric(FRAME_INNER_MARGIN as i8, FRAME_INNER_MARGIN as i8)
         );
-        let win_inner_extent = Extent2dF::from(win_inner_extent);
         let central_size = egui::vec2(
-            win_inner_extent.width.sub(2. * FRAME_INNER_MARGIN).max(0.),
-            win_inner_extent.height.sub(2. * FRAME_INNER_MARGIN).max(0.),
+            window_inner_extent.width.sub(2. * FRAME_INNER_MARGIN).max(0.),
+            window_inner_extent.height.sub(2. * FRAME_INNER_MARGIN).max(0.),
         );
 
         let (error_sx, error_rx) = mpmc::unbounded();
@@ -3340,9 +3395,17 @@ impl<'a> MediaBrowser<'a> {
         Ok(Self {
             wgpu: wgpu.clone(),
             refresh_rate,
-            enable_decorations: true,
-            enable_fullscreen: default!(),
-            enable_reactive_mode: true,
+            enable_decorations: cache.enable_decorations,
+            enable_fullscreen: cache.enable_fullscreen,
+            enable_reactive_mode: cache.enable_reactive_mode,
+            center_window: cache.center_window,
+            screen_extent: default!(),
+            window_inner_extent: default!(),
+            window_outer_extent: default!(),
+            window_inner_extent_width_edit: default!(),
+            window_inner_extent_height_edit: default!(),
+            window_inner_extent_width_display: default!(),
+            window_inner_extent_height_display: default!(),
             thread_pool,
             image_dirs,
             images,
@@ -4569,21 +4632,21 @@ impl<'a> MediaBrowser<'a> {
         self.display_submenu_common(ui);
         self.library_submenu_common(ui);
         self.scroll_submenu_common(ui, stage);
+
+        if !self.enable_decorations || self.enable_fullscreen {
+            ui.separator();
+
+            if ui.button("Exit").clicked() {
+                ui.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
     }
 
     fn display_submenu_common(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Display", |ui| {
             ui.set_min_width(SUBMENU_MIN_WIDTH);
 
-            let mut checked = self.enable_decorations;
-            let enable_decorations_checkbox_resp = ui.checkbox(&mut checked, "Decorations");
-            if enable_decorations_checkbox_resp.clicked() {
-                ui.send_viewport_cmd(egui::ViewportCommand::Decorations(checked));
-
-                self.enable_decorations = checked;
-            }
-
-            checked = self.enable_fullscreen;
+            let mut checked = self.enable_fullscreen;
             let enable_fullscreen_checkbox_resp = ui.checkbox(&mut checked, "Fullscreen");
             if enable_fullscreen_checkbox_resp.clicked() {
                 ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(checked));
@@ -4595,6 +4658,88 @@ impl<'a> MediaBrowser<'a> {
             let enable_reactive_mode_checkbox_resp = ui.checkbox(&mut checked, "Reactive mode");
             if enable_reactive_mode_checkbox_resp.clicked() {
                 self.enable_reactive_mode = checked;
+            }
+
+            if !self.enable_fullscreen {
+                ui.separator();
+
+                checked = self.center_window;
+                let center_window_checkbox_resp = ui.checkbox(&mut checked, "Center");
+                if center_window_checkbox_resp.clicked() {
+                    if checked {
+                        ui.send_viewport_cmd(egui::ViewportCommand::Center);
+                    }
+
+                    self.center_window = checked;
+                }
+
+                checked = self.enable_decorations;
+                let enable_decorations_checkbox_resp = ui.checkbox(&mut checked, "Decorations");
+                if enable_decorations_checkbox_resp.clicked() {
+                    ui.send_viewport_cmd(egui::ViewportCommand::Decorations(checked));
+                    ui.send_viewport_cmd(egui::ViewportCommand::InnerSize([self.window_inner_extent.width, self.window_inner_extent.height].into()));
+                    if self.center_window {
+                        ui.send_viewport_cmd(egui::ViewportCommand::Center);
+                    }
+
+                    self.enable_decorations = checked;
+                }
+
+                egui::Grid::new("grid")
+                    .num_columns(3)
+                    .show(ui, |ui| {
+                        ui.label("Inner extent:");
+
+                        self.window_inner_extent_width_display.clear();
+                        write!(self.window_inner_extent_width_display, "{}", self.window_inner_extent.width).unwrap();
+                        let window_inner_extent_width_edit_resp = egui::TextEdit::singleline(&mut self.window_inner_extent_width_edit)
+                            .hint_text(&self.window_inner_extent_width_display)
+                            .char_limit(4)
+                            .desired_width(60.)
+                            .show(ui)
+                            .response.response;
+
+                        self.window_inner_extent_height_display.clear();
+                        write!(self.window_inner_extent_height_display, "{}", self.window_inner_extent.height).unwrap();
+                        let window_inner_extent_height_edit_resp = egui::TextEdit::singleline(&mut self.window_inner_extent_height_edit)
+                            .hint_text(&self.window_inner_extent_height_display)
+                            .char_limit(4)
+                            .desired_width(60.)
+                            .show(ui)
+                            .response.response;
+
+                        let either_edit_lost_focus = window_inner_extent_width_edit_resp.lost_focus() || window_inner_extent_height_edit_resp.lost_focus();
+                        if either_edit_lost_focus && enter_pressed(ui) {
+                            _ = (|| -> ResVar<_> {
+                                let window_inner_width = if self.window_inner_extent_width_edit.is_empty() {
+                                    self.window_inner_extent.width
+                                } else {
+                                    self.window_inner_extent_width_edit.parse::<f32>()?.max(800.)
+                                };
+                                let window_inner_height = if self.window_inner_extent_height_edit.is_empty() {
+                                    self.window_inner_extent.height
+                                } else {
+                                    self.window_inner_extent_height_edit.parse::<f32>()?.max(600.)
+                                };
+
+                                ui.send_viewport_cmd(egui::ViewportCommand::InnerSize([window_inner_width, window_inner_height].into()));
+                                if self.center_window {
+                                    ui.send_viewport_cmd(egui::ViewportCommand::Center);
+                                }
+
+                                self.window_inner_extent_width_edit.clear();
+                                self.window_inner_extent_height_edit.clear();
+
+                                self.window_inner_extent = Extent2dF {
+                                    width: window_inner_width,
+                                    height: window_inner_height
+                                };
+
+                                Ok(())
+                            })();
+                        }
+                        ui.end_row();
+                    });
             }
         });
     }
@@ -5703,16 +5848,7 @@ impl<'a> MediaBrowser<'a> {
     }
 }
 
-pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
-    let config = config::get().read()?;
-
-    let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png"))?;
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_icon(icon_data);
-    if let GuiKind::MediaBrowser = kind && let Some(extent) = config.media_browser.as_ref().and_then(|mb| mb.window_inner_size) {
-        viewport = viewport.with_inner_size(extent);
-    }
-
+fn make_native_options(viewport: egui::ViewportBuilder) -> eframe::NativeOptions {
     let mut wgpu_setup_create_new = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     wgpu_setup_create_new.instance_descriptor.backends = wgpu::Backends::VULKAN;
     wgpu_setup_create_new.instance_descriptor.flags = wgpu::InstanceFlags::empty();
@@ -5736,13 +5872,46 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
         wgpu_setup,
         ..default!()
     };
-    let native_options = eframe::NativeOptions {
+
+    eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
         wgpu_options,
-        centered: true,
         ..default!()
+    }
+}
+
+pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
+    let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png"))?;
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_icon(icon_data);
+    let media_browser_prep = if let GuiKind::MediaBrowser = kind {
+        let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
+        let base_images_dir = current_exe_dir.join("images");
+        let grid_images_dir = base_images_dir.join("grid");
+        let details_images_dir = base_images_dir.join("details");
+        let image_dirs = ImageDirs {
+            base: base_images_dir,
+            grid: grid_images_dir,
+            details: details_images_dir
+        };
+        let image_dirs = Box::leak(Box::new(image_dirs));
+
+        let cache_path = image_dirs.base.join("cache").with_extension("json");
+        let cache_slc = fs::read(&cache_path)?;
+        let cache: Cache = serde_json::from_slice(&cache_slc)?;
+
+        if cache.enable_fullscreen {
+            viewport = viewport.with_fullscreen(true);
+        } else if let Some(extent) = cache.window_inner_extent {
+            viewport = viewport.with_inner_size(extent);
+        }
+
+        Some((image_dirs, cache_path, cache))
+    } else {
+        None
     };
+    let native_options = make_native_options(viewport);
 
     eframe::run_native(
         "Ogos",
@@ -5784,11 +5953,28 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                         SetThreadPriority(thread_hnd, THREAD_PRIORITY_ABOVE_NORMAL)?;
                     }
 
-                    let refresh_rate = window.current_monitor().unwrap().refresh_rate_millihertz().unwrap() / 1000;
-                    let win_inner_size = window.inner_size();
-                    let win_inner_size = Extent2dU::new(win_inner_size.width, win_inner_size.height);
+                    let (image_dirs, cache_path, cache) = media_browser_prep.unwrap();
 
-                    Box::new(MediaBrowser::new(&cctx.egui_ctx, cctx.wgpu_render_state.as_ref().unwrap(), refresh_rate, win_inner_size)?)
+                    let monitor = window.current_monitor().unwrap();
+                    let screen_extent: Extent2d = monitor.size().into();
+                    let window_outer_extent: Extent2d = window.outer_size().into();
+                    let window_inner_extent: Extent2dF = window.inner_size().into();
+                    let refresh_rate = monitor.refresh_rate_millihertz().unwrap() / 1000;
+                    if cache.center_window {
+                        let pos = window_outer_extent.center_on(screen_extent);
+                        window.set_outer_position(pos.into_::<winit::dpi::PhysicalPosition<i32>>());
+                    }
+
+                    let media_browser_info = MediaBrowserInfo {
+                        ctx: &cctx.egui_ctx,
+                        wgpu: cctx.wgpu_render_state.as_ref().unwrap(),
+                        refresh_rate,
+                        window_inner_extent,
+                        image_dirs,
+                        cache_path,
+                        cache
+                    };
+                    Box::new(MediaBrowser::new(media_browser_info)?)
                 }
             };
 

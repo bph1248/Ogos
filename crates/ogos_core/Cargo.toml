@@ -13,4 +13,5 @@ eframe = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true }
 windows = { workspace = true }
+winit = { workspace = true }
 zune-png = { workspace = true }

@@ -69,6 +69,13 @@ pub struct Extent2d {
     pub height: i32
 }
 impl Extent2d {
+    pub fn center_on(&self, other: Self) -> Pos2d {
+        Pos2d {
+            x: (other.width - self.width) / 2,
+            y: (other.height - self.height) / 2
+        }
+    }
+
     pub fn into_rect(self) -> RECT {
         RECT {
             left: 0,
@@ -83,6 +90,14 @@ impl fmt::Display for Extent2d {
         write!(f, "{}x{}", self.width, self.height)
     }
 }
+impl From<winit::dpi::PhysicalSize<u32>> for Extent2d {
+    fn from(value: winit::dpi::PhysicalSize<u32>) -> Self {
+        Self {
+            width: value.width as i32,
+            height: value.height as i32
+        }
+    }
+}
 impl From<Extent2d> for RECT {
     fn from(value: Extent2d) -> Self {
         RECT {
@@ -94,8 +109,8 @@ impl From<Extent2d> for RECT {
     }
 }
 
-#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
-#[serde(from = "[u32; 2]")]
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq)]
+#[serde(from = "[u32; 2]", into = "[u32; 2]")]
 pub struct Extent2dU {
     pub width: u32,
     pub height: u32
@@ -124,9 +139,28 @@ impl From<[u32; 2]> for Extent2dU {
         }
     }
 }
+impl From<Extent2dU> for [u32; 2] {
+    fn from(value: Extent2dU) -> Self {
+        [value.width, value.height]
+    }
+}
 impl From<Extent2dU> for egui::Vec2 {
     fn from(value: Extent2dU) -> Self {
         egui::vec2(value.width as f32, value.height as f32)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct Pos2d {
+    pub x: i32,
+    pub y: i32
+}
+impl From<Pos2d> for winit::dpi::PhysicalPosition<i32> {
+    fn from(value: Pos2d) -> Self {
+        Self {
+            x: value.x,
+            y: value.y
+        }
     }
 }
 
@@ -235,10 +269,10 @@ pub enum FileKind {
     Unknown
 }
 
-pub trait As<'a, F: 'a> {
+pub trait As_<'a, F: 'a> {
     fn as_<T: From<&'a F>>(&'a self) -> T;
 }
-impl<'a, F: 'a> As<'a, F> for F {
+impl<'a, F: 'a> As_<'a, F> for F {
     fn as_<T: From<&'a F>>(&'a self) -> T {
         T::from(self)
     }
@@ -259,6 +293,15 @@ pub trait AsStaticCowPath {
 impl AsStaticCowPath for str {
     fn as_static_cow_path(&'static self) -> Cow<'static, Path> {
         Path::new(self).into()
+    }
+}
+
+pub trait Into_<F> {
+    fn into_<T: From<F>>(self) -> T;
+}
+impl<F> Into_<F> for F {
+    fn into_<T: From<F>>(self) -> T {
+        T::from(self)
     }
 }
 

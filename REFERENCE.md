@@ -13,7 +13,7 @@
 A list of paths to apps that Ogos depends on. If a path is not specified and a default path does not exist, the PATH environment variable will be searched instead.
 
 - `epic`: [Epic Games Launcher](https://store.epicgames.com/en-US/download).
-- `ffprobe`: [Ffprobe](https://ffmpeg.org/ffprobe.html).
+- `ffprobe`: [ffprobe](https://ffmpeg.org/ffprobe.html).
 - `gog`: [GOG GALAXY](https://www.gogalaxy.com/en/).
 - `mpv`: [mpv](https://mpv.io/).
 - `skif`: [Special K Injection Frontend](https://www.special-k.info/).

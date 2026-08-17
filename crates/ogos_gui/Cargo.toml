@@ -40,6 +40,7 @@ serde_json = { workspace = true }
 tap = "1.0.1"
 wgpu = { workspace = true }
 windows = { workspace = true }
+winit = { workspace = true }
 zenwebp = { workspace = true }
 zip = { workspace = true }
 zune-jpeg = { workspace = true }

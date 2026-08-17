@@ -454,9 +454,7 @@ const fn lookahead() -> usize { 2 }
 const fn proximity() -> usize { 1 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MediaBrowser {
-    pub window_inner_size: Option<Extent2dU>,
     pub grid_cell_width: u32,
     pub details_cell_width: u32,
     #[serde(default = "lookahead")]
