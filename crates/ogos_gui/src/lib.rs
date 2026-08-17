@@ -107,12 +107,25 @@ struct AnimationInfo {
     kind: AnimationKind,
     target: bool
 }
+impl AnimationInfo {
+    fn get_opacity(&mut self, ui: &mut egui::Ui) -> f32 {
+        match self.target {
+            true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, self.dur, self.kind.as_easing()),
+            false => {
+                ui.ctx().clear_animations();
+                self.target = true; // For future calls
+
+                ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, self.dur, self.kind.as_easing())
+            }
+        }
+    }
+}
 impl From<config::AnimationInfo> for AnimationInfo {
     fn from(value: config::AnimationInfo) -> Self {
         Self {
             dur: value.dur,
             kind: value.kind,
-            target: false
+            target: true
         }
     }
 }
@@ -1332,7 +1345,7 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, text: &str, po
     match image_state {
         ImageState::Ready { tex_id, extent, .. } if poll_ready.is_ready() => {
             if let Some(animation) = animation {
-                let opacity = get_animation_opacity(ui, animation);
+                let opacity = animation.get_opacity(ui);
                 ui.set_opacity(opacity);
             }
 
@@ -1972,18 +1985,6 @@ fn thanatos(wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<Soul>) {
 
 fn enter_pressed(ui: &mut egui::Ui) -> bool {
     ui.input(|state| state.key_pressed(egui::Key::Enter))
-}
-
-fn get_animation_opacity(ui: &mut egui::Ui, info: &mut AnimationInfo) -> f32 {
-    match info.target {
-        true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, info.dur, info.kind.as_easing()),
-        false => {
-            ui.ctx().clear_animations();
-            info.target = true; // For future calls
-
-            ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, info.dur, info.kind.as_easing())
-        }
-    }
 }
 
 fn get_wheel_state(ui: &mut egui::Ui, refresh_rate: u32) -> WheelState {
@@ -4165,7 +4166,7 @@ impl<'a> MediaBrowser<'a> {
 
         self.stream_textures_stepped();
 
-        let opacity = get_animation_opacity(ui, &mut self.animation);
+        let opacity = self.animation.get_opacity(ui);
         ui.set_opacity(opacity);
 
         let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui, self.refresh_rate);
