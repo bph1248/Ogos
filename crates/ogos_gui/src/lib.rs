@@ -4711,21 +4711,21 @@ impl<'a> MediaBrowser<'a> {
                             .show(ui)
                             .response.response;
 
-                        let either_edit_lost_focus = window_inner_extent_width_edit_resp.lost_focus() || window_inner_extent_height_edit_resp.lost_focus();
-                        if either_edit_lost_focus && enter_pressed(ui) {
-                            _ = (|| -> ResVar<_> {
-                                let window_inner_width = if self.window_inner_extent_width_edit.is_empty() {
-                                    self.window_inner_extent.width
-                                } else {
-                                    self.window_inner_extent_width_edit.parse::<f32>()?.max(800.)
-                                };
-                                let window_inner_height = if self.window_inner_extent_height_edit.is_empty() {
-                                    self.window_inner_extent.height
-                                } else {
-                                    self.window_inner_extent_height_edit.parse::<f32>()?.max(600.)
-                                };
+                        let mut try_set_extent = |ui: &mut egui::Ui| {
+                            let window_inner_width = if self.window_inner_extent_width_edit.is_empty() {
+                                Some(self.window_inner_extent.width)
+                            } else {
+                                self.window_inner_extent_width_edit.parse::<f32>().ok().map(|val| val.max(800.))
+                            };
+                            let window_inner_height = if self.window_inner_extent_height_edit.is_empty() {
+                                Some(self.window_inner_extent.height)
+                            } else {
+                                self.window_inner_extent_height_edit.parse::<f32>().ok().map(|val| val.max(600.))
+                            };
 
-                                ui.send_viewport_cmd(egui::ViewportCommand::InnerSize([window_inner_width, window_inner_height].into()));
+                            let window_inner_extent = window_inner_width.zip(window_inner_height);
+                            if let Some((width, height)) = window_inner_extent {
+                                ui.send_viewport_cmd(egui::ViewportCommand::InnerSize([width, height].into()));
                                 if self.center_window {
                                     ui.send_viewport_cmd(egui::ViewportCommand::Center);
                                 }
@@ -4733,14 +4733,18 @@ impl<'a> MediaBrowser<'a> {
                                 self.window_inner_extent_width_edit.clear();
                                 self.window_inner_extent_height_edit.clear();
 
-                                self.window_inner_extent = Extent2dF {
-                                    width: window_inner_width,
-                                    height: window_inner_height
-                                };
-
-                                Ok(())
-                            })();
+                                self.window_inner_extent = Extent2dF { width, height };
+                            }
+                        };
+                        if window_inner_extent_width_edit_resp.lost_focus() && enter_pressed(ui) {
+                            try_set_extent(ui);
+                            window_inner_extent_width_edit_resp.request_focus();
                         }
+                        if window_inner_extent_height_edit_resp.lost_focus() && enter_pressed(ui) {
+                            try_set_extent(ui);
+                            window_inner_extent_height_edit_resp.request_focus();
+                        }
+
                         ui.end_row();
                     });
             }
