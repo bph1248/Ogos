@@ -5906,8 +5906,11 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
 
         if cache.enable_fullscreen {
             viewport = viewport.with_fullscreen(true);
-        } else if let Some(extent) = cache.window_inner_extent {
-            viewport = viewport.with_inner_size(extent);
+        } else {
+            viewport = viewport.with_decorations(cache.enable_decorations);
+            if let Some(extent) = cache.window_inner_extent {
+                viewport = viewport.with_inner_size(extent);
+            }
         }
 
         Some((image_dirs, cache_path, cache))
