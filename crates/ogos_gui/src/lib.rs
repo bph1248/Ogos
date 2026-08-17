@@ -3019,11 +3019,13 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             let window_outer_rect = viewport.outer_rect.unwrap();
             let window_inner_rect = viewport.inner_rect.unwrap();
 
-            let screen_center = screen_extent / 2.;
-            let window_outer_center = window_outer_rect.center();
-            let delta = window_outer_center.distance(screen_center.to_pos2());
-            if delta > 0.75 {
-                self.center_window = false;
+            if !self.enable_fullscreen {
+                let screen_center = screen_extent / 2.;
+                let window_outer_center = window_outer_rect.center();
+                let delta = window_outer_center.distance(screen_center.to_pos2());
+                if delta > 0.75 {
+                    self.center_window = false;
+                }
             }
 
             self.screen_extent = screen_extent.into();
@@ -5961,7 +5963,7 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                     let window_outer_extent: Extent2d = window.outer_size().into();
                     let window_inner_extent: Extent2dF = window.inner_size().into();
                     let refresh_rate = monitor.refresh_rate_millihertz().unwrap() / 1000;
-                    if cache.center_window {
+                    if cache.center_window && !cache.enable_fullscreen {
                         let pos = window_outer_extent.center_on(screen_extent);
                         window.set_outer_position(pos.into_::<winit::dpi::PhysicalPosition<i32>>());
                     }
