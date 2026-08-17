@@ -4636,12 +4636,10 @@ impl<'a> MediaBrowser<'a> {
         self.library_submenu_common(ui);
         self.scroll_submenu_common(ui, stage);
 
-        if !self.enable_decorations || self.enable_fullscreen {
-            ui.separator();
+        ui.separator();
 
-            if ui.button("Exit").clicked() {
-                ui.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
+        if ui.button("Exit").clicked() {
+            ui.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
