@@ -71,7 +71,9 @@ const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
-const SUBMENU_MIN_WIDTH: f32 = 180.;
+const SUBMENU_WIDTH_SML: f32 = 180.;
+const SUBMENU_WIDTH_MED: f32 = 200.;
+const SUBMENU_WIDTH_LRG: f32 = 260.;
 
 thread_local! {
     static WORKER_THREAD_STATE: RefCell<WorkerThreadState> = RefCell::new({
@@ -4426,10 +4428,16 @@ impl<'a> MediaBrowser<'a> {
                 ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
                 ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
                 ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
+
                 ui.separator();
+
                 ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
                 self.display_submenu_common(ui);
                 self.scroll_submenu_common(ui, Stage::Manga);
+
+                ui.separator();
+
+                self.exit_button(ui);
             });
     }
 
@@ -4438,7 +4446,7 @@ impl<'a> MediaBrowser<'a> {
         const SCALE_MAX: f32 = 300.;
 
         ui.scope(|ui| {
-            ui.spacing_mut().slider_width = 165.;
+            ui.spacing_mut().slider_width = SUBMENU_WIDTH_MED;
 
             let scale_slider_resp = ui.add(egui::Slider::new(&mut self.manga.scale_pc, SCALE_MIN..=SCALE_MAX)
                 .clamping(egui::SliderClamping::Always)
@@ -4505,7 +4513,7 @@ impl<'a> MediaBrowser<'a> {
             .num_columns(2)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                    ui.set_min_width(SUBMENU_WIDTH_SML);
 
                     ui.label("CPU:");
 
@@ -4536,7 +4544,7 @@ impl<'a> MediaBrowser<'a> {
                 });
 
                 ui.vertical(|ui| {
-                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                    ui.set_min_width(SUBMENU_WIDTH_SML);
 
                     ui.label("GPU:");
 
@@ -4563,7 +4571,7 @@ impl<'a> MediaBrowser<'a> {
             const WHITE: egui::Rgba = egui::Rgba::WHITE;
 
             ui.scope(|ui| {
-                ui.spacing_mut().slider_width = 200.;
+                ui.spacing_mut().slider_width = SUBMENU_WIDTH_MED;
 
                 ui.label("Night light:");
 
@@ -4596,7 +4604,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn bookmark_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(SUBMENU_MIN_WIDTH);
+        ui.set_min_width(SUBMENU_WIDTH_LRG);
 
         if ui.button("Set").clicked() {
             let pivot = self.get_pivot();
@@ -4634,14 +4642,12 @@ impl<'a> MediaBrowser<'a> {
 
         ui.separator();
 
-        if ui.button("Exit").clicked() {
-            ui.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
+        self.exit_button(ui);
     }
 
     fn display_submenu_common(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Display", |ui| {
-            ui.set_min_width(SUBMENU_MIN_WIDTH);
+            ui.set_min_width(SUBMENU_WIDTH_LRG);
 
             let mut checked = self.enable_fullscreen;
             let enable_fullscreen_checkbox_resp = ui.checkbox(&mut checked, "Fullscreen");
@@ -4747,7 +4753,7 @@ impl<'a> MediaBrowser<'a> {
 
     fn library_submenu_common(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Library", |ui| {
-            ui.set_min_width(SUBMENU_MIN_WIDTH);
+            ui.set_min_width(SUBMENU_WIDTH_LRG);
 
             let new_button_resp = ui.button("New");
             let remove_button_resp = ui.add_enabled(!self.selected_library_entries.is_empty(), egui::Button::new("Remove"));
@@ -4797,7 +4803,7 @@ impl<'a> MediaBrowser<'a> {
 
     fn scroll_submenu_common(&mut self, ui: &mut egui::Ui, stage: Stage) {
         ui.menu_button("Scroll", |ui| {
-            ui.set_min_width(SUBMENU_MIN_WIDTH);
+            ui.set_min_width(SUBMENU_WIDTH_LRG);
 
             let scroll_kind;
             let ease_in_out_scroller;
@@ -4885,6 +4891,12 @@ impl<'a> MediaBrowser<'a> {
                     }
                 });
         });
+    }
+
+    fn exit_button(&self, ui: &mut egui::Ui) {
+        if ui.button("Exit").clicked() {
+            ui.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     fn tag_win(&mut self, ui: &mut egui::Ui) {
@@ -5305,7 +5317,9 @@ impl<'a> MediaBrowser<'a> {
 
                 self.grid_cell_sort_submenu(ui);
                 self.grid_cell_tag_submenus(ui);
+
                 ui.separator();
+
                 self.common_submenus(ui, Stage::Grid);
             });
 
@@ -5446,6 +5460,7 @@ impl<'a> MediaBrowser<'a> {
         let mut sort_grid_view = false;
         ui.menu_button("Sort name", |ui| {
             let sort_name_edit_resp = egui::TextEdit::singleline(&mut self.sort_name_edit)
+                .desired_width(SUBMENU_WIDTH_LRG)
                 .hint_text(grid_entry_info.sort_name.as_deref().unwrap_or("New"))
                 .show(ui)
                 .response;
@@ -5480,6 +5495,7 @@ impl<'a> MediaBrowser<'a> {
         ui.menu_button("Tags", |ui| {
             // Add tag
             let new_tag_edit_resp = egui::TextEdit::singleline(&mut self.new_tag_edit)
+                .desired_width(SUBMENU_WIDTH_LRG)
                 .hint_text("New")
                 .show(ui)
                 .response;
