@@ -18,12 +18,12 @@ concat-string = "1.0.1"
 const_format = { version = "0.2.34", default-features = false }
 crossbeam = "0.8.4"
 discord-rich-presence = "1.0.0"
-# eframe = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false, features = ["default_fonts", "wgpu"] }
-# egui = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false, features = ["serde"] }
-# egui_extras = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false }
-eframe = { path = "B:/dev/egui/crates/eframe", default-features = false, features = ["default_fonts", "wgpu"] }
-egui = { path = "B:/dev/egui/crates/egui", default-features = false, features = ["serde"] }
-egui_extras = { path = "B:/dev/egui/crates/egui_extras", default-features = false }
+eframe = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false, features = ["default_fonts", "wgpu"] }
+egui = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false, features = ["serde"] }
+egui_extras = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false }
+# eframe = { path = "B:/dev/egui/crates/eframe", default-features = false, features = ["default_fonts", "wgpu"] }
+# egui = { path = "B:/dev/egui/crates/egui", default-features = false, features = ["serde"] }
+# egui_extras = { path = "B:/dev/egui/crates/egui_extras", default-features = false }
 fast_image_resize = { version = "6.0.0", features = ["image"] }
 hotpath = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -51,7 +51,7 @@ serde_json = "1.0.121"
 simplelog = "0.12.1"
 strum = { version = "0.27.1", features = ["derive"] }
 sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "system"] }
-wgpu = { version = "29.0.3", features = ["spirv"] }
+wgpu = { version = "30.0.0", features = ["spirv"] }
 which = "8.0.0"
 widestring = { version = "1.2.0", default-features = false, features = ["std"] }
 windows = { version = "0.62.2", features = [
