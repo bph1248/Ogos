@@ -2887,6 +2887,7 @@ dependencies = [
  "simplelog",
  "strum",
  "thiserror 2.0.18",
+ "wgpu",
  "which",
  "widestring",
  "windows 0.61.3",

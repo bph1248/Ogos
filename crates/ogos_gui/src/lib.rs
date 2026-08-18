@@ -21,8 +21,7 @@ use eframe::{
             ScrollSource
         }
     },
-    egui_wgpu,
-    wgpu
+    egui_wgpu
 };
 use fast_image_resize as fir;
 use indexmap::*;
@@ -3389,11 +3388,8 @@ impl<'a> MediaBrowser<'a> {
             }
         }
 
-        let resident_ready = WaitGroup::new();
-        let resident_ready_ = resident_ready.clone();
-        wgpu.queue.on_submitted_work_done(move || drop(resident_ready_));
-        wgpu.queue.submit(None);
-        resident_ready.wait();
+        let submission_index = wgpu.queue.submit(None);
+        wgpu.device.poll(wgpu::PollType::Wait { submission_index: Some(submission_index), timeout: None })?;
 
         Ok(Self {
             wgpu: wgpu.clone(),
