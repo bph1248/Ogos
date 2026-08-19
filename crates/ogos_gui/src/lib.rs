@@ -4855,12 +4855,14 @@ impl<'a> MediaBrowser<'a> {
                                 ease_in_out_scroller.multiplier_edit.clear();
                                 ease_in_out_scroller.multiplier = multiplier.max(0.1);
                             }
+
                             ui.end_row();
                         },
                         ScrollKind::SpringDamper => {
                             spring_damper_scroller.update_display();
 
                             ui.checkbox(&mut spring_damper_scroller.should_smooth, "Smooth");
+
                             ui.end_row();
 
                             ui.label("Distance:");
@@ -4868,10 +4870,15 @@ impl<'a> MediaBrowser<'a> {
                                 .hint_text(&spring_damper_scroller.multiplier_display)
                                 .show(ui)
                                 .response;
-                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(multiplier) = spring_damper_scroller.multiplier_edit.parse::<f32>() {
-                                spring_damper_scroller.multiplier_edit.clear();
-                                spring_damper_scroller.multiplier = multiplier.max(0.1);
+                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) {
+                                if let Ok(multiplier) = spring_damper_scroller.multiplier_edit.parse::<f32>() {
+                                    spring_damper_scroller.multiplier_edit.clear();
+                                    spring_damper_scroller.multiplier = multiplier.max(0.1);
+                                }
+
+                                multiplier_edit_resp.request_focus();
                             }
+
                             ui.end_row();
 
                             ui.label("Stiffness:");
@@ -4879,10 +4886,15 @@ impl<'a> MediaBrowser<'a> {
                                 .hint_text(&spring_damper_scroller.stiffness_display)
                                 .show(ui)
                                 .response;
-                            if stiffness_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(omega) = spring_damper_scroller.stiffness_edit.parse::<f32>() {
-                                spring_damper_scroller.stiffness_edit.clear();
-                                spring_damper_scroller.update_stiffness(omega.max(0.1));
+                            if stiffness_edit_resp.lost_focus() && enter_pressed(ui) {
+                                if let Ok(omega) = spring_damper_scroller.stiffness_edit.parse::<f32>() {
+                                    spring_damper_scroller.stiffness_edit.clear();
+                                    spring_damper_scroller.update_stiffness(omega.max(0.1));
+                                }
+
+                                stiffness_edit_resp.request_focus();
                             }
+
                             ui.end_row();
 
                             ui.label("Bounce:");
@@ -4890,10 +4902,15 @@ impl<'a> MediaBrowser<'a> {
                                 .hint_text(&spring_damper_scroller.bounce_display)
                                 .show(ui)
                                 .response;
-                            if bounce_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(bounce) = spring_damper_scroller.bounce_edit.parse::<f32>() {
-                                spring_damper_scroller.bounce_edit.clear();
-                                spring_damper_scroller.update_bounce(bounce.max(0.1));
+                            if bounce_edit_resp.lost_focus() && enter_pressed(ui) {
+                                if let Ok(bounce) = spring_damper_scroller.bounce_edit.parse::<f32>() {
+                                    spring_damper_scroller.bounce_edit.clear();
+                                    spring_damper_scroller.update_bounce(bounce.max(0.1));
+                                }
+
+                                bounce_edit_resp.request_focus();
                             }
+
                             ui.end_row();
                         }
                     }
