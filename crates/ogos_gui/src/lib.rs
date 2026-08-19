@@ -64,15 +64,16 @@ const ASPECT_RATIO_3_2: f32 = 1.5;
 const BLACKMAN_SUPPORT: f64 = 3.;
 const CELL_STROKE: egui::Stroke = egui::Stroke { width: CELL_STROKE_WIDTH, color: egui::Color32::from_rgb(250, 246, 235) };
 const CELL_STROKE_WIDTH: f32 = 3.;
+const DARK_GRAY: egui::Color32 = egui::Color32::from_gray(27);
 const DEFAULT_FRAME_INNER_MARGIN: f32 = 8.;
 const DETAILS_ENTRY_COUNT: usize = 64;
 const FRAME_INNER_MARGIN: f32 = 15.;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
+const NIGHT_LIGHT: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
-const SUBMENU_WIDTH_SML: f32 = 180.;
-const SUBMENU_WIDTH_MED: f32 = 200.;
+const SUBMENU_WIDTH_SML: f32 = 200.;
 const SUBMENU_WIDTH_LRG: f32 = 260.;
 
 thread_local! {
@@ -548,6 +549,7 @@ struct Manga {
     tint: egui::Rgba,
     night_light_alpha_pc: f32,
     white_level_pc: f32,
+    background_level_pc: f32,
     scroll_kind: ScrollKind,
     scroll_offset: egui::Vec2,
     scroll_offset_y_anchor: Option<f32>,
@@ -569,6 +571,7 @@ impl Manga {
             filter: FilterAccel::Gpu(FilterKind::Blackman),
             tint: egui::Rgba::WHITE,
             white_level_pc: 100.,
+            background_level_pc: 100.,
             scroll_kind,
             ease_in_out_scroller,
             spring_damper_scroller,
@@ -2576,7 +2579,8 @@ fn fix_background_brush(hnd: Win32WindowHandle) {
     let hwnd = HWND(hnd.hwnd.get() as *mut c_void);
     (|| -> Res<()> {
         unsafe {
-            let new_brush = CreateSolidBrush(make_colorref(27, 27, 27));
+            let luma = DARK_GRAY.r();
+            let new_brush = CreateSolidBrush(make_colorref(luma, luma, luma));
             let res = SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, new_brush.0 as isize);
 
             if res == 0 { // Either the brush wasn't set previously or the function failed
@@ -3011,7 +3015,7 @@ struct MediaBrowser<'a> {
 }
 impl<'a> eframe::App for MediaBrowser<'a> {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Color32::from_rgba_unmultiplied(27, 27, 27, 255).to_normalized_gamma_f32()
+        DARK_GRAY.to_normalized_gamma_f32()
     }
 
     #[hotpath::measure]
@@ -3781,6 +3785,18 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
+    fn set_tint(&mut self) {
+        let night_light_alpha = self.manga.night_light_alpha_pc / 100.;
+        let mut tint = egui::Rgba::WHITE.blend(NIGHT_LIGHT.multiply(night_light_alpha));
+
+        let white_level = (self.manga.white_level_pc / 100.).powf(2.2);
+        tint[0] *= white_level;
+        tint[1] *= white_level;
+        tint[2] *= white_level;
+
+        self.manga.tint = tint;
+    }
+
     fn sort_grid_view(&mut self) {
         sort_grid_view(&mut self.grid_view, &self.grid_entries);
     }
@@ -4157,6 +4173,7 @@ impl<'a> MediaBrowser<'a> {
     #[hotpath::measure]
     fn central_panel_manga(&mut self, ui: &mut egui::Ui) {
         if requested_go_back(ui) {
+            self.frame = self.frame.fill(DARK_GRAY);
             self.manga = mem::take(&mut self.manga).reset();
             self.view_kind = ViewKind::Details;
 
@@ -4427,6 +4444,7 @@ impl<'a> MediaBrowser<'a> {
                 ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
                 ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
                 ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
+                ui.menu_button("Levels", |ui| self.levels_submenu_manga(ui));
 
                 ui.separator();
 
@@ -4445,16 +4463,14 @@ impl<'a> MediaBrowser<'a> {
         const SCALE_MAX: f32 = 300.;
 
         ui.scope(|ui| {
-            ui.spacing_mut().slider_width = SUBMENU_WIDTH_MED;
+            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
 
             let scale_slider_resp = ui.add(egui::Slider::new(&mut self.manga.scale_pc, SCALE_MIN..=SCALE_MAX)
                 .clamping(egui::SliderClamping::Always)
                 .fixed_decimals(0)
                 .step_by(5.));
 
-            if scale_slider_resp.drag_stopped() ||
-                scale_slider_resp.lost_focus() && enter_pressed(ui)
-            {
+            if scale_slider_resp.drag_stopped() || scale_slider_resp.lost_focus() && enter_pressed(ui) {
                 self.manga.flagged_scale = Some(viewport);
             }
         });
@@ -4566,11 +4582,8 @@ impl<'a> MediaBrowser<'a> {
 
     fn tint_submenu_manga(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            const NIGHT_LIGHT: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
-            const WHITE: egui::Rgba = egui::Rgba::WHITE;
-
             ui.scope(|ui| {
-                ui.spacing_mut().slider_width = SUBMENU_WIDTH_MED;
+                ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
 
                 ui.label("Night light:");
 
@@ -4578,30 +4591,43 @@ impl<'a> MediaBrowser<'a> {
                     .clamping(egui::SliderClamping::Always)
                     .fixed_decimals(0));
 
-                ui.label("White:");
-
-                let white_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_level_pc, 0.0..=100.)
-                    .clamping(egui::SliderClamping::Always)
-                    .fixed_decimals(0));
-
-                let mut set_tint = || {
-                    let night_light_alpha = self.manga.night_light_alpha_pc / 100.;
-                    let mut tint = WHITE.blend(NIGHT_LIGHT.multiply(night_light_alpha));
-
-                    let white_level = (self.manga.white_level_pc / 100.).powf(2.2);
-                    tint[0] *= white_level;
-                    tint[1] *= white_level;
-                    tint[2] *= white_level;
-
-                    self.manga.tint = tint;
-                };
                 if night_light_alpha_slider_resp.dragged() || night_light_alpha_slider_resp.lost_focus() && enter_pressed(ui) {
-                    set_tint();
-                }
-                if white_level_slider_resp.dragged() || white_level_slider_resp.lost_focus() && enter_pressed(ui) {
-                    set_tint();
+                    self.set_tint();
                 }
             });
+        });
+    }
+
+    fn levels_submenu_manga(&mut self, ui: &mut egui::Ui) {
+        ui.scope(|ui| {
+            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
+
+            ui.label("Page:");
+
+            let white_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_level_pc, 0.0..=100.)
+                .clamping(egui::SliderClamping::Always)
+                .fixed_decimals(0));
+
+            if white_level_slider_resp.dragged() || white_level_slider_resp.lost_focus() && enter_pressed(ui) {
+                self.set_tint();
+            }
+
+            ui.label("Background:");
+
+            let background_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.background_level_pc, 0.0..=100.)
+                .clamping(egui::SliderClamping::Always)
+                .fixed_decimals(0));
+
+            if background_level_slider_resp.dragged() || background_level_slider_resp.lost_focus() && enter_pressed(ui) {
+                let mut background: egui::Rgba = DARK_GRAY.into();
+
+                let background_level = self.manga.background_level_pc / 100.;
+                background[0] *= background_level;
+                background[1] *= background_level;
+                background[2] *= background_level;
+
+                self.frame = self.frame.fill(background.into());
+            }
         });
     }
 
@@ -4847,9 +4873,13 @@ impl<'a> MediaBrowser<'a> {
                                 .hint_text(&ease_in_out_scroller.multiplier_display)
                                 .show(ui)
                                 .response;
-                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) && let Ok(multiplier) = ease_in_out_scroller.multiplier_edit.parse::<f32>() {
-                                ease_in_out_scroller.multiplier_edit.clear();
-                                ease_in_out_scroller.multiplier = multiplier.max(0.1);
+                            if multiplier_edit_resp.lost_focus() && enter_pressed(ui) {
+                                if let Ok(multiplier) = ease_in_out_scroller.multiplier_edit.parse::<f32>() {
+                                    ease_in_out_scroller.multiplier_edit.clear();
+                                    ease_in_out_scroller.multiplier = multiplier.max(0.1);
+                                }
+
+                                multiplier_edit_resp.request_focus();
                             }
 
                             ui.end_row();
@@ -4862,6 +4892,7 @@ impl<'a> MediaBrowser<'a> {
                             ui.end_row();
 
                             ui.label("Distance:");
+
                             let multiplier_edit_resp = egui::TextEdit::singleline(&mut spring_damper_scroller.multiplier_edit)
                                 .hint_text(&spring_damper_scroller.multiplier_display)
                                 .show(ui)
@@ -4878,6 +4909,7 @@ impl<'a> MediaBrowser<'a> {
                             ui.end_row();
 
                             ui.label("Stiffness:");
+
                             let stiffness_edit_resp = egui::TextEdit::singleline(&mut spring_damper_scroller.stiffness_edit)
                                 .hint_text(&spring_damper_scroller.stiffness_display)
                                 .show(ui)
@@ -4894,6 +4926,7 @@ impl<'a> MediaBrowser<'a> {
                             ui.end_row();
 
                             ui.label("Bounce:");
+
                             let bounce_edit_resp = egui::TextEdit::singleline(&mut spring_damper_scroller.bounce_edit)
                                 .hint_text(&spring_damper_scroller.bounce_display)
                                 .show(ui)
