@@ -1989,8 +1989,13 @@ fn enter_pressed(ui: &mut egui::Ui) -> bool {
 }
 
 fn get_wheel_state(ui: &mut egui::Ui, refresh_rate: u32) -> WheelState {
+    let requested_repaint_last_pass = ui.requested_repaint_last_pass();
+
     ui.input(|state| {
-        let dt = state.unstable_dt.min(1. / refresh_rate as f32);
+        let dt = match requested_repaint_last_pass {
+            true => state.unstable_dt,
+            false => 1. / refresh_rate as f32
+        };
 
         let wheel_delta_raw = {
             let mut acc = 0.;
