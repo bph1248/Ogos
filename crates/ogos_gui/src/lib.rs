@@ -5812,6 +5812,10 @@ impl<'a> MediaBrowser<'a> {
                     ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
                     ui.add_enabled(self.enable_override_glsl_shaders_checkbox, egui::Checkbox::new(&mut self.override_glsl_shaders, "Override GLSL shaders"));
                     ui.menu_button("Discord Rich Presence", |ui| self.discord_menu(ui));
+
+                    ui.separator();
+
+                    self.exit_button(ui);
                 });
             });
     }
