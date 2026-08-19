@@ -4590,10 +4590,7 @@ impl<'a> MediaBrowser<'a> {
                     .clamping(egui::SliderClamping::Always)
                     .fixed_decimals(0));
 
-                let union_resp = night_light_alpha_slider_resp.union(white_level_slider_resp);
-                if union_resp.dragged() ||
-                    union_resp.lost_focus() && enter_pressed(ui)
-                {
+                let mut set_tint = || {
                     let night_light_alpha = self.manga.night_light_alpha_pc / 100.;
                     let mut tint = WHITE.blend(NIGHT_LIGHT.multiply(night_light_alpha));
 
@@ -4603,6 +4600,12 @@ impl<'a> MediaBrowser<'a> {
                     tint[2] *= white_level;
 
                     self.manga.tint = tint;
+                };
+                if night_light_alpha_slider_resp.dragged() || night_light_alpha_slider_resp.lost_focus() && enter_pressed(ui) {
+                    set_tint();
+                }
+                if white_level_slider_resp.dragged() || white_level_slider_resp.lost_focus() && enter_pressed(ui) {
+                    set_tint();
                 }
             });
         });
