@@ -4811,7 +4811,7 @@ impl<'a> MediaBrowser<'a> {
 
     fn scroll_submenu_common(&mut self, ui: &mut egui::Ui, stage: Stage) {
         ui.menu_button("Scroll", |ui| {
-            ui.set_min_width(SUBMENU_WIDTH_LRG);
+            ui.set_max_width(SUBMENU_WIDTH_LRG);
 
             let scroll_kind;
             let ease_in_out_scroller;
