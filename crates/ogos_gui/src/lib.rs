@@ -4614,33 +4614,35 @@ impl<'a> MediaBrowser<'a> {
     fn bookmark_submenu_manga(&mut self, ui: &mut egui::Ui) {
         ui.set_min_width(SUBMENU_WIDTH_LRG);
 
-        if ui.button("Set").clicked() {
-            let pivot = self.get_pivot();
+        ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+            if ui.button("Set").clicked() {
+                let pivot = self.get_pivot();
 
-            let grid_entry_info = &mut self.grid_entries[self.details_grid_entry_i];
-            grid_entry_info.bookmark = Some(pivot);
-        }
-
-        let bookmark = &mut self.grid_entries[self.details_grid_entry_i].bookmark;
-
-        if bookmark.is_some() {
-            ui.separator();
-
-            if ui.button("Clear").clicked() {
-                *bookmark = None;
+                let grid_entry_info = &mut self.grid_entries[self.details_grid_entry_i];
+                grid_entry_info.bookmark = Some(pivot);
             }
-        }
 
-        if let Some(pivot) = bookmark && ui.button("Jump").clicked() {
-            let viewport_half_height = self.central_rect.height().div_euclid(2.);
+            let bookmark = &mut self.grid_entries[self.details_grid_entry_i].bookmark;
 
-            let page_info = &self.manga.view[pivot.page_i];
-            let scroll_offset_y = page_info.offset +
-                pivot.page_inset_pc.mul(page_info.extent.height) -
-                viewport_half_height;
+            if bookmark.is_some() {
+                ui.separator();
 
-            self.manga.go_to_scroll_offset_y = Some(scroll_offset_y);
-        }
+                if ui.button("Clear").clicked() {
+                    *bookmark = None;
+                }
+            }
+
+            if let Some(pivot) = bookmark && ui.button("Jump").clicked() {
+                let viewport_half_height = self.central_rect.height().div_euclid(2.);
+
+                let page_info = &self.manga.view[pivot.page_i];
+                let scroll_offset_y = page_info.offset +
+                    pivot.page_inset_pc.mul(page_info.extent.height) -
+                    viewport_half_height;
+
+                self.manga.go_to_scroll_offset_y = Some(scroll_offset_y);
+            }
+        });
     }
 
     fn common_submenus(&mut self, ui: &mut egui::Ui, stage: Stage) {
