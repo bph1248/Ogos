@@ -59,6 +59,7 @@ use windows::{
         }
     }
 };
+use winit::window::Window;
 
 const ASPECT_RATIO_3_2: f32 = 1.5;
 const BLACKMAN_SUPPORT: f64 = 3.;
@@ -1991,13 +1992,13 @@ fn enter_pressed(ui: &mut egui::Ui) -> bool {
     ui.input(|state| state.key_pressed(egui::Key::Enter))
 }
 
-fn get_wheel_state(ui: &mut egui::Ui, refresh_rate: u32) -> WheelState {
+fn get_dt_wheel_state(ui: &mut egui::Ui, window: &Arc<Window>) -> WheelState {
     let requested_repaint_last_pass = ui.requested_repaint_last_pass();
 
     ui.input(|state| {
         let dt = match requested_repaint_last_pass {
             true => state.unstable_dt,
-            false => 1. / refresh_rate as f32
+            false => 1. / get_refresh_rate(window) as f32
         };
 
         let wheel_delta_raw = {
@@ -2633,6 +2634,12 @@ fn get_image_states_from_grid_entry_mut<'a>(images: &'a mut IndexMap<Arc<str>, I
     image_states
 }
 
+fn get_refresh_rate(window: &Arc<Window>) -> u32 {
+    let monitor = window.current_monitor().unwrap();
+
+    monitor.refresh_rate_millihertz().unwrap() / 1000
+}
+
 fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect, clip_rect: Option<egui::Rect>) {
     let mut painter = ui.layer_painter(ui.layer_id());
     if let Some(clip_rect) = clip_rect {
@@ -2916,7 +2923,7 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
 struct MediaBrowserInfo<'a> {
     ctx: &'a egui::Context,
     wgpu: &'a egui_wgpu::RenderState,
-    refresh_rate: u32,
+    window: Arc<Window>,
     window_inner_extent: Extent2dF,
     image_dirs: &'static mut ImageDirs,
     cache_path: PathBuf,
@@ -2926,7 +2933,7 @@ struct MediaBrowserInfo<'a> {
 struct MediaBrowser<'a> {
     wgpu: egui_wgpu::RenderState,
     thread_pool: Arc<ThreadPool>,
-    refresh_rate: u32,
+    window: Arc<Window>,
     enable_decorations: bool,
     enable_fullscreen: bool,
     enable_reactive_mode: bool,
@@ -3190,7 +3197,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 }
 impl<'a> MediaBrowser<'a> {
     fn new(info: MediaBrowserInfo) -> Res<Self> {
-        let MediaBrowserInfo { ctx, wgpu, refresh_rate, window_inner_extent, image_dirs, cache_path, mut cache } = info;
+        let MediaBrowserInfo { ctx, wgpu, window, window_inner_extent, image_dirs, cache_path, mut cache } = info;
 
         let config = config::get().read()?;
         let (grid_cell_width,
@@ -3259,7 +3266,7 @@ impl<'a> MediaBrowser<'a> {
 
         let ctx_ = ctx.clone();
         let wgpu_ = wgpu.clone();
-        let chunk_size = PCIE_TRANSFER_LIMIT_MIBS / refresh_rate as usize * 1024_usize.pow(2);
+        let chunk_size = PCIE_TRANSFER_LIMIT_MIBS / get_refresh_rate(&window) as usize * 1024_usize.pow(2);
         let (charon_ship, from_charon) = mpmc::unbounded();
         let (to_demeter, demeter_port) = mpmc::unbounded();
         let (demeter_ship, from_demeter) = mpmc::unbounded();
@@ -3400,7 +3407,7 @@ impl<'a> MediaBrowser<'a> {
 
         Ok(Self {
             wgpu: wgpu.clone(),
-            refresh_rate,
+            window,
             enable_decorations: cache.enable_decorations,
             enable_fullscreen: cache.enable_fullscreen,
             enable_reactive_mode: cache.enable_reactive_mode,
@@ -4185,7 +4192,7 @@ impl<'a> MediaBrowser<'a> {
         let opacity = self.animation.get_opacity(ui);
         ui.set_opacity(opacity);
 
-        let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui, self.refresh_rate);
+        let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_dt_wheel_state(ui, &self.window);
 
         // Scale
         if let Some(viewport) = self.manga.flagged_scale.take() {
@@ -5190,7 +5197,7 @@ impl<'a> MediaBrowser<'a> {
                     )
                 },
                 ScrollKind::SpringDamper => {
-                    let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui, self.refresh_rate);
+                    let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_dt_wheel_state(ui, &self.window);
                     let delta = if self.manga.spring_damper_scroller.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
                     self.spring_damper_scroller.step(ui, dt, delta);
 
@@ -6054,7 +6061,6 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                     let screen_extent: Extent2d = monitor.size().into();
                     let window_outer_extent: Extent2d = window.outer_size().into();
                     let window_inner_extent: Extent2dF = window.inner_size().into();
-                    let refresh_rate = monitor.refresh_rate_millihertz().unwrap() / 1000;
                     if cache.center_window && !cache.enable_fullscreen {
                         let pos = window_outer_extent.center_on(screen_extent);
                         window.set_outer_position(pos.into_::<winit::dpi::PhysicalPosition<i32>>());
@@ -6063,7 +6069,7 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                     let media_browser_info = MediaBrowserInfo {
                         ctx: &cctx.egui_ctx,
                         wgpu: cctx.wgpu_render_state.as_ref().unwrap(),
-                        refresh_rate,
+                        window: window.clone(),
                         window_inner_extent,
                         image_dirs,
                         cache_path,
