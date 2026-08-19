@@ -2927,9 +2927,7 @@ struct MediaBrowser<'a> {
     enable_fullscreen: bool,
     enable_reactive_mode: bool,
     center_window: bool,
-    screen_extent: Extent2dF,
     window_inner_extent: Extent2dF,
-    window_outer_extent: Extent2dF,
     window_inner_extent_width_edit: String,
     window_inner_extent_height_edit: String,
     window_inner_extent_width_display: String,
@@ -3034,8 +3032,6 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                 }
             }
 
-            self.screen_extent = screen_extent.into();
-            self.window_outer_extent = window_outer_rect.into();
             self.window_inner_extent = window_inner_rect.into();
         });
 
@@ -3405,9 +3401,7 @@ impl<'a> MediaBrowser<'a> {
             enable_fullscreen: cache.enable_fullscreen,
             enable_reactive_mode: cache.enable_reactive_mode,
             center_window: cache.center_window,
-            screen_extent: default!(),
             window_inner_extent: default!(),
-            window_outer_extent: default!(),
             window_inner_extent_width_edit: default!(),
             window_inner_extent_height_edit: default!(),
             window_inner_extent_width_display: default!(),
@@ -4979,46 +4973,63 @@ impl<'a> MediaBrowser<'a> {
         .map(|shown| shown.response);
 
         if !self.tag_win_button_menu_is_open {
-            let hover_pos = ui.ctx().input(|state| state.pointer.hover_pos());
+            let (
+                hover_pos,
+                window_is_fullscreen_or_maximised
+            ) = ui.input(|state| {
+                let viewport = state.viewport();
+
+                (
+                    state.pointer.hover_pos(),
+                    viewport.fullscreen.unwrap() || viewport.maximized.unwrap()
+                )
+            });
 
             match hover_pos {
-                Some(hover_pos) => {
+                Some(hover_pos) => { // Cursor inside window
                     self.tag_win_cursor_checked = false;
 
-                    if let Some(resp) = tag_win_resp.as_ref() {
-                        match resp.contains_pointer() {
-                            true => self.tag_win_time_stamp = Some(now!()),
-                            false => if hover_pos.x > resp.rect.right() {
-                                self.tag_win_time_stamp = None;
-                                self.tag_win_should_open = false;
+                    match tag_win_resp.as_ref() {
+                        Some(tag_win_resp) => { // Tag win open
+                            match tag_win_resp.contains_pointer() {
+                                true => self.tag_win_time_stamp = Some(now!()),
+                                false => if hover_pos.x > tag_win_resp.rect.right() {
+                                    self.tag_win_time_stamp = None;
+                                    self.tag_win_should_open = false;
+                                }
+                            }
+
+                            if tag_win_resp.clicked() {
+                                self.reset_grid_entries_selection();
                             }
                         }
+                        None => if window_is_fullscreen_or_maximised { // Tag win closed
+                            let cursor_catch_rect = egui::Rect::everything_left_of(self.central_rect.left());
 
-                        if resp.clicked() {
-                            self.reset_grid_entries_selection();
-                        }
-                    }
-                }
-                None => {
-                    if !self.tag_win_cursor_checked {
-                        let mut cursor_pos = POINT::default();
-                        unsafe { if GetCursorPos(&mut cursor_pos).is_err() {
-                            return
-                        } }
-                        #[allow(clippy::cast_precision_loss)]
-                        let cursor_pos = egui::pos2(cursor_pos.x as f32, cursor_pos.y as f32);
-
-                        if let Some(inner_rect) = ui.ctx().input(|state| state.viewport().inner_rect) {
-                            let cursor_catch_rect = egui::Rect::everything_left_of(inner_rect.left());
-
-                            if cursor_catch_rect.contains(cursor_pos) {
+                            if cursor_catch_rect.contains(hover_pos) {
                                 self.tag_win_time_stamp = Some(now!());
                                 self.tag_win_should_open = true;
                             }
-
-                            self.tag_win_cursor_checked = true;
                         }
                     }
+                }
+                None => if !self.tag_win_cursor_checked { // Cursor outside window
+                    let mut cursor_pos = POINT::default();
+                    if unsafe { GetCursorPos(&mut cursor_pos).is_err() } {
+                        return
+                    }
+                    #[allow(clippy::cast_precision_loss)]
+                    let cursor_pos = egui::pos2(cursor_pos.x as f32, cursor_pos.y as f32);
+
+                    let window_inner_rect = ui.ctx().input(|state| state.viewport().inner_rect).unwrap();
+                    let cursor_catch_rect = egui::Rect::everything_left_of(window_inner_rect.left()); // Cursor exited the window
+
+                    if cursor_catch_rect.contains(cursor_pos) {
+                        self.tag_win_time_stamp = Some(now!());
+                        self.tag_win_should_open = true;
+                    }
+
+                    self.tag_win_cursor_checked = true;
                 }
             }
 
