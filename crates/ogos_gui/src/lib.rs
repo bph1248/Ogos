@@ -4419,8 +4419,9 @@ impl<'a> MediaBrowser<'a> {
             .wheel_scroll_multiplier(scroll_multiplier)
             .show_viewport(ui, |ui, viewport| {
                 ui.set_min_size([self.manga.view_extent.width.max(self.central_rect.width()), self.manga.view_extent.height].into());
+                let background_resp = ui.interact(ui.min_rect(), ui.id().with("background"), egui::Sense::click());
 
-                self.show_viewport_manga(ui, viewport)
+                self.show_viewport_manga(ui, viewport, background_resp)
             })
             .state.offset;
 
@@ -4435,7 +4436,7 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn show_viewport_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
+    fn show_viewport_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, background_resp: egui::Response) {
         ui.set_clip_rect(self.central_rect);
         ui.spacing_mut().item_spacing = egui::Vec2::splat(0.0);
 
@@ -4461,7 +4462,7 @@ impl<'a> MediaBrowser<'a> {
                     let image_resp = try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect, self.manga.tint);
 
                     if let Some(image_resp) = image_resp {
-                        self.context_menu_manga(viewport, &image_resp);
+                        self.context_menu_manga(viewport, &image_resp.union(background_resp.clone()));
                     }
                 }
             }
