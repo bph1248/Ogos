@@ -4493,6 +4493,10 @@ impl<'a> MediaBrowser<'a> {
         egui::Popup::context_menu(resp)
             .close_behavior(close_behaviour)
             .show(|ui| {
+                ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
+
+                ui.separator();
+
                 ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
                 ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
                 ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
@@ -4500,7 +4504,6 @@ impl<'a> MediaBrowser<'a> {
 
                 ui.separator();
 
-                ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
                 self.display_submenu_common(ui);
                 self.scroll_submenu_common(ui, Stage::Manga);
 
