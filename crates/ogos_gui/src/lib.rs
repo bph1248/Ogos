@@ -586,8 +586,9 @@ impl Manga {
         }
     }
 
-    fn reset(self) -> Self {
+    fn reset(mut self) -> Self {
         self.spring_damper_scroller.stop();
+        self.stop_kinesis = true;
 
         for page_info in self.view {
             page_info.gen_id.fetch_add(1, Ordering::Relaxed);
@@ -602,7 +603,7 @@ impl Manga {
             ease_in_out_scroller: self.ease_in_out_scroller,
             spring_damper_scroller: self.spring_damper_scroller,
             auto_scroller: self.auto_scroller,
-            stop_kinesis: true
+            stop_kinesis: self.stop_kinesis
         };
         Manga::new(manga_info)
     }
@@ -4356,7 +4357,7 @@ impl<'a> MediaBrowser<'a> {
         );
 
         let scroll_area_info = if self.manga.enable_auto_scroll {
-            let wheel_delta_smoothed = -wheel_delta_smoothed; // // Make camera, not content, move in direction of wheel
+            let wheel_delta_smoothed = -wheel_delta_smoothed; // Make camera (not content) move in direction of wheel
             self.manga.auto_scroll_vel += wheel_delta_smoothed * self.manga.auto_scroller.multiplier;
 
             let max_scroll_offset = self.manga.view_extent.height - self.central_rect.height();
