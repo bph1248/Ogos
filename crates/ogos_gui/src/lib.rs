@@ -2997,6 +2997,7 @@ struct MediaBrowser<'a> {
     enable_reactive_mode: bool,
     center_window: bool,
     window_inner_extent: Extent2dF,
+    window_windowed_inner_extent: Option<Extent2dF>,
     window_inner_extent_width_edit: String,
     window_inner_extent_height_edit: String,
     window_inner_extent_width_display: String,
@@ -3058,7 +3059,6 @@ struct MediaBrowser<'a> {
     discord_details_edit: String,
     discord_state_edit: String,
     discord_display_kind: DiscordDisplayKind,
-    open_error_win: bool,
     scaler: Arc<Scaler>,
     iris_ship: mpmc::Sender<ScaledTexManga>,
     from_iris: mpmc::Receiver<ScaledTexManga>,
@@ -3073,6 +3073,7 @@ struct MediaBrowser<'a> {
     chunk_size: usize,
     poll_ready: PollReady,
     manga: Manga,
+    open_error_win: bool,
     error_sx: mpmc::Sender<String>,
     error_rx: mpmc::Receiver<String>,
     error_msg: String,
@@ -3091,8 +3092,9 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             let screen_extent = viewport.monitor_size.unwrap();
             let window_outer_rect = viewport.outer_rect.unwrap();
             let window_inner_rect = viewport.inner_rect.unwrap();
+            let enable_fullscreen = viewport.fullscreen.unwrap_or(false);
 
-            if !self.enable_fullscreen {
+            if !enable_fullscreen {
                 let screen_center = screen_extent / 2.;
                 let window_outer_center = window_outer_rect.center();
                 let delta = window_outer_center.distance(screen_center.to_pos2());
@@ -3102,6 +3104,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             }
 
             self.window_inner_extent = window_inner_rect.into();
+            self.enable_fullscreen = enable_fullscreen;
         });
 
         egui::CentralPanel::default()
@@ -3201,7 +3204,10 @@ impl<'a> eframe::App for MediaBrowser<'a> {
         self.cache.enable_reactive_mode = self.enable_reactive_mode;
         self.cache.center_window = self.center_window;
         self.cache.enable_decorations = self.enable_decorations;
-        self.cache.window_inner_extent = Some(self.window_inner_extent);
+        self.cache.window_inner_extent = match self.enable_fullscreen {
+            true => self.window_windowed_inner_extent,
+            false => Some(self.window_inner_extent)
+        };
         self.cache.grid_cell_size = self.grid_cell_size;
         self.cache.details_cell_size = self.details_cell_size;
         self.cache.scroll_kind = self.scroll_kind;
@@ -3257,6 +3263,11 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 impl<'a> MediaBrowser<'a> {
     fn new(info: MediaBrowserInfo) -> Res<Self> {
         let MediaBrowserInfo { ctx, wgpu, window, window_inner_extent, image_dirs, cache_path, mut cache } = info;
+
+        unsafe {
+            let thread_hnd = GetCurrentThread();
+            SetThreadPriority(thread_hnd, THREAD_PRIORITY_ABOVE_NORMAL)?;
+        }
 
         let config = config::get().read()?;
         let (grid_cell_width,
@@ -3474,17 +3485,18 @@ impl<'a> MediaBrowser<'a> {
 
         Ok(Self {
             wgpu: wgpu.clone(),
+            thread_pool,
             window,
             enable_decorations: cache.enable_decorations,
             enable_fullscreen: cache.enable_fullscreen,
             enable_reactive_mode: cache.enable_reactive_mode,
             center_window: cache.center_window,
-            window_inner_extent: default!(),
+            window_inner_extent: cache.window_inner_extent.unwrap_or_default(),
+            window_windowed_inner_extent: cache.window_inner_extent,
             window_inner_extent_width_edit: default!(),
             window_inner_extent_height_edit: default!(),
             window_inner_extent_width_display: default!(),
             window_inner_extent_height_display: default!(),
-            thread_pool,
             image_dirs,
             images,
             deferred_metadata_sx,
@@ -4786,6 +4798,25 @@ impl<'a> MediaBrowser<'a> {
             let enable_fullscreen_checkbox_resp = ui.checkbox(&mut checked, "Fullscreen");
             if enable_fullscreen_checkbox_resp.clicked() {
                 ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(checked));
+
+                match checked {
+                    true => {
+                        self.window_windowed_inner_extent = Some(self.window_inner_extent);
+                        if !self.enable_decorations {
+                            ui.send_viewport_cmd(egui::ViewportCommand::Decorations(true)); // Else there's a line artifact at the top of the screen
+                        }
+                        ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+                    },
+                    false => {
+                        ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                        if !self.enable_decorations {
+                            ui.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+                        }
+                        if self.center_window {
+                            ui.send_viewport_cmd(egui::ViewportCommand::Center);
+                        }
+                    }
+                }
 
                 self.enable_fullscreen = checked;
             }
@@ -6121,37 +6152,9 @@ fn make_native_options(viewport: egui::ViewportBuilder) -> eframe::NativeOptions
 
 pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
     let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png"))?;
-    let mut viewport = egui::ViewportBuilder::default()
+    let viewport = egui::ViewportBuilder::default()
         .with_icon(icon_data);
-    let media_browser_prep = if let GuiKind::MediaBrowser = kind {
-        let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
-        let base_images_dir = current_exe_dir.join("images");
-        let grid_images_dir = base_images_dir.join("grid");
-        let details_images_dir = base_images_dir.join("details");
-        let image_dirs = ImageDirs {
-            base: base_images_dir,
-            grid: grid_images_dir,
-            details: details_images_dir
-        };
-        let image_dirs = Box::leak(Box::new(image_dirs));
 
-        let cache_path = image_dirs.base.join("cache").with_extension("json");
-        let cache_slc = fs::read(&cache_path)?;
-        let cache: Cache = serde_json::from_slice(&cache_slc)?;
-
-        if cache.enable_fullscreen {
-            viewport = viewport.with_fullscreen(true);
-        } else {
-            viewport = viewport.with_decorations(cache.enable_decorations);
-            if let Some(extent) = cache.window_inner_extent {
-                viewport = viewport.with_inner_size(extent);
-            }
-        }
-
-        Some((image_dirs, cache_path, cache))
-    } else {
-        None
-    };
     let native_options = make_native_options(viewport);
 
     eframe::run_native(
@@ -6189,17 +6192,37 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                     Box::new(Info::new(msg))
                 },
                 GuiKind::MediaBrowser => {
-                    unsafe {
-                        let thread_hnd = GetCurrentThread();
-                        SetThreadPriority(thread_hnd, THREAD_PRIORITY_ABOVE_NORMAL)?;
+                    let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
+                    let base_images_dir = current_exe_dir.join("images");
+                    let grid_images_dir = base_images_dir.join("grid");
+                    let details_images_dir = base_images_dir.join("details");
+                    let image_dirs = ImageDirs {
+                        base: base_images_dir,
+                        grid: grid_images_dir,
+                        details: details_images_dir
+                    };
+                    let image_dirs = Box::leak(Box::new(image_dirs));
+
+                    let cache_path = image_dirs.base.join("cache").with_extension("json");
+                    let cache_slc = fs::read(&cache_path)?;
+                    let cache: Cache = serde_json::from_slice(&cache_slc)?;
+
+                    if let Some(extent) = cache.window_inner_extent {
+                        _ = window.request_inner_size(winit::dpi::LogicalSize::new(extent.width, extent.height));
                     }
 
-                    let (image_dirs, cache_path, cache) = media_browser_prep.unwrap();
+                    if cache.enable_fullscreen {
+                        window.set_decorations(true);
+                        window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                    } else {
+                        window.set_decorations(cache.enable_decorations);
+                    }
 
                     let monitor = window.current_monitor().unwrap();
                     let screen_extent: Extent2d = monitor.size().into();
                     let window_outer_extent: Extent2d = window.outer_size().into();
                     let window_inner_extent: Extent2dF = window.inner_size().into();
+
                     if cache.center_window && !cache.enable_fullscreen {
                         let pos = window_outer_extent.center_on(screen_extent);
                         window.set_outer_position(pos.into_::<winit::dpi::PhysicalPosition<i32>>());
