@@ -561,13 +561,16 @@ struct Manga {
     enable_auto_scroll: bool,
     auto_scroll_vel: f32,
     secondary_was_down: bool,
+    stop_kinesis: bool,
     residence: Range<usize>,
     visible_view: Range<usize>,
     stream: Stream,
     to_thanatos: LateInit<mpmc::Sender<Soul>>
 }
 impl Manga {
-    fn new(scroll_kind: ScrollKind, ease_in_out_scroller: EaseInOutScroller, spring_damper_scroller: SpringDamperScroller, auto_scroller: AutoScroller) -> Self {
+    fn new(info: MangaInfo) -> Self {
+        let MangaInfo { scroll_kind, ease_in_out_scroller, spring_damper_scroller, auto_scroller, stop_kinesis } = info;
+
         Self {
             scale_pc: 100.,
             filter: FilterAccel::Gpu(FilterKind::Blackman),
@@ -578,23 +581,30 @@ impl Manga {
             ease_in_out_scroller,
             spring_damper_scroller,
             auto_scroller,
+            stop_kinesis,
             ..default!()
         }
     }
 
     fn reset(self) -> Self {
+        self.spring_damper_scroller.stop();
+
         for page_info in self.view {
+            page_info.gen_id.fetch_add(1, Ordering::Relaxed);
+
             if let ImageStateManga::Ready { .. } = page_info.image_state {
                 self.to_thanatos.send(Soul::ImageState(page_info.image_state.into())).unwrap();
             }
         }
 
-        Manga::new(
-            self.scroll_kind,
-            self.ease_in_out_scroller,
-            self.spring_damper_scroller,
-            self.auto_scroller
-        )
+        let manga_info = MangaInfo {
+            scroll_kind: self.scroll_kind,
+            ease_in_out_scroller: self.ease_in_out_scroller,
+            spring_damper_scroller: self.spring_damper_scroller,
+            auto_scroller: self.auto_scroller,
+            stop_kinesis: true
+        };
+        Manga::new(manga_info)
     }
 
     fn flag_scale(&mut self, ui: &mut egui::Ui, scale_pc: f32, viewport: egui::Rect) {
@@ -607,6 +617,14 @@ impl Manga {
 
         ui.close();
     }
+}
+
+struct MangaInfo {
+    scroll_kind: ScrollKind,
+    ease_in_out_scroller: EaseInOutScroller,
+    spring_damper_scroller: SpringDamperScroller,
+    auto_scroller: AutoScroller,
+    stop_kinesis: bool
 }
 
 #[derive(Deserialize, Serialize)]
@@ -3100,7 +3118,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 
                             self.view_kind = ViewKind::Details;
                         },
-                    ViewKind::WaitManga => self.wait_manga(),
+                    ViewKind::WaitManga => self.wait_manga(ui),
                     ViewKind::Manga => self.central_panel_manga(ui),
                     ViewKind::Restart => {
                         self.reset_images();
@@ -3326,7 +3344,14 @@ impl<'a> MediaBrowser<'a> {
         let spring_damper_scroller_manga = cache.manga.spring_damper_scroller.into();
         let auto_scroller = cache.manga.auto_scroller.into();
 
-        let manga = Manga::new(scroll_kind_manga, ease_in_out_scroller_manga, spring_damper_scroller_manga, auto_scroller);
+        let manga_info = MangaInfo {
+            scroll_kind: scroll_kind_manga,
+            ease_in_out_scroller: ease_in_out_scroller_manga,
+            spring_damper_scroller: spring_damper_scroller_manga,
+            auto_scroller,
+            stop_kinesis: false
+        };
+        let manga = Manga::new(manga_info);
 
         let scaler = Arc::new(Scaler::new(&wgpu.device));
         let (iris_ship, from_iris) = mpmc::unbounded();
@@ -3747,12 +3772,14 @@ impl<'a> MediaBrowser<'a> {
         Ok(())
     }
 
-    fn wait_manga(&mut self) {
+    fn wait_manga(&mut self, ui: &mut egui::Ui) {
         self.stream_textures_stepped();
 
         if self.poll_ready.is_ready() {
             self.animation.target = false;
             self.view_kind = ViewKind::Manga;
+
+            ui.request_repaint();
         }
     }
 
@@ -4331,7 +4358,6 @@ impl<'a> MediaBrowser<'a> {
         let scroll_area_info = if self.manga.enable_auto_scroll {
             let wheel_delta_smoothed = -wheel_delta_smoothed; // // Make camera, not content, move in direction of wheel
             self.manga.auto_scroll_vel += wheel_delta_smoothed * self.manga.auto_scroller.multiplier;
-            ui.request_repaint();
 
             let max_scroll_offset = self.manga.view_extent.height - self.central_rect.height();
             let scroll_offset_y = (self.manga.scroll_offset.y + dt * self.manga.auto_scroll_vel).clamp(0., max_scroll_offset);
@@ -4340,10 +4366,12 @@ impl<'a> MediaBrowser<'a> {
                 self.manga.auto_scroll_vel = default!();
             }
 
+            ui.request_repaint();
+
             ScrollAreaInfo {
                 scroll_source: ScrollSource::NONE,
                 drag_by: egui::PointerButton::Primary,
-                stop_kinesis: false,
+                stop_kinesis: self.manga.stop_kinesis.take(),
                 scroll_offset: [scroll_offset_x_centered, scroll_offset_y].into(),
                 scroll_multiplier: default!()
             }
@@ -4374,7 +4402,7 @@ impl<'a> MediaBrowser<'a> {
                     ScrollAreaInfo {
                         scroll_source,
                         drag_by: egui::PointerButton::Primary,
-                        stop_kinesis: false,
+                        stop_kinesis: self.manga.stop_kinesis.take(),
                         scroll_offset: [scroll_offset_x_centered, scroll_offset_y + self.manga.spring_damper_scroller.delta].into(),
                         scroll_multiplier: [1.0, scroll_multiplier].into()
                     }
@@ -4383,7 +4411,7 @@ impl<'a> MediaBrowser<'a> {
                     if dragging {
                         ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
                     }
-                    let stop_kinesis = !self.manga.secondary_was_down;
+                    let stop_kinesis = self.manga.stop_kinesis.take() || !self.manga.secondary_was_down;
 
                     let scroll_source;
                     let scroll_multiplier;
