@@ -557,6 +557,7 @@ struct Manga {
     go_to_scroll_offset_y: Option<f32>,
     ease_in_out_scroller: EaseInOutScroller,
     spring_damper_scroller: SpringDamperScroller,
+    auto_scroller: AutoScroller,
     enable_auto_scroll: bool,
     auto_scroll_vel: f32,
     secondary_was_down: bool,
@@ -566,7 +567,7 @@ struct Manga {
     to_thanatos: LateInit<mpmc::Sender<Soul>>
 }
 impl Manga {
-    fn new(scroll_kind: ScrollKind, ease_in_out_scroller: EaseInOutScroller, spring_damper_scroller: SpringDamperScroller) -> Self {
+    fn new(scroll_kind: ScrollKind, ease_in_out_scroller: EaseInOutScroller, spring_damper_scroller: SpringDamperScroller, auto_scroller: AutoScroller) -> Self {
         Self {
             scale_pc: 100.,
             filter: FilterAccel::Gpu(FilterKind::Blackman),
@@ -576,6 +577,7 @@ impl Manga {
             scroll_kind,
             ease_in_out_scroller,
             spring_damper_scroller,
+            auto_scroller,
             ..default!()
         }
     }
@@ -590,7 +592,8 @@ impl Manga {
         Manga::new(
             self.scroll_kind,
             self.ease_in_out_scroller,
-            self.spring_damper_scroller
+            self.spring_damper_scroller,
+            self.auto_scroller
         )
     }
 
@@ -607,17 +610,20 @@ impl Manga {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(default)]
 struct MangaCache {
     scroll_kind: ScrollKind,
     ease_in_out_scroller: EaseInOutScrollerCache,
-    spring_damper_scroller: SpringDamperScrollerCache
+    spring_damper_scroller: SpringDamperScrollerCache,
+    auto_scroller: AutoScrollerCache
 }
 impl Default for MangaCache {
     fn default() -> Self {
         Self {
             scroll_kind: ScrollKind::SpringDamper,
             ease_in_out_scroller: EaseInOutScrollerCache::default_manga(),
-            spring_damper_scroller: SpringDamperScrollerCache::default_manga()
+            spring_damper_scroller: SpringDamperScrollerCache::default_manga(),
+            auto_scroller: default!()
         }
     }
 }
@@ -1011,7 +1017,7 @@ impl SpringDamperScroller {
 
         write!(self.multiplier_display, "{}", self.multiplier).unwrap();
         write!(self.stiffness_display, "{}", self.angular_frequency).unwrap();
-        write!(self.bounce_display, "{}", self.damping_ratio.recip()).unwrap();
+        write!(self.bounce_display, "{:.1}", self.damping_ratio.recip()).unwrap();
     }
 }
 impl From<SpringDamperScrollerCache> for SpringDamperScroller {
@@ -1025,6 +1031,41 @@ impl From<SpringDamperScrollerCache> for SpringDamperScroller {
             stiffness_display: format!("{}", value.angular_frequency),
             bounce_display: format!("{}", value.damping_ratio.recip()),
             ..default!()
+        }
+    }
+}
+
+#[derive(Default)]
+struct AutoScroller {
+    multiplier: f32,
+    multiplier_edit: String,
+    multiplier_display: String
+}
+impl From<AutoScrollerCache> for AutoScroller {
+    fn from(value: AutoScrollerCache) -> Self {
+        Self {
+            multiplier: value.multiplier,
+            multiplier_display: format!("{}", value.multiplier),
+            ..default!()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+struct AutoScrollerCache {
+    multiplier: f32
+}
+impl Default for AutoScrollerCache {
+    fn default() -> Self {
+        Self {
+            multiplier: 1.0
+        }
+    }
+}
+impl From<&AutoScroller> for AutoScrollerCache {
+    fn from(value: &AutoScroller) -> Self {
+        Self {
+            multiplier: value.multiplier
         }
     }
 }
@@ -3152,7 +3193,8 @@ impl<'a> eframe::App for MediaBrowser<'a> {
         self.cache.manga = MangaCache {
             scroll_kind: self.manga.scroll_kind,
             ease_in_out_scroller: self.manga.ease_in_out_scroller.as_(),
-            spring_damper_scroller: self.manga.spring_damper_scroller.as_()
+            spring_damper_scroller: self.manga.spring_damper_scroller.as_(),
+            auto_scroller: self.manga.auto_scroller.as_()
         };
         self.cache.tags = self.tags.keys().cloned().collect();
         self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
@@ -3284,8 +3326,9 @@ impl<'a> MediaBrowser<'a> {
         let ease_in_out_scroller_manga = cache.manga.ease_in_out_scroller.into();
         let spring_damper_scroller = cache.spring_damper_scroller.into();
         let spring_damper_scroller_manga = cache.manga.spring_damper_scroller.into();
+        let auto_scroller = cache.manga.auto_scroller.into();
 
-        let manga = Manga::new(scroll_kind_manga, ease_in_out_scroller_manga, spring_damper_scroller_manga);
+        let manga = Manga::new(scroll_kind_manga, ease_in_out_scroller_manga, spring_damper_scroller_manga, auto_scroller);
 
         let scaler = Arc::new(Scaler::new(&wgpu.device));
         let (iris_ship, from_iris) = mpmc::unbounded();
@@ -4287,7 +4330,8 @@ impl<'a> MediaBrowser<'a> {
         );
 
         let scroll_area_info = if self.manga.enable_auto_scroll {
-            self.manga.auto_scroll_vel -= wheel_delta_smoothed; // Wheel down -> content up
+            let wheel_delta_smoothed = -wheel_delta_smoothed; // // Make camera, not content, move in direction of wheel
+            self.manga.auto_scroll_vel += wheel_delta_smoothed * self.manga.auto_scroller.multiplier;
             ui.request_repaint();
 
             let max_scroll_offset = self.manga.view_extent.height - self.central_rect.height();
@@ -4537,7 +4581,7 @@ impl<'a> MediaBrowser<'a> {
                 ui.vertical(|ui| {
                     ui.set_min_width(SUBMENU_WIDTH_SML);
 
-                    ui.label("CPU:");
+                    ui.label(egui::RichText::new("CPU").underline());
 
                     if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Box)), "Box").clicked() {
                         self.manga.filter = FilterAccel::Cpu(fir::FilterType::Box);
@@ -4568,7 +4612,7 @@ impl<'a> MediaBrowser<'a> {
                 ui.vertical(|ui| {
                     ui.set_min_width(SUBMENU_WIDTH_SML);
 
-                    ui.label("GPU:");
+                    ui.label(egui::RichText::new("GPU").underline());
 
                     if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Nearest)), "Nearest").clicked() {
                         self.manga.filter = FilterAccel::Gpu(FilterKind::Nearest);
@@ -4842,6 +4886,10 @@ impl<'a> MediaBrowser<'a> {
         ui.menu_button("Scroll", |ui| {
             ui.set_max_width(SUBMENU_WIDTH_LRG);
 
+            if let Stage::Manga = stage {
+                ui.label(egui::RichText::new("Wheel").underline());
+            }
+
             let scroll_kind;
             let ease_in_out_scroller;
             let spring_damper_scroller;
@@ -4865,10 +4913,10 @@ impl<'a> MediaBrowser<'a> {
                 *scroll_kind = ScrollKind::EaseInOut;
             }
 
-            ui.separator();
-
+            const MIN_COL_WIDTH: f32 = 104.; // "Multiplier:" galley width + item spacing
             egui::Grid::new("grid")
                 .num_columns(2)
+                .min_col_width(MIN_COL_WIDTH)
                 .show(ui, |ui| {
                     match scroll_kind {
                         ScrollKind::EaseInOut => {
@@ -4951,6 +4999,34 @@ impl<'a> MediaBrowser<'a> {
                         }
                     }
                 });
+
+            if let Stage::Manga = stage {
+                ui.label(egui::RichText::new("Auto").underline());
+
+                egui::Grid::new("grid_auto")
+                    .num_columns(2)
+                    .min_col_width(MIN_COL_WIDTH)
+                    .show(ui, |ui| {
+                        ui.label("Multiplier:");
+
+                        self.manga.auto_scroller.multiplier_display.clear();
+                        write!(self.manga.auto_scroller.multiplier_display, "{:.1}", self.manga.auto_scroller.multiplier).unwrap();
+                        let multiplier_edit_resp = egui::TextEdit::singleline(&mut self.manga.auto_scroller.multiplier_edit)
+                            .hint_text(&self.manga.auto_scroller.multiplier_display)
+                            .show(ui)
+                            .response;
+                        if multiplier_edit_resp.lost_focus() && enter_pressed(ui) {
+                            if let Ok(multiplier) = self.manga.auto_scroller.multiplier_edit.parse::<f32>() {
+                                self.manga.auto_scroller.multiplier_edit.clear();
+                                self.manga.auto_scroller.multiplier = multiplier.max(0.1);
+                            }
+
+                            multiplier_edit_resp.request_focus();
+                        }
+
+                        ui.end_row();
+                    });
+            }
         });
     }
 
