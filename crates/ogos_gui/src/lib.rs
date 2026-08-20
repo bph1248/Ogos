@@ -1195,7 +1195,6 @@ impl StreamBuilder {
 }
 
 struct WheelState {
-    dt: f32,
     wheel_delta_raw: f32,
     wheel_delta_smoothed: f32
 }
@@ -2033,15 +2032,15 @@ fn enter_pressed(ui: &mut egui::Ui) -> bool {
     ui.input(|state| state.key_pressed(egui::Key::Enter))
 }
 
-fn get_dt_wheel_state(ui: &mut egui::Ui, window: &Arc<Window>) -> WheelState {
-    let requested_repaint_last_pass = ui.requested_repaint_last_pass();
+fn get_dt(ui: &mut egui::Ui, window: &Arc<Window>) -> f32 {
+    match ui.requested_repaint_last_pass() {
+        true => ui.input(|state| state.unstable_dt),
+        false => 1. / get_refresh_rate(window) as f32
+    }
+}
 
+fn get_wheel_state(ui: &mut egui::Ui) -> WheelState {
     ui.input(|state| {
-        let dt = match requested_repaint_last_pass {
-            true => state.unstable_dt,
-            false => 1. / get_refresh_rate(window) as f32
-        };
-
         let wheel_delta_raw = {
             let mut acc = 0.;
             for event in state.events.iter() {
@@ -2054,7 +2053,6 @@ fn get_dt_wheel_state(ui: &mut egui::Ui, window: &Arc<Window>) -> WheelState {
         };
 
         WheelState {
-            dt,
             wheel_delta_raw,
             wheel_delta_smoothed: state.smooth_scroll_delta.y
         }
@@ -4235,7 +4233,8 @@ impl<'a> MediaBrowser<'a> {
         let opacity = self.animation.get_opacity(ui);
         ui.set_opacity(opacity);
 
-        let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_dt_wheel_state(ui, &self.window);
+        let dt = get_dt(ui, &self.window);
+        let WheelState { wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui);
 
         // Scale
         if let Some(viewport) = self.manga.flagged_scale.take() {
@@ -4354,14 +4353,20 @@ impl<'a> MediaBrowser<'a> {
                     if self.manga.secondary_was_down.take() {
                         ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
                     }
-                    let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
-                        ScrollKind::EaseInOut =>
-                            (ScrollSource::ALL, self.manga.ease_in_out_scroller.multiplier),
+
+                    let scroll_source;
+                    let scroll_multiplier;
+                    match self.manga.scroll_kind {
+                        ScrollKind::EaseInOut => {
+                            scroll_source = ScrollSource::ALL;
+                            scroll_multiplier = self.manga.ease_in_out_scroller.multiplier;
+                        },
                         ScrollKind::SpringDamper => {
                             let delta = if self.manga.spring_damper_scroller.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
                             self.manga.spring_damper_scroller.step(ui, dt, delta);
 
-                            (ScrollSource::DRAG | ScrollSource::SCROLL_BAR, self.manga.spring_damper_scroller.multiplier)
+                            scroll_source = ScrollSource::DRAG | ScrollSource::SCROLL_BAR;
+                            scroll_multiplier = self.manga.spring_damper_scroller.multiplier;
                         }
                     };
                     let scroll_offset_y = self.manga.scroll_offset_y_anchor.take().unwrap_or(self.manga.scroll_offset.y);
@@ -4379,9 +4384,14 @@ impl<'a> MediaBrowser<'a> {
                         ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
                     }
                     let stop_kinesis = !self.manga.secondary_was_down;
-                    let (scroll_source, scroll_multiplier) = match self.manga.scroll_kind {
-                        ScrollKind::EaseInOut =>
-                            (ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL, self.manga.ease_in_out_scroller.multiplier),
+
+                    let scroll_source;
+                    let scroll_multiplier;
+                    match self.manga.scroll_kind {
+                        ScrollKind::EaseInOut => {
+                            scroll_source = ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL;
+                            scroll_multiplier = self.manga.ease_in_out_scroller.multiplier;
+                        }
                         ScrollKind::SpringDamper => {
                             match stop_kinesis {
                                 true => self.manga.spring_damper_scroller.stop(),
@@ -4391,7 +4401,8 @@ impl<'a> MediaBrowser<'a> {
                                 }
                             }
 
-                            (ScrollSource::DRAG, self.manga.spring_damper_scroller.multiplier)
+                            scroll_source = ScrollSource::DRAG;
+                            scroll_multiplier = self.manga.spring_damper_scroller.multiplier;
                         }
                     };
                     self.manga.scroll_offset_y_anchor.get_or_insert(self.manga.scroll_offset.y.round());
@@ -5269,25 +5280,28 @@ impl<'a> MediaBrowser<'a> {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
-            let (scroll_source, scroll_offset) = match self.scroll_kind {
+            let scroll_source;
+            let scroll_offset;
+            match self.scroll_kind {
                 ScrollKind::EaseInOut => {
-                    (
-                        ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL,
-                        self.grid_scroll_offset
-                    )
+                    scroll_source = ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL;
+                    scroll_offset = self.grid_scroll_offset;
                 },
                 ScrollKind::SpringDamper => {
-                    let WheelState { dt, wheel_delta_raw, wheel_delta_smoothed } = get_dt_wheel_state(ui, &self.window);
-                    let delta = if self.manga.spring_damper_scroller.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
-                    self.spring_damper_scroller.step(ui, dt, delta);
+                    let secondary_down = ui.input(|state| state.pointer.secondary_down());
 
-                    let scroll_offset = self.grid_scroll_offset + self.spring_damper_scroller.delta;
-                    let scroll_offset = scroll_offset.clamp(0., max_scroll_offset);
+                    if secondary_down {
+                        self.spring_damper_scroller.stop();
+                    } else {
+                        let dt = get_dt(ui, &self.window);
+                        let WheelState { wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui);
 
-                    (
-                        ScrollSource::SCROLL_BAR,
-                        scroll_offset
-                    )
+                        let delta = if self.manga.spring_damper_scroller.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
+                        self.spring_damper_scroller.step(ui, dt, delta);
+                    }
+
+                    scroll_source = ScrollSource::SCROLL_BAR;
+                    scroll_offset = (self.grid_scroll_offset + self.spring_damper_scroller.delta).clamp(0., max_scroll_offset);
                 }
             };
 
