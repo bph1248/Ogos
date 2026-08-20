@@ -4625,7 +4625,11 @@ impl<'a> MediaBrowser<'a> {
                 ui.vertical(|ui| {
                     ui.set_min_width(SUBMENU_WIDTH_SML);
 
-                    ui.label(egui::RichText::new("CPU").underline());
+                    ui.horizontal(|ui| {
+                        ui.label("CPU");
+
+                        ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
+                    });
 
                     if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Box)), "Box").clicked() {
                         self.manga.filter = FilterAccel::Cpu(fir::FilterType::Box);
@@ -4656,7 +4660,11 @@ impl<'a> MediaBrowser<'a> {
                 ui.vertical(|ui| {
                     ui.set_min_width(SUBMENU_WIDTH_SML);
 
-                    ui.label(egui::RichText::new("GPU").underline());
+                    ui.horizontal(|ui| {
+                        ui.label("GPU");
+
+                        ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
+                    });
 
                     if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Nearest)), "Nearest").clicked() {
                         self.manga.filter = FilterAccel::Gpu(FilterKind::Nearest);
@@ -4931,7 +4939,11 @@ impl<'a> MediaBrowser<'a> {
             ui.set_max_width(SUBMENU_WIDTH_LRG);
 
             if let Stage::Manga = stage {
-                ui.label(egui::RichText::new("Wheel").underline());
+                ui.horizontal(|ui| {
+                    ui.label("Wheel");
+
+                    ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
+                });
             }
 
             let scroll_kind;
@@ -4958,7 +4970,7 @@ impl<'a> MediaBrowser<'a> {
             }
 
             const MIN_COL_WIDTH: f32 = 104.; // "Multiplier:" galley width + item spacing
-            egui::Grid::new("grid")
+            egui::Grid::new("grid_wheel")
                 .num_columns(2)
                 .min_col_width(MIN_COL_WIDTH)
                 .show(ui, |ui| {
@@ -5045,7 +5057,11 @@ impl<'a> MediaBrowser<'a> {
                 });
 
             if let Stage::Manga = stage {
-                ui.label(egui::RichText::new("Auto").underline());
+                ui.horizontal(|ui| {
+                    ui.label("Auto");
+
+                    ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
+                });
 
                 egui::Grid::new("grid_auto")
                     .num_columns(2)
