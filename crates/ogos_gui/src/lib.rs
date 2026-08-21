@@ -4382,8 +4382,8 @@ impl<'a> MediaBrowser<'a> {
             let wheel_delta_smoothed = -wheel_delta_smoothed; // Make camera (not content) move in direction of wheel
             self.manga.auto_scroll_vel += wheel_delta_smoothed * self.manga.auto_scroller.multiplier;
 
-            if ui.input(|state| state.pointer.secondary_clicked()) && self.manga.auto_scroll_vel.is_sign_positive() ||
-                ui.input(|state| state.pointer.primary_clicked()) && self.manga.auto_scroll_vel.is_sign_negative()
+            if ui.input(|state| state.pointer.secondary_pressed()) && self.manga.auto_scroll_vel.is_sign_positive() ||
+                ui.input(|state| state.pointer.primary_pressed()) && self.manga.auto_scroll_vel.is_sign_negative()
             {
                 self.manga.auto_scroll_vel *= -1.;
             }
