@@ -3003,7 +3003,7 @@ struct MediaBrowser<'a> {
     window: Arc<Window>,
     enable_decorations: bool,
     enable_fullscreen: bool,
-    reactive_mode: ReactiveMode,
+    forgot_window_placement: bool,
     center_window: bool,
     window_inner_extent: Extent2dF,
     window_windowed_inner_extent: Option<Extent2dF>,
@@ -3011,6 +3011,7 @@ struct MediaBrowser<'a> {
     window_inner_extent_height_edit: String,
     window_inner_extent_width_display: String,
     window_inner_extent_height_display: String,
+    reactive_mode: ReactiveMode,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
     deferred_metadata_sx: mpmc::Sender<MetadataInfo>,
@@ -3500,7 +3501,7 @@ impl<'a> MediaBrowser<'a> {
             window,
             enable_decorations: cache.enable_decorations,
             enable_fullscreen: cache.enable_fullscreen,
-            reactive_mode: cache.reactive_mode,
+            forgot_window_placement: cache.enable_fullscreen,
             center_window: cache.center_window,
             window_inner_extent: cache.window_inner_extent.unwrap_or_default(),
             window_windowed_inner_extent: cache.window_inner_extent,
@@ -3508,6 +3509,7 @@ impl<'a> MediaBrowser<'a> {
             window_inner_extent_height_edit: default!(),
             window_inner_extent_width_display: default!(),
             window_inner_extent_height_display: default!(),
+            reactive_mode: cache.reactive_mode,
             image_dirs,
             images,
             deferred_metadata_sx,
@@ -4825,6 +4827,9 @@ impl<'a> MediaBrowser<'a> {
                         ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
                         if !self.enable_decorations {
                             ui.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+                        }
+                        if self.forgot_window_placement.take() && let Some(extent) = self.window_windowed_inner_extent {
+                            ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(extent.into()));
                         }
                         if self.center_window {
                             ui.send_viewport_cmd(egui::ViewportCommand::Center);
@@ -6172,8 +6177,37 @@ fn make_native_options(viewport: egui::ViewportBuilder) -> eframe::NativeOptions
 
 pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
     let icon_data = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png"))?;
-    let viewport = egui::ViewportBuilder::default()
+    let mut viewport = egui::ViewportBuilder::default()
         .with_icon(icon_data);
+
+    let media_browser_prep = if let GuiKind::MediaBrowser = kind {
+        let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
+        let base_images_dir = current_exe_dir.join("images");
+        let grid_images_dir = base_images_dir.join("grid");
+        let details_images_dir = base_images_dir.join("details");
+        let image_dirs = ImageDirs {
+            base: base_images_dir,
+            grid: grid_images_dir,
+            details: details_images_dir
+        };
+        let image_dirs = Box::leak(Box::new(image_dirs));
+
+        let cache_path = image_dirs.base.join("cache").with_extension("json");
+        let cache_slc = fs::read(&cache_path)?;
+        let cache: Cache = serde_json::from_slice(&cache_slc)?;
+
+        if cache.enable_fullscreen {
+            viewport = viewport.with_decorations(true);
+            viewport = viewport.with_fullscreen(true);
+        } else if let Some(extent) = cache.window_inner_extent {
+            viewport = viewport.with_decorations(cache.enable_decorations);
+            viewport = viewport.with_inner_size(extent);
+        }
+
+        Some((image_dirs, cache_path, cache))
+    } else {
+        None
+    };
 
     let native_options = make_native_options(viewport);
 
@@ -6212,31 +6246,7 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                     Box::new(Info::new(msg))
                 },
                 GuiKind::MediaBrowser => {
-                    let current_exe_dir = CURRENT_EXE_DIR.get().unwrap();
-                    let base_images_dir = current_exe_dir.join("images");
-                    let grid_images_dir = base_images_dir.join("grid");
-                    let details_images_dir = base_images_dir.join("details");
-                    let image_dirs = ImageDirs {
-                        base: base_images_dir,
-                        grid: grid_images_dir,
-                        details: details_images_dir
-                    };
-                    let image_dirs = Box::leak(Box::new(image_dirs));
-
-                    let cache_path = image_dirs.base.join("cache").with_extension("json");
-                    let cache_slc = fs::read(&cache_path)?;
-                    let cache: Cache = serde_json::from_slice(&cache_slc)?;
-
-                    if let Some(extent) = cache.window_inner_extent {
-                        _ = window.request_inner_size(winit::dpi::LogicalSize::new(extent.width, extent.height));
-                    }
-
-                    if cache.enable_fullscreen {
-                        window.set_decorations(true);
-                        window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
-                    } else {
-                        window.set_decorations(cache.enable_decorations);
-                    }
+                    let (image_dirs, cache_path, cache) = media_browser_prep.unwrap();
 
                     let monitor = window.current_monitor().unwrap();
                     let screen_extent: Extent2d = monitor.size().into();
