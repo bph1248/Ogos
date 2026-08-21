@@ -2930,6 +2930,7 @@ dependencies = [
  "rgb",
  "serde",
  "serde_json",
+ "strum",
  "tap",
  "wgpu",
  "windows 0.62.2",

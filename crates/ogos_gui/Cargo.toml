@@ -37,6 +37,7 @@ rfd = "0.17.2"
 rgb = "0.8.52"
 serde = { workspace = true }
 serde_json = { workspace = true }
+strum = { workspace = true }
 tap = "1.0.1"
 wgpu = { workspace = true }
 windows = { workspace = true }

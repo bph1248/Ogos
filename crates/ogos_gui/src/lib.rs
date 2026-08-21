@@ -47,6 +47,7 @@ use std::{
 };
 use tap::TapOptional;
 use range_compare::*;
+use strum::*;
 use windows::{
     core::PWSTR,
     Win32::{
@@ -140,8 +141,8 @@ struct Cache {
     library: BTreeSet<PathBuf>,
     #[serde(default)]
     enable_fullscreen: bool,
-    #[serde(default = "default_true")]
-    enable_reactive_mode: bool,
+    #[serde(default)]
+    reactive_mode: ReactiveMode,
     #[serde(default = "default_true")]
     center_window: bool,
     #[serde(default = "default_true")]
@@ -1346,6 +1347,14 @@ impl From<f32> for Orientation {
             false => Orientation::Tall
         }
     }
+}
+
+#[derive(Clone, Copy, Default, Deserialize, IntoStaticStr, PartialEq, Serialize)]
+enum ReactiveMode {
+    On,
+    Off,
+    #[default]
+    Windowed
 }
 
 #[repr(u32)]
@@ -2994,7 +3003,7 @@ struct MediaBrowser<'a> {
     window: Arc<Window>,
     enable_decorations: bool,
     enable_fullscreen: bool,
-    enable_reactive_mode: bool,
+    reactive_mode: ReactiveMode,
     center_window: bool,
     window_inner_extent: Extent2dF,
     window_windowed_inner_extent: Option<Extent2dF>,
@@ -3181,7 +3190,9 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             .auto_sized()
             .show(ui, |ui| ui.label(self.error_msg.as_str()));
 
-        if !self.enable_reactive_mode {
+        if self.reactive_mode == ReactiveMode::Off ||
+            self.reactive_mode == ReactiveMode::Windowed && self.enable_fullscreen
+        {
             ui.request_repaint();
         }
 
@@ -3201,7 +3212,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
         }
 
         self.cache.enable_fullscreen = self.enable_fullscreen;
-        self.cache.enable_reactive_mode = self.enable_reactive_mode;
+        self.cache.reactive_mode = self.reactive_mode;
         self.cache.center_window = self.center_window;
         self.cache.enable_decorations = self.enable_decorations;
         self.cache.window_inner_extent = match self.enable_fullscreen {
@@ -3489,7 +3500,7 @@ impl<'a> MediaBrowser<'a> {
             window,
             enable_decorations: cache.enable_decorations,
             enable_fullscreen: cache.enable_fullscreen,
-            enable_reactive_mode: cache.enable_reactive_mode,
+            reactive_mode: cache.reactive_mode,
             center_window: cache.center_window,
             window_inner_extent: cache.window_inner_extent.unwrap_or_default(),
             window_windowed_inner_extent: cache.window_inner_extent,
@@ -4821,11 +4832,17 @@ impl<'a> MediaBrowser<'a> {
                 self.enable_fullscreen = checked;
             }
 
-            checked = self.enable_reactive_mode;
-            let enable_reactive_mode_checkbox_resp = ui.checkbox(&mut checked, "Reactive mode");
-            if enable_reactive_mode_checkbox_resp.clicked() {
-                self.enable_reactive_mode = checked;
-            }
+            ui.menu_button("Reactive mode", |ui| {
+                if ui.radio(self.reactive_mode == ReactiveMode::On, ReactiveMode::On.as_::<&str>()).clicked() {
+                    self.reactive_mode = ReactiveMode::On;
+                }
+                if ui.radio(self.reactive_mode == ReactiveMode::Off, ReactiveMode::Off.as_::<&str>()).clicked() {
+                    self.reactive_mode = ReactiveMode::Off;
+                }
+                if ui.radio(self.reactive_mode == ReactiveMode::Windowed, ReactiveMode::Windowed.as_::<&str>()).clicked() {
+                    self.reactive_mode = ReactiveMode::Windowed;
+                }
+            });
 
             if !self.enable_fullscreen {
                 ui.separator();
