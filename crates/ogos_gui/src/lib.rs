@@ -4363,7 +4363,7 @@ impl<'a> MediaBrowser<'a> {
         }
 
         // Auto scroll
-        if ui.input(|state| state.pointer.button_released(egui::PointerButton::Middle)) {
+        if ui.input(|state| state.pointer.button_pressed(egui::PointerButton::Middle)) {
             self.manga.enable_auto_scroll = !self.manga.enable_auto_scroll;
 
             if self.manga.enable_auto_scroll {
@@ -4372,16 +4372,19 @@ impl<'a> MediaBrowser<'a> {
         }
 
         let scroll_offset_x_centered = self.manga.view_extent.width.sub(self.central_rect.width()).div_euclid(2.).max(0.);
-        let (secondary_state, dragging) = ui.input(|state|
-            (
-                ButtonState::new(state.pointer.button_down(egui::PointerButton::Secondary)),
-                state.pointer.is_decidedly_dragging()
-            )
+        let secondary_state = ButtonState::new(
+            ui.input(|state|state.pointer.button_down(egui::PointerButton::Secondary))
         );
 
         let scroll_area_info = if self.manga.enable_auto_scroll {
             let wheel_delta_smoothed = -wheel_delta_smoothed; // Make camera (not content) move in direction of wheel
             self.manga.auto_scroll_vel += wheel_delta_smoothed * self.manga.auto_scroller.multiplier;
+
+            if ui.input(|state| state.pointer.secondary_clicked()) && self.manga.auto_scroll_vel.is_sign_positive() ||
+                ui.input(|state| state.pointer.primary_clicked()) && self.manga.auto_scroll_vel.is_sign_negative()
+            {
+                self.manga.auto_scroll_vel *= -1.;
+            }
 
             let max_scroll_offset = self.manga.view_extent.height - self.central_rect.height();
             let scroll_offset_y = (self.manga.scroll_offset.y + dt * self.manga.auto_scroll_vel).clamp(0., max_scroll_offset);
@@ -4432,7 +4435,7 @@ impl<'a> MediaBrowser<'a> {
                     }
                 },
                 ButtonState::Down => {
-                    if dragging {
+                    if ui.input(|state| state.pointer.is_decidedly_dragging()) {
                         ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
                     }
                     let stop_kinesis = self.manga.stop_kinesis.take() || !self.manga.secondary_was_down;
