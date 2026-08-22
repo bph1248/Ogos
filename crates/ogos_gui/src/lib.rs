@@ -4353,23 +4353,14 @@ impl<'a> MediaBrowser<'a> {
             self.stream_manga(ui, self.manga.scale_pc != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
         }
 
-        // Bookmark
-        if let Some(scroll_offset_y) = self.manga.go_to_scroll_offset_y.take() {
-            self.manga.scroll_offset.y = scroll_offset_y;
-        }
-
-        // Snap to top of first visible page
-        if ui.input(|state| state.pointer.button_released(egui::PointerButton::Extra2)) {
-            let delta = self.manga.scroll_offset.y - self.manga.view[self.manga.visible_view.start].offset;
-            self.manga.spring_damper_scroller.step_mul(ui, dt, delta, 1.);
-        }
-
-        // Auto scroll
+        // Toggle auto scroll
         if ui.input(|state| state.pointer.button_pressed(egui::PointerButton::Middle)) {
             self.manga.enable_auto_scroll = !self.manga.enable_auto_scroll;
 
             if self.manga.enable_auto_scroll {
+                self.manga.spring_damper_scroller.stop();
                 self.manga.auto_scroll_vel = default!();
+                self.manga.stop_kinesis = true;
             }
         }
 
@@ -4405,6 +4396,18 @@ impl<'a> MediaBrowser<'a> {
                 scroll_multiplier: default!()
             }
         } else {
+            // Bookmark
+            if let Some(scroll_offset_y) = self.manga.go_to_scroll_offset_y.take() {
+                self.manga.scroll_offset.y = scroll_offset_y;
+            }
+
+            // Snap to top of first visible page
+            if ui.input(|state| state.pointer.button_released(egui::PointerButton::Extra2)) {
+                let delta = self.manga.scroll_offset.y - self.manga.view[self.manga.visible_view.start].offset;
+
+                self.manga.spring_damper_scroller.step_mul(ui, dt, delta, 1.);
+            }
+
             match secondary_state {
                 ButtonState::Up => {
                     if self.manga.secondary_was_down.take() {
