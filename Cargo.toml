@@ -18,12 +18,9 @@ concat-string = "1.0.1"
 const_format = { version = "0.2.34", default-features = false }
 crossbeam = "0.8.4"
 discord-rich-presence = "1.0.0"
-eframe = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false, features = ["default_fonts", "wgpu"] }
-egui = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false, features = ["serde"] }
-egui_extras = { git = "https://github.com/bph1248/egui.git", branch = "mod", default-features = false }
-# eframe = { path = "B:/dev/egui/crates/eframe", default-features = false, features = ["default_fonts", "wgpu"] }
-# egui = { path = "B:/dev/egui/crates/egui", default-features = false, features = ["serde"] }
-# egui_extras = { path = "B:/dev/egui/crates/egui_extras", default-features = false }
+eframe = { version = "0.36.1", default-features = false, features = ["default_fonts", "wgpu"] }
+egui = { version = "0.36.1", default-features = false, features = ["serde"] }
+egui_extras = { version = "0.36.1", default-features = false }
 fast_image_resize = { version = "6.0.0", features = ["image"] }
 hotpath = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -79,11 +76,20 @@ windows = { version = "0.62.2", features = [
 windows_061 = { version = "0.61", package = "windows", features = [
     "Win32_Devices_FunctionDiscovery"
 ] }
-winit = { version = "*", default-features = false }
+winit = { version = "0.30.13", default-features = false }
 zenwebp = { version = "0.4.4", default-features = false }
 zip = "8.6.0"
 zune-jpeg = "0.5.15"
 zune-png = "0.5.2"
+
+[patch.crates-io]
+eframe = { git = "https://github.com/bph1248/egui.git", branch = "mod" }
+egui = { git = "https://github.com/bph1248/egui.git", branch = "mod" }
+egui_extras = { git = "https://github.com/bph1248/egui.git", branch = "mod" }
+# eframe = { path = "B:/dev/egui/crates/eframe" }
+# egui = { path = "B:/dev/egui/crates/egui" }
+# egui_extras = { path = "B:/dev/egui/crates/egui_extras" }
+winit = { git = "https://github.com/bph1248/winit.git", branch = "mod" }
 
 [profile.public]
 inherits = "release"
