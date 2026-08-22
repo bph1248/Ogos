@@ -3011,6 +3011,7 @@ struct MediaBrowser<'a> {
     window_inner_extent_height_edit: String,
     window_inner_extent_width_display: String,
     window_inner_extent_height_display: String,
+    viewport_focused: bool,
     reactive_mode: ReactiveMode,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
@@ -3114,6 +3115,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             }
 
             self.window_inner_extent = window_inner_rect.into();
+            self.viewport_focused = viewport.focused.unwrap_or(false);
             self.enable_fullscreen = enable_fullscreen;
         });
 
@@ -3191,9 +3193,10 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             .auto_sized()
             .show(ui, |ui| ui.label(self.error_msg.as_str()));
 
-        if self.reactive_mode == ReactiveMode::Off ||
+        if self.viewport_focused && (
+            self.reactive_mode == ReactiveMode::Off ||
             self.reactive_mode == ReactiveMode::Windowed && self.enable_fullscreen
-        {
+        ) {
             ui.request_repaint();
         }
 
@@ -3509,6 +3512,7 @@ impl<'a> MediaBrowser<'a> {
             window_inner_extent_height_edit: default!(),
             window_inner_extent_width_display: default!(),
             window_inner_extent_height_display: default!(),
+            viewport_focused: default!(),
             reactive_mode: cache.reactive_mode,
             image_dirs,
             images,
