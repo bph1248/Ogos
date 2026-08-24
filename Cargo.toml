@@ -86,10 +86,11 @@ zune-png = "0.5.2"
 eframe = { git = "https://github.com/bph1248/egui.git", branch = "mod" }
 egui = { git = "https://github.com/bph1248/egui.git", branch = "mod" }
 egui_extras = { git = "https://github.com/bph1248/egui.git", branch = "mod" }
+winit = { git = "https://github.com/bph1248/winit.git", branch = "mod" }
 # eframe = { path = "B:/dev/egui/crates/eframe" }
 # egui = { path = "B:/dev/egui/crates/egui" }
 # egui_extras = { path = "B:/dev/egui/crates/egui_extras" }
-winit = { git = "https://github.com/bph1248/winit.git", branch = "mod" }
+# winit = { path = "B:/dev/winit" }
 
 [profile.public]
 inherits = "release"

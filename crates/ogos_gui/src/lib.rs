@@ -736,6 +736,19 @@ struct PushConstants {
     dst_tex_extent: [f32; 2]
 }
 
+struct RepaintFor {
+    anchor: Option<Instant>,
+    dur: Duration
+}
+impl RepaintFor {
+    fn new(dur: Duration) -> Self {
+        Self {
+            anchor: None,
+            dur
+        }
+    }
+}
+
 struct ResetResidence {
     row_cell_count: usize,
     visible_cell_count: usize
@@ -3013,6 +3026,7 @@ struct MediaBrowser<'a> {
     window_inner_extent_height_display: String,
     viewport_focused: bool,
     reactive_mode: ReactiveMode,
+    repaint_for: Option<RepaintFor>,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
     deferred_metadata_sx: mpmc::Sender<MetadataInfo>,
@@ -3193,10 +3207,35 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             .auto_sized()
             .show(ui, |ui| ui.label(self.error_msg.as_str()));
 
-        if self.viewport_focused && (
-            self.reactive_mode == ReactiveMode::Off ||
-            self.reactive_mode == ReactiveMode::Windowed && self.enable_fullscreen
-        ) {
+        let mut should_repaint = || -> bool {
+            if self.viewport_focused {
+                if let Some(repaint_for) = self.repaint_for.as_mut() {
+                    match repaint_for.anchor {
+                        Some(anchor) => {
+                            if anchor.elapsed() < repaint_for.dur {
+                                return true
+                            } else {
+                                self.repaint_for = None;
+                            }
+                        }
+                        None => {
+                            repaint_for.anchor = Some(now!());
+
+                            return true
+                        }
+                    }
+                }
+
+                if self.reactive_mode == ReactiveMode::Off ||
+                    self.reactive_mode == ReactiveMode::Windowed && self.enable_fullscreen
+                {
+                    return true
+                }
+            }
+
+            false
+        };
+        if should_repaint() {
             ui.request_repaint();
         }
 
@@ -3514,6 +3553,7 @@ impl<'a> MediaBrowser<'a> {
             window_inner_extent_height_display: default!(),
             viewport_focused: default!(),
             reactive_mode: cache.reactive_mode,
+            repaint_for: default!(),
             image_dirs,
             images,
             deferred_metadata_sx,
@@ -4875,11 +4915,8 @@ impl<'a> MediaBrowser<'a> {
                 checked = self.enable_decorations;
                 let enable_decorations_checkbox_resp = ui.checkbox(&mut checked, "Decorations");
                 if enable_decorations_checkbox_resp.clicked() {
-                    ui.send_viewport_cmd(egui::ViewportCommand::Decorations(checked));
-                    ui.send_viewport_cmd(egui::ViewportCommand::InnerSize([self.window_inner_extent.width, self.window_inner_extent.height].into()));
-                    if self.center_window {
-                        ui.send_viewport_cmd(egui::ViewportCommand::Center);
-                    }
+                    ui.send_viewport_cmd(egui::ViewportCommand::DecorationsEx { enable: checked, center_window: self.center_window });
+                    self.repaint_for = Some(RepaintFor::new(Duration::from_secs(1)));
 
                     self.enable_decorations = checked;
                 }
