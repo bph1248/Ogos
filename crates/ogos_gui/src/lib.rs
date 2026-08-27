@@ -75,7 +75,7 @@ const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const NIGHT_LIGHT: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
-const SUBMENU_WIDTH_SML: f32 = 200.;
+const SUBMENU_WIDTH_SML: f32 = 216.;
 const SUBMENU_WIDTH_LRG: f32 = 260.;
 
 thread_local! {
@@ -545,6 +545,7 @@ struct Manga {
     archive_pages_width: f32, // Hang on to this to get view width later on when resizing
     view: Vec<ViewPageInfo>,
     view_extent: Extent2dF,
+    context_menu_open: bool,
     scale_pc: f32,
     flagged_scale: Option<egui::Rect>,
     filter: FilterAccel,
@@ -561,6 +562,11 @@ struct Manga {
     auto_scroller: AutoScroller,
     enable_auto_scroll: bool,
     auto_scroll_vel: f32,
+    cursor_visibility: CursorVisibility,
+    should_hide_cursor: bool,
+    hide_cursor_after: f32,
+    hide_cursor_anchor: Option<Instant>,
+    hide_cursor_dead_zone: f32,
     secondary_was_down: bool,
     stop_kinesis: bool,
     residence: Range<usize>,
@@ -582,6 +588,8 @@ impl Manga {
             ease_in_out_scroller,
             spring_damper_scroller,
             auto_scroller,
+            hide_cursor_after: 1.,
+            hide_cursor_dead_zone: 50.,
             stop_kinesis,
             ..default!()
         }
@@ -1247,6 +1255,13 @@ impl ButtonState {
     fn new(is_down: bool) -> Self {
         if is_down { Self::Down } else { Self::Up }
     }
+}
+
+#[derive(Default)]
+enum CursorVisibility {
+    #[default]
+    Visible,
+    Hidden { anchor_pos: egui::Pos2 }
 }
 
 enum FilterAccel {
@@ -4357,6 +4372,47 @@ impl<'a> MediaBrowser<'a> {
             self.stream_manga(ui, self.manga.scale_pc != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
         }
 
+        // Hide cursor
+        if !ui.any_popup_open() &&
+            let Some(anchor_time) = self.manga.hide_cursor_anchor.as_mut() &&
+            let Some(hover_pos) = ui.input(|state| state.pointer.hover_pos())
+        {
+            let cursor_moved = ui.input(|state| state.pointer.delta().length()) > 0.;
+
+            match self.manga.cursor_visibility {
+                CursorVisibility::Visible => {
+                    if cursor_moved {
+                        *anchor_time = now!();
+                    } else {
+                        let elapsed = anchor_time.elapsed().as_secs_f32();
+                        let remaining = self.manga.hide_cursor_after.sub(elapsed).max(0.);
+
+                        if remaining == 0. { // Timeout - hide cursor
+                            ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
+
+                            self.manga.cursor_visibility = CursorVisibility::Hidden { anchor_pos: hover_pos };
+                        } else {
+                            ui.request_repaint_after_secs(remaining);
+                        }
+                    }
+                },
+                CursorVisibility::Hidden { anchor_pos } => {
+                    if cursor_moved {
+                        let cursor_delta = hover_pos.sub(anchor_pos).length();
+
+                        if cursor_delta > self.manga.hide_cursor_dead_zone {
+                            ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
+
+                            *anchor_time = now!();
+                            self.manga.cursor_visibility = CursorVisibility::Visible;
+                        }
+                    } else { // Snap cursor back to anchor
+                        ui.send_viewport_cmd(egui::ViewportCommand::CursorPosition(anchor_pos));
+                    }
+                }
+            }
+        }
+
         // Toggle auto scroll
         if ui.input(|state| state.pointer.button_pressed(egui::PointerButton::Middle)) {
             self.manga.enable_auto_scroll = !self.manga.enable_auto_scroll;
@@ -4565,9 +4621,15 @@ impl<'a> MediaBrowser<'a> {
             false => egui::PopupCloseBehavior::IgnoreClicks
         };
 
-        egui::Popup::context_menu(resp)
+        let context_menu_open = egui::Popup::context_menu(resp)
             .close_behavior(close_behaviour)
             .show(|ui| {
+                if let CursorVisibility::Hidden { .. } = self.manga.cursor_visibility {
+                    ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
+
+                    self.manga.cursor_visibility = CursorVisibility::Visible;
+                }
+
                 ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
 
                 ui.separator();
@@ -4580,12 +4642,22 @@ impl<'a> MediaBrowser<'a> {
                 ui.separator();
 
                 self.display_submenu_common(ui);
+                self.cursor_submenu(ui);
                 self.scroll_submenu_common(ui, Stage::Manga);
 
                 ui.separator();
 
                 self.exit_button(ui);
-            });
+            })
+            .is_some();
+
+        // If hide cursor on close
+        if !context_menu_open && self.manga.context_menu_open &&
+            self.manga.should_hide_cursor
+        {
+            self.manga.hide_cursor_anchor = Some(now!());
+        }
+        self.manga.context_menu_open = context_menu_open;
     }
 
     fn scale_submenu_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
@@ -4862,7 +4934,7 @@ impl<'a> MediaBrowser<'a> {
             if !self.enable_fullscreen {
                 ui.separator();
 
-                checked = self.center_window;
+                let mut checked = self.center_window;
                 let center_window_checkbox_resp = ui.checkbox(&mut checked, "Center");
                 if center_window_checkbox_resp.clicked() {
                     if checked {
@@ -4872,7 +4944,7 @@ impl<'a> MediaBrowser<'a> {
                     self.center_window = checked;
                 }
 
-                checked = self.enable_decorations;
+                let mut checked = self.enable_decorations;
                 let enable_decorations_checkbox_resp = ui.checkbox(&mut checked, "Decorations");
                 if enable_decorations_checkbox_resp.is_pointer_button_down_on() {
                     ui.request_repaint(); // Keep rendering leading into decorations toggle - works around window outer/inner rect artifacts
@@ -4993,6 +5065,39 @@ impl<'a> MediaBrowser<'a> {
 
                 self.view_kind = ViewKind::Restart;
             }
+        });
+    }
+
+    fn cursor_submenu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Cursor", |ui| {
+            let mut checked = self.manga.should_hide_cursor;
+            let hide_cursor_checkbox_resp = ui.checkbox(&mut checked, "Hide");
+            if hide_cursor_checkbox_resp.clicked() {
+                match checked {
+                    true => self.manga.should_hide_cursor = true,
+                    false => {
+                        self.manga.should_hide_cursor = false;
+                        self.manga.hide_cursor_anchor = None;
+                    }
+                }
+            }
+
+            ui.scope(|ui| {
+                ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
+
+                ui.add_enabled_ui(self.manga.should_hide_cursor, |ui| {
+                    ui.label("After:");
+
+                    ui.add(egui::Slider::new(&mut self.manga.hide_cursor_after, 0.0..=10.)
+                        .clamping(egui::SliderClamping::Always));
+
+                    ui.label("Dead zone:");
+
+                    ui.add(egui::Slider::new(&mut self.manga.hide_cursor_dead_zone, 0.0..=200.)
+                        .clamping(egui::SliderClamping::Always)
+                        .fixed_decimals(0));
+                });
+            });
         });
     }
 
