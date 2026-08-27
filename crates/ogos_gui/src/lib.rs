@@ -3140,8 +3140,22 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                 self.central_rect = ui.available_rect_before_wrap();
 
                 match self.view_kind {
-                    ViewKind::Grid => self.central_panel_grid(ui),
-                    ViewKind::Details => self.central_panel_details(ui),
+                    ViewKind::Grid => {
+                        if requested_go_back(ui) && self.active_tag.is_some() {
+                            self.reset_grid_view(ui);
+                        }
+
+                        self.central_panel_grid(ui)
+                    },
+                    ViewKind::Details => {
+                        if requested_go_back(ui) && !self.pop_dir() {
+                            self.view_kind = ViewKind::Grid;
+
+                            self.central_panel_grid(ui);
+                        } else {
+                            self.central_panel_details(ui);
+                        }
+                    },
                     ViewKind::InitManga { selected_details_dir_entry_i } =>
                         if let Err(err) = self.init_manga(ui, selected_details_dir_entry_i) {
                             let msg = format!("{}", err);
@@ -3150,7 +3164,17 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                             self.view_kind = ViewKind::Details;
                         },
                     ViewKind::WaitManga => self.wait_manga(ui),
-                    ViewKind::Manga => self.central_panel_manga(ui),
+                    ViewKind::Manga => {
+                        if requested_go_back(ui) {
+                            self.frame = self.frame.fill(DARK_GRAY);
+                            self.manga = mem::take(&mut self.manga).reset();
+                            self.view_kind = ViewKind::Details;
+
+                            self.central_panel_details(ui);
+                        } else {
+                            self.central_panel_manga(ui);
+                        }
+                    },
                     ViewKind::Restart => {
                         self.reset_images();
 
@@ -4281,10 +4305,6 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn central_panel_details(&mut self, ui: &mut egui::Ui) {
-        if requested_go_back(ui) {
-            self.pop_dir();
-        }
-
         self.stream_textures_stepped();
 
         self.details_view(ui);
@@ -4292,14 +4312,6 @@ impl<'a> MediaBrowser<'a> {
 
     #[hotpath::measure]
     fn central_panel_manga(&mut self, ui: &mut egui::Ui) {
-        if requested_go_back(ui) {
-            self.frame = self.frame.fill(DARK_GRAY);
-            self.manga = mem::take(&mut self.manga).reset();
-            self.view_kind = ViewKind::Details;
-
-            return
-        }
-
         self.stream_textures_stepped();
 
         let opacity = self.animation.get_opacity(ui);
@@ -5457,9 +5469,6 @@ impl<'a> MediaBrowser<'a> {
         if requested_clear_selection(ui) && !egui::Popup::is_any_open(ui) {
             self.reset_grid_entries_selection();
         }
-        if requested_go_back(ui) && self.active_tag.is_some() {
-            self.reset_grid_view(ui);
-        }
 
         if self.grid_view.is_empty() {
             let (_, background_rect) = ui.allocate_space(ui.available_size());
@@ -6127,13 +6136,11 @@ impl<'a> MediaBrowser<'a> {
         self.details_levels.push(dir);
     }
 
-    fn pop_dir(&mut self) {
+    fn pop_dir(&mut self) -> bool {
         self.details_hovered_dir_entry_i = 0;
 
         if self.details_levels.is_empty() {
-            self.view_kind = ViewKind::Grid;
-
-            return
+            return false
         }
 
         self.details_levels.pop();
@@ -6143,6 +6150,8 @@ impl<'a> MediaBrowser<'a> {
             let dir = self.details_levels.last().unwrap();
             replace_dir_entries(&mut self.details_dir_entries, dir);
         }
+
+        true
     }
 
     fn make_discord_activity_info(&self, dir_entry_info: &DirEntryInfo) -> config::DiscordActivityInfo {
