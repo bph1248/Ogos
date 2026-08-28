@@ -103,7 +103,6 @@ type CacheReady = Option<WaitGroup>;
 type ImageResult = Result<ImageInfo, (Stage, usize)>;
 type Residence = Range<usize>;
 type ShouldStream = bool;
-type VisiblePageCount = usize;
 type WrittenSize = usize;
 
 struct AnimationInfo {
@@ -112,16 +111,20 @@ struct AnimationInfo {
     target: bool
 }
 impl AnimationInfo {
-    fn get_opacity(&mut self, ui: &mut egui::Ui) -> f32 {
+    fn get_opacity_forward(&mut self, ui: &mut egui::Ui) -> f32 {
         match self.target {
-            true => ui.ctx().animate_bool_with_time_and_easing("animate".into(), true, self.dur, self.kind.as_easing()),
+            true => ui.animate_bool_with_time_and_easing("animate".into(), true, self.dur, self.kind.as_easing()),
             false => {
-                ui.ctx().clear_animations();
+                ui.clear_animations();
                 self.target = true; // For future calls
 
-                ui.ctx().animate_bool_with_time_and_easing("animate".into(), false, self.dur, self.kind.as_easing())
+                ui.animate_bool_with_time_and_easing("animate".into(), false, self.dur, self.kind.as_easing())
             }
         }
+    }
+
+    fn get_opacity(&mut self, ui: &mut egui::Ui) -> f32 {
+        ui.animate_bool_with_time_and_easing("animate".into(), self.target, self.dur, self.kind.as_easing())
     }
 }
 impl From<config::AnimationInfo> for AnimationInfo {
@@ -174,7 +177,10 @@ struct CacheEntryInfo {
     #[serde(default)]
     tags: Vec<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    bookmark: Option<Pivot>
+    bookmark: Option<Pivot>,
+    current_preset: Option<Preset>,
+    #[serde(default)]
+    presets: Vec<Preset>
 }
 
 #[derive(Clone)]
@@ -389,7 +395,8 @@ struct GridEntryInfo {
     file_kind: FileKind,
     image_i: Option<usize>,
     metadata: Option<Arc<Metadata>>,
-    bookmark: Option<Pivot>
+    bookmark: Option<Pivot>,
+    current_preset: Option<Preset>
 }
 
 struct GridViewCellCounts {
@@ -547,7 +554,7 @@ struct Manga {
     view_extent: Extent2dF,
     context_menu_open: bool,
     scale_pc: f32,
-    flagged_scale: Option<egui::Rect>,
+    should_scale: Option<egui::Rect>,
     filter: FilterAccel,
     tint: egui::Rgba,
     night_light_alpha_pc: f32,
@@ -567,11 +574,13 @@ struct Manga {
     hide_cursor_after: f32,
     hide_cursor_anchor: Option<Instant>,
     hide_cursor_dead_zone: f32,
+    remember_current: bool,
     secondary_was_down: bool,
     stop_kinesis: bool,
     residence: Range<usize>,
     visible_view: Range<usize>,
     stream: Stream,
+    poll_ready: Option<PollReady>,
     to_thanatos: LateInit<mpmc::Sender<Soul>>
 }
 impl Manga {
@@ -614,6 +623,7 @@ impl Manga {
             auto_scroller: self.auto_scroller,
             stop_kinesis: self.stop_kinesis
         };
+
         Manga::new(manga_info)
     }
 
@@ -623,7 +633,7 @@ impl Manga {
         }
 
         self.scale_pc = scale_pc;
-        self.flagged_scale = Some(viewport);
+        self.should_scale = Some(viewport);
 
         ui.close();
     }
@@ -1416,7 +1426,6 @@ enum ViewKind {
     Grid,
     Details,
     InitManga { selected_details_dir_entry_i: usize },
-    WaitManga,
     Manga,
     Restart
 }
@@ -1433,7 +1442,7 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, text: &str, po
     match image_state {
         ImageState::Ready { tex_id, extent, .. } if poll_ready.is_ready() => {
             if let Some(animation) = animation {
-                let opacity = animation.get_opacity(ui);
+                let opacity = animation.get_opacity_forward(ui);
                 ui.set_opacity(opacity);
             }
 
@@ -2971,21 +2980,23 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
                             });
                         let metadata = cache_entry_info.metadata.clone();
                         let bookmark = cache_entry_info.bookmark;
+                        let current_preset = cache_entry_info.current_preset;
 
-                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark, current_preset }
                     },
                     None => { // This entry is new. If a base image exists, scale and cache it
                         let sort_name = None;
                         let image_i = try_get_image_i(images);
                         let metadata = None;
                         let bookmark = None;
+                        let current_preset = None;
 
                         if let Some(image_states) = get_image_states_mut(images, image_i) {
                             image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
                             image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
                         }
 
-                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark }
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark, current_preset }
                     }
                 };
 
@@ -3000,6 +3011,11 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
 
     grid_entries.clear();
     grid_entries.extend(grid_entry_info_iter);
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+struct Preset {
+    scale_pc: f32
 }
 
 struct MediaBrowserInfo<'a> {
@@ -3156,17 +3172,19 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                             self.central_panel_details(ui);
                         }
                     },
-                    ViewKind::InitManga { selected_details_dir_entry_i } =>
+                    ViewKind::InitManga { selected_details_dir_entry_i } => {
                         if let Err(err) = self.init_manga(ui, selected_details_dir_entry_i) {
                             let msg = format!("{}", err);
                             send_log_err_msg(&self.error_sx, msg);
 
                             self.view_kind = ViewKind::Details;
-                        },
-                    ViewKind::WaitManga => self.wait_manga(ui),
+                        }
+                    }
                     ViewKind::Manga => {
                         if requested_go_back(ui) {
                             self.frame = self.frame.fill(DARK_GRAY);
+                            self.grid_entries[self.details_grid_entry_i].current_preset =
+                                self.manga.remember_current.then_some(self.make_manga_preset());
                             self.manga = mem::take(&mut self.manga).reset();
                             self.view_kind = ViewKind::Details;
 
@@ -3243,6 +3261,11 @@ impl<'a> eframe::App for MediaBrowser<'a> {
     }
 
     fn on_exit(&mut self) {
+        if let ViewKind::Manga = self.view_kind {
+            self.grid_entries[self.details_grid_entry_i].current_preset =
+                self.manga.remember_current.then_some(self.make_manga_preset());
+        }
+
         for image_file_name in self.missing_base_images.drain(..) { // Base images ref'd by cache entries that have been moved or deleted - remove grid/details images from disk
             let paths = [
                 self.image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp"),
@@ -3302,7 +3325,9 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     sort_name: info.sort_name,
                     metadata: info.image_i.map(|_| info.metadata).unwrap_or_default(),
                     tags: mem::take(&mut grid_entry_tags[grid_entry_i]),
-                    bookmark: info.bookmark
+                    bookmark: info.bookmark,
+                    current_preset: info.current_preset,
+                    presets: default!()
                 }
             );
         }
@@ -3782,85 +3807,28 @@ impl<'a> MediaBrowser<'a> {
         }
         self.manga.view_extent = [self.manga.archive_pages_width, view_page_offset].into();
 
-        let visible_page_count = self.init_residence_manga();
-
-        let ferry_image_infos = (0..visible_page_count)
-            .map(|view_i| {
-                let ViewPageInfo { archive_i, image_kind, ref gen_id, .. } = self.manga.view[view_i];
-
-                FerryImageInfoManga {
-                    archive_i,
-                    image_kind,
-                    view_i,
-                    scale: None,
-                    gen_id_check: gen_id.get_next_check(),
-                    signal_tex_ready: Some(self.poll_ready.clone())
-                }
-            })
-            .collect::<Vec<_>>();
-        let ferry_images_info = FerryImagesInfoManga {
-            ctx: ui.ctx(),
-            thread_pool: &self.thread_pool,
-            archive_path: archive_path.clone(),
-            ship: self.charon_ship.clone(),
-            ferry_image_infos,
-            error_sx: self.error_sx.clone()
-        };
-        ferry_images_manga(ferry_images_info);
-
-        let ferry_image_infos = (visible_page_count..self.manga.residence.end)
-            .map(|view_i| {
-                let ViewPageInfo { archive_i, image_kind, ref gen_id, .. } = self.manga.view[view_i];
-
-                FerryImageInfoManga {
-                    archive_i,
-                    image_kind,
-                    view_i,
-                    scale: None,
-                    gen_id_check: gen_id.get_next_check(),
-                    signal_tex_ready: None
-                }
-            })
-            .collect::<Vec<_>>();
-        let ferry_images_info = FerryImagesInfoManga {
-            ctx: ui.ctx(),
-            thread_pool: &self.thread_pool,
-            archive_path: archive_path.clone(),
-            ship: self.charon_ship.clone(),
-            ferry_image_infos,
-            error_sx: self.error_sx.clone()
-        };
-        ferry_images_manga(ferry_images_info);
-
         self.manga.archive.set(archive);
         self.manga.archive_path.set(archive_path);
+        self.manga.should_scale = Some(self.central_rect);
+        self.manga.poll_ready = Some(PollReady::new());
+        ui.clear_animations();
+        self.animation.target = false;
         self.manga.to_thanatos.set(self.to_thanatos.clone());
 
-        self.view_kind = ViewKind::WaitManga;
+        if let Some(preset) = self.grid_entries[self.details_grid_entry_i].current_preset {
+            self.manga.scale_pc = preset.scale_pc;
+            self.manga.remember_current = true;
+        }
+
+        self.view_kind = ViewKind::Manga;
 
         Ok(())
     }
 
-    fn wait_manga(&mut self, ui: &mut egui::Ui) {
-        self.stream_textures_stepped();
-
-        if self.poll_ready.is_ready() {
-            self.animation.target = false;
-            self.view_kind = ViewKind::Manga;
-
-            ui.request_repaint();
+    fn make_manga_preset(&mut self) -> Preset {
+        Preset {
+            scale_pc: self.manga.scale_pc
         }
-    }
-
-    fn init_residence_manga(&mut self) -> VisiblePageCount {
-        let max_page_count = self.manga.view.len();
-
-        let visible_page_count = self.manga.view.partition_point(|page_info| page_info.offset <= self.central_rect.height());
-        let resident_page_count = (visible_page_count + self.lookahead).min(max_page_count);
-
-        self.manga.residence = 0..resident_page_count;
-
-        visible_page_count
     }
 
     fn reset_grid_entries_selection(&mut self) {
@@ -4041,7 +4009,7 @@ impl<'a> MediaBrowser<'a> {
                         view_i,
                         scale,
                         gen_id_check: gen_id.get_next_check(),
-                        signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
+                        signal_tex_ready: signal_tex_ready.and(self.manga.poll_ready.as_ref()).cloned()
                     }
                 })
                 .collect::<Vec<_>>();
@@ -4314,14 +4282,11 @@ impl<'a> MediaBrowser<'a> {
     fn central_panel_manga(&mut self, ui: &mut egui::Ui) {
         self.stream_textures_stepped();
 
-        let opacity = self.animation.get_opacity(ui);
-        ui.set_opacity(opacity);
-
         let dt = get_dt(ui, &self.window);
         let WheelState { wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui);
 
         // Scale
-        if let Some(viewport) = self.manga.flagged_scale.take() {
+        if let Some(viewport) = self.manga.should_scale.take() {
             let scale = self.manga.scale_pc / 100.;
             let pivot = self.get_pivot();
 
@@ -4595,18 +4560,23 @@ impl<'a> MediaBrowser<'a> {
                 self.stream_manga(ui, self.manga.scale_pc != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
             }
 
-            if self.poll_ready.is_ready() {
-                ui.add_space(self.manga.view[start_visible].offset);
+            if self.manga.poll_ready.as_ref().is_some_and(|poll_ready| poll_ready.is_ready()) {
+                self.animation.target = true;
+                self.manga.poll_ready = None;
+            }
+            let opacity = self.animation.get_opacity(ui);
+            ui.set_opacity(opacity);
 
-                for view_i in self.manga.visible_view.clone() {
-                    let page_extent = self.manga.view[view_i].extent;
-                    let (page_rect, _) = ui.allocate_exact_size([ui.min_size().x, page_extent.height].into(), egui::Sense::hover());
+            ui.add_space(self.manga.view[start_visible].offset);
 
-                    let image_resp = try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect, self.manga.tint);
+            for view_i in self.manga.visible_view.clone() {
+                let page_extent = self.manga.view[view_i].extent;
+                let (page_rect, _) = ui.allocate_exact_size([ui.min_size().x, page_extent.height].into(), egui::Sense::hover());
 
-                    if let Some(image_resp) = image_resp {
-                        self.context_menu_manga(viewport, &image_resp.union(background_resp.clone()));
-                    }
+                let image_resp = try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect, self.manga.tint);
+
+                if let Some(image_resp) = image_resp {
+                    self.context_menu_manga(viewport, &image_resp.union(background_resp.clone()));
                 }
             }
 
@@ -4643,6 +4613,7 @@ impl<'a> MediaBrowser<'a> {
                 }
 
                 ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
+                ui.menu_button("Presets", |ui| self.presets_submenu_manga(ui));
 
                 ui.separator();
 
@@ -4685,7 +4656,7 @@ impl<'a> MediaBrowser<'a> {
                 .step_by(5.));
 
             if scale_slider_resp.drag_stopped() || scale_slider_resp.lost_focus() && enter_pressed(ui) {
-                self.manga.flagged_scale = Some(viewport);
+                self.manga.should_scale = Some(viewport);
             }
         });
 
@@ -4885,6 +4856,16 @@ impl<'a> MediaBrowser<'a> {
                 self.manga.go_to_scroll_offset_y = Some(scroll_offset_y);
             }
         });
+    }
+
+    fn presets_submenu_manga(&mut self, ui: &mut egui::Ui) {
+        ui.set_min_width(SUBMENU_WIDTH_LRG);
+
+        let mut checked = self.manga.remember_current;
+        let remember_current_settings_checkbox_resp = ui.checkbox(&mut checked, "Remember current");
+        if remember_current_settings_checkbox_resp.clicked() {
+            self.manga.remember_current = checked;
+        }
     }
 
     fn common_submenus(&mut self, ui: &mut egui::Ui, stage: Stage) {
@@ -5869,11 +5850,15 @@ impl<'a> MediaBrowser<'a> {
                 sort_name_edit_resp.request_focus();
             }
 
-            if grid_entry_info.sort_name.is_some() && ui.button("Remove").clicked() {
-                grid_entry_info.sort_name = None;
+            if grid_entry_info.sort_name.is_some() {
+                ui.separator();
 
-                self.sort_name_edit.clear();
-                sort_grid_view = true;
+                if ui.button("Remove").clicked() {
+                    grid_entry_info.sort_name = None;
+
+                    self.sort_name_edit.clear();
+                    sort_grid_view = true;
+                }
             }
         });
 

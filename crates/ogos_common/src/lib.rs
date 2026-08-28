@@ -154,12 +154,20 @@ impl_WmOgos! {
 }
 
 pub trait BoolExt {
+    fn and<T>(self, optb: Option<T>) -> Option<T>;
     fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T>;
     fn _as_str(&self) -> &'static str;
     fn as_win32_bool(&self) -> BOOL;
     fn take(&mut self) -> bool;
 }
 impl BoolExt for bool {
+    fn and<T>(self, optb: Option<T>) -> Option<T> {
+        match self {
+            true => optb,
+            false => None
+        }
+    }
+
     fn and_then<T>(self, f: impl FnOnce() -> Option<T>) -> Option<T> {
         match self {
             true => f(),
