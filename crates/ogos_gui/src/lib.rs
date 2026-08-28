@@ -589,7 +589,6 @@ impl Manga {
 
         Self {
             scale_pc: 100.,
-            filter: FilterAccel::Gpu(FilterKind::Blackman),
             tint: egui::Rgba::WHITE,
             white_level_pc: 100.,
             background_level_pc: 100.,
@@ -746,8 +745,8 @@ impl Clone for PollReady {
     }
 }
 
-#[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
 struct PushConstants {
     render_pass_kind: u32,
     src_tex_extent: [f32; 2],
@@ -1274,21 +1273,49 @@ enum CursorVisibility {
     Hidden { anchor_pos: egui::Pos2 }
 }
 
+#[derive(Deserialize, Serialize)]
 enum FilterAccel {
-    Cpu(fir::FilterType),
-    Gpu(FilterKind)
+    Cpu(CpuFilter),
+    Gpu(GpuFilter)
 }
 impl Default for FilterAccel {
     fn default() -> Self {
-        Self::Cpu(default!())
+        Self::Gpu(GpuFilter::Blackman3)
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+enum CpuFilter {
+    Box,
+    Bilinear,
+    Blackman3,
+    Hamming,
+    CatmullRom,
+    Mitchell,
+    Gaussian,
+    Lanczos3
+}
+impl From<CpuFilter> for fir::FilterType {
+    fn from(value: CpuFilter) -> Self {
+        match value {
+            CpuFilter::Box => Self::Box,
+            CpuFilter::Bilinear => Self::Bilinear,
+            CpuFilter::Blackman3 => Self::Custom(blackman_filter_fir()),
+            CpuFilter::Hamming => Self::Hamming,
+            CpuFilter::CatmullRom => Self::CatmullRom,
+            CpuFilter::Mitchell => Self::Mitchell,
+            CpuFilter::Gaussian => Self::Gaussian,
+            CpuFilter::Lanczos3 => Self::Lanczos3,
+        }
     }
 }
 
 #[repr(u32)]
-enum FilterKind {
+#[derive(Deserialize, Serialize)]
+enum GpuFilter {
     Nearest,
     Bilinear,
-    Blackman
+    Blackman3
 }
 
 enum GridViewOp {
@@ -1382,8 +1409,8 @@ enum ReactiveMode {
     Windowed
 }
 
-#[repr(u32)]
 #[derive(Clone, Copy)]
+#[repr(u32)]
 enum RenderPassKind {
     Horizontal,
     Vertical
@@ -1661,7 +1688,7 @@ fn create_sampler_render_pipeline(device: &wgpu::Device, bind_group_layout: &wgp
         module: shader_module,
         entry_point: Some("fragment_main"),
         compilation_options: PipelineCompilationOptions {
-            constants: &[("0", FilterKind::Bilinear as u32 as f64)],
+            constants: &[("0", GpuFilter::Bilinear as u32 as f64)],
             zero_initialize_workgroup_memory: default!()
         },
         targets: &[Some(color_target_state)]
@@ -1712,7 +1739,7 @@ fn create_blackman_render_pipelines(device: &wgpu::Device, bind_group_layout: &w
         module: shader_module,
         entry_point: Some("fragment_main"),
         compilation_options: PipelineCompilationOptions {
-            constants: &[("0", FilterKind::Blackman as u32 as f64)],
+            constants: &[("0", GpuFilter::Blackman3 as u32 as f64)],
             zero_initialize_workgroup_memory: default!()
         },
         targets: &[Some(color_target_state0)]
@@ -1721,7 +1748,7 @@ fn create_blackman_render_pipelines(device: &wgpu::Device, bind_group_layout: &w
         module: shader_module,
         entry_point: Some("fragment_main"),
         compilation_options: PipelineCompilationOptions {
-            constants: &[("0", FilterKind::Blackman as u32 as f64)],
+            constants: &[("0", GpuFilter::Blackman3 as u32 as f64)],
             zero_initialize_workgroup_memory: default!()
         },
         targets: &[Some(color_target_state1)]
@@ -3690,15 +3717,15 @@ impl<'a> MediaBrowser<'a> {
                 };
 
                 match self.manga.filter {
-                    FilterAccel::Gpu(FilterKind::Nearest) if self.manga.scale_pc != 100. => {
+                    FilterAccel::Gpu(GpuFilter::Nearest) if self.manga.scale_pc != 100. => {
                         let iris_info = make_iris_info();
                         self.thread_pool.enqueue_high(|| iris_sampler(iris_info, wgpu::FilterMode::Nearest));
                     },
-                    FilterAccel::Gpu(FilterKind::Bilinear) if self.manga.scale_pc != 100. => {
+                    FilterAccel::Gpu(GpuFilter::Bilinear) if self.manga.scale_pc != 100. => {
                         let iris_info = make_iris_info();
                         self.thread_pool.enqueue_high(|| iris_sampler(iris_info, wgpu::FilterMode::Linear));
                     },
-                    FilterAccel::Gpu(FilterKind::Blackman) if self.manga.scale_pc != 100. => {
+                    FilterAccel::Gpu(GpuFilter::Blackman3) if self.manga.scale_pc != 100. => {
                         let iris_info = make_iris_info();
                         self.thread_pool.enqueue_high(|| iris_blackman(iris_info));
                     },
@@ -3998,7 +4025,7 @@ impl<'a> MediaBrowser<'a> {
                     let ViewPageInfo { archive_i, image_kind, extent, ref gen_id, .. } = self.manga.view[view_i];
 
                     let scale = if should_scale && let FilterAccel::Cpu(filter) = self.manga.filter {
-                        Some(ScaleImageManga { extent, filter })
+                        Some(ScaleImageManga { extent, filter: filter.into() })
                     } else {
                         None
                     };
@@ -4721,29 +4748,29 @@ impl<'a> MediaBrowser<'a> {
                         ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
                     });
 
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Box)), "Box").clicked() {
-                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Box);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::Box)), "Box").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(CpuFilter::Box);
                     }
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Bilinear)), "Bilinear").clicked() {
-                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Bilinear);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::Bilinear)), "Bilinear").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(CpuFilter::Bilinear);
                     }
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Custom(_))), "Blackman 3").clicked() {
-                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Custom(blackman_filter_fir()));
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::Blackman3)), "Blackman 3").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(CpuFilter::Blackman3);
                     }
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::CatmullRom)), "Catmull-Rom").clicked() {
-                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::CatmullRom);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::CatmullRom)), "Catmull-Rom").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(CpuFilter::CatmullRom);
                     }
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Gaussian)), "Gaussian").clicked() {
-                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Gaussian);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::Gaussian)), "Gaussian").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(CpuFilter::Gaussian);
                     }
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Hamming)), "Hamming").clicked() {
-                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Hamming);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::Hamming)), "Hamming").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(CpuFilter::Hamming);
                     }
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Lanczos3)), "Lanczos 3").clicked() {
-                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Lanczos3);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::Lanczos3)), "Lanczos 3").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(CpuFilter::Lanczos3);
                     }
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(fir::FilterType::Mitchell)), "Mitchell").clicked() {
-                        self.manga.filter = FilterAccel::Cpu(fir::FilterType::Mitchell);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::Mitchell)), "Mitchell").clicked() {
+                        self.manga.filter = FilterAccel::Cpu(CpuFilter::Mitchell);
                     }
                 });
 
@@ -4756,16 +4783,16 @@ impl<'a> MediaBrowser<'a> {
                         ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
                     });
 
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Nearest)), "Nearest").clicked() {
-                        self.manga.filter = FilterAccel::Gpu(FilterKind::Nearest);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(GpuFilter::Nearest)), "Nearest").clicked() {
+                        self.manga.filter = FilterAccel::Gpu(GpuFilter::Nearest);
                     }
 
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Bilinear)), "Bilinear").clicked() {
-                        self.manga.filter = FilterAccel::Gpu(FilterKind::Bilinear);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(GpuFilter::Bilinear)), "Bilinear").clicked() {
+                        self.manga.filter = FilterAccel::Gpu(GpuFilter::Bilinear);
                     }
 
-                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(FilterKind::Blackman)), "Blackman 3").clicked() {
-                        self.manga.filter = FilterAccel::Gpu(FilterKind::Blackman);
+                    if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(GpuFilter::Blackman3)), "Blackman 3").clicked() {
+                        self.manga.filter = FilterAccel::Gpu(GpuFilter::Blackman3);
                     }
                 });
 
