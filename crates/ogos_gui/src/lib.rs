@@ -1273,7 +1273,7 @@ enum CursorVisibility {
     Hidden { anchor_pos: egui::Pos2 }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Copy, Clone, Deserialize, Serialize)]
 enum FilterAccel {
     Cpu(CpuFilter),
     Gpu(GpuFilter)
@@ -1311,7 +1311,7 @@ impl From<CpuFilter> for fir::FilterType {
 }
 
 #[repr(u32)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 enum GpuFilter {
     Nearest,
     Bilinear,
@@ -3042,7 +3042,8 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 struct Preset {
-    scale_pc: f32
+    scale_pc: f32,
+    filter: FilterAccel
 }
 
 struct MediaBrowserInfo<'a> {
@@ -3843,7 +3844,13 @@ impl<'a> MediaBrowser<'a> {
         self.manga.to_thanatos.set(self.to_thanatos.clone());
 
         if let Some(preset) = self.grid_entries[self.details_grid_entry_i].current_preset {
-            self.manga.scale_pc = preset.scale_pc;
+            let Preset { // Exhaust
+                scale_pc,
+                filter
+            } = preset;
+
+            self.manga.scale_pc = scale_pc;
+            self.manga.filter = filter;
             self.manga.remember_current = true;
         }
 
@@ -3854,7 +3861,8 @@ impl<'a> MediaBrowser<'a> {
 
     fn make_manga_preset(&mut self) -> Preset {
         Preset {
-            scale_pc: self.manga.scale_pc
+            scale_pc: self.manga.scale_pc,
+            filter: self.manga.filter
         }
     }
 
