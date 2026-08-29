@@ -72,6 +72,7 @@ const DETAILS_ENTRY_COUNT: usize = 64;
 const FRAME_INNER_MARGIN: f32 = 15.;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
+const IMMEDIATE_SIZE: u32 = (mem::size_of::<RenderPassKind>() + 2 * mem::size_of::<Extent2dF>()) as u32;
 const NIGHT_LIGHT: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
 const SEPARATOR_WIDTH: f32 = 2.;
@@ -1669,6 +1670,7 @@ fn create_sampler_render_pipeline(device: &wgpu::Device, bind_group_layout: &wgp
 
     let pipeline_layout_desc = PipelineLayoutDescriptor {
         bind_group_layouts: &[Some(bind_group_layout)],
+        immediate_size: IMMEDIATE_SIZE,
         ..default!()
     };
     let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
@@ -1714,7 +1716,7 @@ fn create_blackman_render_pipelines(device: &wgpu::Device, bind_group_layout: &w
 
     let pipeline_layout_desc = PipelineLayoutDescriptor {
         bind_group_layouts: &[Some(bind_group_layout)],
-        immediate_size: (mem::size_of::<RenderPassKind>() + 2 * mem::size_of::<Extent2dF>()) as u32,
+        immediate_size: IMMEDIATE_SIZE,
         ..default!()
     };
     let pipeline_layout = device.create_pipeline_layout(&pipeline_layout_desc);
@@ -1877,6 +1879,7 @@ fn iris_sampler(info: IrisInfo, filter_mode: wgpu::FilterMode) {
         let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
         render_pass.set_pipeline(&scaler.sampler_render_pipeline);
         render_pass.set_bind_group(0, &bind_group, default!());
+        render_pass.set_immediates(0, &[0; IMMEDIATE_SIZE as usize]); // Else validation complains, even if shader variant doesn't use them
         render_pass.draw(0..3, 0..1);
     }
     let command_buffer = encoder.finish();
