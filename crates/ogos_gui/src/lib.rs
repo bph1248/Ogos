@@ -555,10 +555,10 @@ struct Manga {
     view_extent: Extent2dF,
     context_menu_open: bool,
     scale_pc: f32,
-    should_scale: Option<egui::Rect>,
+    reassess_layout: Option<egui::Rect>,
     filter: FilterAccel,
-    tint: egui::Rgba,
     night_light_alpha_pc: f32,
+    night_light_tint: egui::Rgba,
     white_level_pc: f32,
     background_level_pc: f32,
     scroll_kind: ScrollKind,
@@ -575,7 +575,7 @@ struct Manga {
     hide_cursor_after: f32,
     hide_cursor_anchor: Option<Instant>,
     hide_cursor_dead_zone: f32,
-    remember_current: bool,
+    remember_settings: bool,
     secondary_was_down: bool,
     stop_kinesis: bool,
     residence: Range<usize>,
@@ -590,7 +590,7 @@ impl Manga {
 
         Self {
             scale_pc: 100.,
-            tint: egui::Rgba::WHITE,
+            night_light_tint: egui::Rgba::WHITE,
             white_level_pc: 100.,
             background_level_pc: 100.,
             scroll_kind,
@@ -627,13 +627,51 @@ impl Manga {
         Manga::new(manga_info)
     }
 
+    fn apply_preset(&mut self, preset: &Preset) {
+        let Preset {
+            scale_pc,
+            filter,
+            night_light_alpha_pc,
+            night_light_tint,
+            white_level_pc,
+            background_level_pc,
+            should_hide_cursor,
+            hide_cursor_after,
+            hide_cursor_dead_zone
+        } = *preset;
+
+        self.scale_pc = scale_pc;
+        self.filter = filter;
+        self.night_light_alpha_pc = night_light_alpha_pc;
+        self.night_light_tint = night_light_tint;
+        self.white_level_pc = white_level_pc;
+        self.background_level_pc = background_level_pc;
+        self.should_hide_cursor = should_hide_cursor;
+        self.hide_cursor_after = hide_cursor_after;
+        self.hide_cursor_dead_zone = hide_cursor_dead_zone;
+    }
+
+    fn make_preset(&mut self) -> Preset {
+        Preset {
+            scale_pc: self.scale_pc,
+            filter: self.filter,
+            night_light_alpha_pc: self.night_light_alpha_pc,
+            night_light_tint: self.night_light_tint,
+            white_level_pc: self.white_level_pc,
+            background_level_pc: self.background_level_pc,
+            should_hide_cursor: self.should_hide_cursor,
+            hide_cursor_after: self.hide_cursor_after,
+            hide_cursor_dead_zone: self.hide_cursor_dead_zone
+        }
+    }
+
     fn flag_scale(&mut self, ui: &mut egui::Ui, scale_pc: f32, viewport: egui::Rect) {
         if scale_pc == 100. && self.scale_pc == 100. {
             return
         }
 
         self.scale_pc = scale_pc;
-        self.should_scale = Some(viewport);
+        self.reassess_layout = Some(viewport);
 
         ui.close();
     }
@@ -2729,7 +2767,7 @@ fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
     let ext = concat_string!(".", ext);
     let ext = ext.as_str().to_win_str();
 
-    let mut buffer = [0_u16; MAX_PATH as usize];
+    let mut buffer = [0; MAX_PATH as usize];
     let path_str = PWSTR(buffer.as_mut_ptr());
     let mut path_len = buffer.len() as u32;
 
@@ -3046,7 +3084,14 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
 #[derive(Clone, Copy, Deserialize, Serialize)]
 struct Preset {
     scale_pc: f32,
-    filter: FilterAccel
+    filter: FilterAccel,
+    night_light_alpha_pc: f32,
+    night_light_tint: egui::Rgba,
+    white_level_pc: f32,
+    background_level_pc: f32,
+    should_hide_cursor: bool,
+    hide_cursor_after: f32,
+    hide_cursor_dead_zone: f32
 }
 
 struct MediaBrowserInfo<'a> {
@@ -3215,7 +3260,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                         if requested_go_back(ui) {
                             self.frame = self.frame.fill(DARK_GRAY);
                             self.grid_entries[self.details_grid_entry_i].current_preset =
-                                self.manga.remember_current.then_some(self.make_manga_preset());
+                                self.manga.remember_settings.then(|| self.manga.make_preset());
                             self.manga = mem::take(&mut self.manga).reset();
                             self.view_kind = ViewKind::Details;
 
@@ -3294,7 +3339,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
     fn on_exit(&mut self) {
         if let ViewKind::Manga = self.view_kind {
             self.grid_entries[self.details_grid_entry_i].current_preset =
-                self.manga.remember_current.then_some(self.make_manga_preset());
+                self.manga.remember_settings.then(|| self.manga.make_preset());
         }
 
         for image_file_name in self.missing_base_images.drain(..) { // Base images ref'd by cache entries that have been moved or deleted - remove grid/details images from disk
@@ -3796,7 +3841,7 @@ impl<'a> MediaBrowser<'a> {
                     (ImageKind::Jpeg, decoder_info.width as f32, decoder_info.height as f32)
                 },
                 "png" => {
-                    let mut buf = [0_u8; 24];
+                    let mut buf = [0; 24];
                     page.read_exact(&mut buf)?;
 
                     let width_slice = buf.get(16..20).unwrap();
@@ -3807,7 +3852,7 @@ impl<'a> MediaBrowser<'a> {
                     (ImageKind::Png, width as f32, height as f32)
                 },
                 "webp" => {
-                    let mut buf = [0_u8; zenwebp::ImageInfo::PROBE_BYTES];
+                    let mut buf = [0; zenwebp::ImageInfo::PROBE_BYTES];
                     page.read_exact(&mut buf)?;
 
                     let info = zenwebp::ImageInfo::from_bytes(&buf).map_err(|err| err.decompose().0)?;
@@ -3822,7 +3867,7 @@ impl<'a> MediaBrowser<'a> {
         }
         self.manga.archive_pages.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
-        let mut view_page_offset = 0_f32;
+        let mut view_page_offset = 0.;
         for archive_page_info in self.manga.archive_pages.iter() {
             let view_page_info = ViewPageInfo {
                 archive_i: archive_page_info.index,
@@ -3838,35 +3883,22 @@ impl<'a> MediaBrowser<'a> {
         }
         self.manga.view_extent = [self.manga.archive_pages_width, view_page_offset].into();
 
+        if let Some(preset) = self.grid_entries[self.details_grid_entry_i].current_preset {
+            self.manga.apply_preset(&preset);
+            self.manga.remember_settings = true;
+        }
+
         self.manga.archive.set(archive);
         self.manga.archive_path.set(archive_path);
-        self.manga.should_scale = Some(self.central_rect);
+        self.manga.reassess_layout = Some(self.central_rect);
         self.manga.poll_ready = Some(PollReady::new());
         ui.clear_animations();
         self.animation.target = false;
         self.manga.to_thanatos.set(self.to_thanatos.clone());
 
-        if let Some(preset) = self.grid_entries[self.details_grid_entry_i].current_preset {
-            let Preset { // Exhaust
-                scale_pc,
-                filter
-            } = preset;
-
-            self.manga.scale_pc = scale_pc;
-            self.manga.filter = filter;
-            self.manga.remember_current = true;
-        }
-
         self.view_kind = ViewKind::Manga;
 
         Ok(())
-    }
-
-    fn make_manga_preset(&mut self) -> Preset {
-        Preset {
-            scale_pc: self.manga.scale_pc,
-            filter: self.manga.filter
-        }
     }
 
     fn reset_grid_entries_selection(&mut self) {
@@ -3937,14 +3969,14 @@ impl<'a> MediaBrowser<'a> {
 
     fn set_tint(&mut self) {
         let night_light_alpha = self.manga.night_light_alpha_pc / 100.;
-        let mut tint = egui::Rgba::WHITE.blend(NIGHT_LIGHT.multiply(night_light_alpha));
+        let mut night_light_tint = egui::Rgba::WHITE.blend(NIGHT_LIGHT.multiply(night_light_alpha));
 
         let white_level = (self.manga.white_level_pc / 100.).powf(2.2);
-        tint[0] *= white_level;
-        tint[1] *= white_level;
-        tint[2] *= white_level;
+        night_light_tint[0] *= white_level;
+        night_light_tint[1] *= white_level;
+        night_light_tint[2] *= white_level;
 
-        self.manga.tint = tint;
+        self.manga.night_light_tint = night_light_tint;
     }
 
     fn sort_grid_view(&mut self) {
@@ -4323,8 +4355,8 @@ impl<'a> MediaBrowser<'a> {
         let dt = get_dt(ui, &self.window);
         let WheelState { wheel_delta_raw, wheel_delta_smoothed } = get_wheel_state(ui);
 
-        // Scale
-        if let Some(viewport) = self.manga.should_scale.take() {
+        // Assess layout
+        if let Some(viewport) = self.manga.reassess_layout.take() {
             let scale = self.manga.scale_pc / 100.;
             let pivot = self.get_pivot();
 
@@ -4335,7 +4367,7 @@ impl<'a> MediaBrowser<'a> {
             }
 
             let limit = self.wgpu.device.limits().max_texture_dimension_2d as f32;
-            let mut page_scaled_offset = 0_f32;
+            let mut page_scaled_offset = 0.;
             for page in self.manga.archive_pages.iter() {
                 let max_width_scale = limit / page.extent.width;
                 let max_height_scale = limit / page.extent.height;
@@ -4611,7 +4643,7 @@ impl<'a> MediaBrowser<'a> {
                 let page_extent = self.manga.view[view_i].extent;
                 let (page_rect, _) = ui.allocate_exact_size([ui.min_size().x, page_extent.height].into(), egui::Sense::hover());
 
-                let image_resp = try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect, self.manga.tint);
+                let image_resp = try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect, self.manga.night_light_tint);
 
                 if let Some(image_resp) = image_resp {
                     self.context_menu_manga(viewport, &image_resp.union(background_resp.clone()));
@@ -4651,19 +4683,19 @@ impl<'a> MediaBrowser<'a> {
                 }
 
                 ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
-                ui.menu_button("Presets", |ui| self.presets_submenu_manga(ui));
+                ui.menu_button("Preset", |ui| self.preset_submenu_manga(ui));
 
                 ui.separator();
 
+                ui.menu_button("Cursor", |ui| self.cursor_submenu_manga(ui));
                 ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
-                ui.menu_button("Filter", |ui| self.filter_submenu_manga(ui));
-                ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
+                ui.menu_button("Kernel", |ui| self.filter_submenu_manga(ui));
                 ui.menu_button("Levels", |ui| self.levels_submenu_manga(ui));
+                ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
 
                 ui.separator();
 
                 self.display_submenu_common(ui);
-                self.cursor_submenu(ui);
                 self.scroll_submenu_common(ui, Stage::Manga);
 
                 ui.separator();
@@ -4694,7 +4726,7 @@ impl<'a> MediaBrowser<'a> {
                 .step_by(5.));
 
             if scale_slider_resp.drag_stopped() || scale_slider_resp.lost_focus() && enter_pressed(ui) {
-                self.manga.should_scale = Some(viewport);
+                self.manga.reassess_layout = Some(viewport);
             }
         });
 
@@ -4896,13 +4928,13 @@ impl<'a> MediaBrowser<'a> {
         });
     }
 
-    fn presets_submenu_manga(&mut self, ui: &mut egui::Ui) {
+    fn preset_submenu_manga(&mut self, ui: &mut egui::Ui) {
         ui.set_min_width(SUBMENU_WIDTH_LRG);
 
-        let mut checked = self.manga.remember_current;
-        let remember_current_settings_checkbox_resp = ui.checkbox(&mut checked, "Remember current");
+        let mut checked = self.manga.remember_settings;
+        let remember_current_settings_checkbox_resp = ui.checkbox(&mut checked, "Remember");
         if remember_current_settings_checkbox_resp.clicked() {
-            self.manga.remember_current = checked;
+            self.manga.remember_settings = checked;
         }
     }
 
@@ -5099,35 +5131,33 @@ impl<'a> MediaBrowser<'a> {
         });
     }
 
-    fn cursor_submenu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Cursor", |ui| {
-            let mut checked = self.manga.should_hide_cursor;
-            let hide_cursor_checkbox_resp = ui.checkbox(&mut checked, "Hide");
-            if hide_cursor_checkbox_resp.clicked() {
-                match checked {
-                    true => self.manga.should_hide_cursor = true,
-                    false => {
-                        self.manga.should_hide_cursor = false;
-                        self.manga.hide_cursor_anchor = None;
-                    }
+    fn cursor_submenu_manga(&mut self, ui: &mut egui::Ui) {
+        let mut checked = self.manga.should_hide_cursor;
+        let hide_cursor_checkbox_resp = ui.checkbox(&mut checked, "Hide");
+        if hide_cursor_checkbox_resp.clicked() {
+            match checked {
+                true => self.manga.should_hide_cursor = true,
+                false => {
+                    self.manga.should_hide_cursor = false;
+                    self.manga.hide_cursor_anchor = None;
                 }
             }
+        }
 
-            ui.scope(|ui| {
-                ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
+        ui.scope(|ui| {
+            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
 
-                ui.add_enabled_ui(self.manga.should_hide_cursor, |ui| {
-                    ui.label("After:");
+            ui.add_enabled_ui(self.manga.should_hide_cursor, |ui| {
+                ui.label("After:");
 
-                    ui.add(egui::Slider::new(&mut self.manga.hide_cursor_after, 0.0..=10.)
-                        .clamping(egui::SliderClamping::Always));
+                ui.add(egui::Slider::new(&mut self.manga.hide_cursor_after, 0.0..=10.)
+                    .clamping(egui::SliderClamping::Always));
 
-                    ui.label("Dead zone:");
+                ui.label("Dead zone:");
 
-                    ui.add(egui::Slider::new(&mut self.manga.hide_cursor_dead_zone, 0.0..=200.)
-                        .clamping(egui::SliderClamping::Always)
-                        .fixed_decimals(0));
-                });
+                ui.add(egui::Slider::new(&mut self.manga.hide_cursor_dead_zone, 0.0..=200.)
+                    .clamping(egui::SliderClamping::Always)
+                    .fixed_decimals(0));
             });
         });
     }
