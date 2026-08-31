@@ -1097,9 +1097,9 @@ impl SpringDamperScroller {
         self.stiffness_display.clear();
         self.bounce_display.clear();
 
-        write!(self.multiplier_display, "{}", self.multiplier).unwrap();
+        write!(self.multiplier_display, "{:.2}", self.multiplier).unwrap();
         write!(self.stiffness_display, "{}", self.angular_frequency).unwrap();
-        write!(self.bounce_display, "{:.1}", self.damping_ratio.recip()).unwrap();
+        write!(self.bounce_display, "{:.2}", self.damping_ratio.recip()).unwrap();
     }
 }
 impl From<SpringDamperScrollerCache> for SpringDamperScroller {
@@ -5057,12 +5057,12 @@ impl<'a> MediaBrowser<'a> {
                             let window_inner_width = if self.window_inner_extent_width_edit.is_empty() {
                                 Some(self.window_inner_extent.width)
                             } else {
-                                self.window_inner_extent_width_edit.parse::<f32>().ok().map(|val| val.max(800.))
+                                self.window_inner_extent_width_edit.parse::<u32>().ok().map(|val| val.max(800) as f32)
                             };
                             let window_inner_height = if self.window_inner_extent_height_edit.is_empty() {
                                 Some(self.window_inner_extent.height)
                             } else {
-                                self.window_inner_extent_height_edit.parse::<f32>().ok().map(|val| val.max(600.))
+                                self.window_inner_extent_height_edit.parse::<u32>().ok().map(|val| val.max(600) as f32)
                             };
 
                             let window_inner_extent = window_inner_width.zip(window_inner_height);
@@ -5314,9 +5314,9 @@ impl<'a> MediaBrowser<'a> {
                                 .show(ui)
                                 .response;
                             if stiffness_edit_resp.lost_focus() && enter_pressed(ui) {
-                                if let Ok(omega) = spring_damper_scroller.stiffness_edit.parse::<f32>() {
+                                if let Ok(stiffness) = spring_damper_scroller.stiffness_edit.parse::<u32>() {
                                     spring_damper_scroller.stiffness_edit.clear();
-                                    spring_damper_scroller.update_stiffness(omega.max(0.1));
+                                    spring_damper_scroller.update_stiffness(stiffness.max(1) as f32);
                                 }
 
                                 stiffness_edit_resp.request_focus();
@@ -5358,7 +5358,7 @@ impl<'a> MediaBrowser<'a> {
                         ui.label("Multiplier:");
 
                         self.manga.auto_scroller.multiplier_display.clear();
-                        write!(self.manga.auto_scroller.multiplier_display, "{:.1}", self.manga.auto_scroller.multiplier).unwrap();
+                        write!(self.manga.auto_scroller.multiplier_display, "{:.2}", self.manga.auto_scroller.multiplier).unwrap();
                         let multiplier_edit_resp = egui::TextEdit::singleline(&mut self.manga.auto_scroller.multiplier_edit)
                             .hint_text(&self.manga.auto_scroller.multiplier_display)
                             .show(ui)
