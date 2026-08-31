@@ -138,6 +138,8 @@ impl From<config::AnimationInfo> for AnimationInfo {
     }
 }
 
+const fn default_lookahead() -> usize { 2 }
+const fn default_proximity() -> usize { 1 }
 const fn default_true() -> bool { true }
 
 #[derive(Serialize, Deserialize)]
@@ -154,6 +156,10 @@ struct Cache {
     window_inner_extent: Option<Extent2dF>,
     grid_cell_size: egui::Vec2,
     details_cell_size: egui::Vec2,
+    #[serde(default = "default_lookahead")]
+    lookahead: usize,
+    #[serde(default = "default_proximity")]
+    proximity: usize,
     #[serde(default)]
     scroll_kind: ScrollKind,
     #[serde(default)]
@@ -3146,6 +3152,10 @@ struct MediaBrowser<'a> {
     grid_view_pending_op: Option<GridViewOp>,
     lookahead: usize,
     proximity: usize,
+    lookahead_edit: String,
+    proximity_edit: String,
+    lookahead_display: String,
+    proximity_display: String,
     animation: AnimationInfo,
     residence: Range<usize>,
     stream: Stream,
@@ -3363,6 +3373,8 @@ impl<'a> eframe::App for MediaBrowser<'a> {
         };
         self.cache.grid_cell_size = self.grid_cell_size;
         self.cache.details_cell_size = self.details_cell_size;
+        self.cache.lookahead = self.lookahead;
+        self.cache.proximity = self.proximity;
         self.cache.scroll_kind = self.scroll_kind;
         self.cache.ease_in_out_scroller = self.ease_in_out_scroller.as_();
         self.cache.spring_damper_scroller = self.spring_damper_scroller.as_();
@@ -3427,24 +3439,16 @@ impl<'a> MediaBrowser<'a> {
         let config = config::get().read()?;
         let (grid_cell_width,
             details_cell_width,
-            lookahead,
-            proximity,
             animation
         ) = config.media_browser.as_ref()
             .map(|media_browser_config| {
                 (
                     media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
                     media_browser_config.details_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.lookahead,
-                    media_browser_config.proximity,
                     media_browser_config.animation.into()
                 )
             })
             .ok_or(ErrVar::MissingConfigOption { name: config::MediaBrowser::NAME })?;
-
-        if lookahead < 2 { Err(ErrVar::InvalidLookahead(lookahead))?; }
-        let proximity_range = 1..lookahead;
-        if !(proximity_range.contains(&proximity)) { Err(ErrVar::InvalidProximity(proximity))?; }
 
         let grid_cell_size = egui::vec2(grid_cell_width, grid_cell_width * ASPECT_RATIO_3_2);
         let grid_cell_space = grid_cell_size + GRID_IMAGE_SPACING;
@@ -3503,6 +3507,8 @@ impl<'a> MediaBrowser<'a> {
 
         let mut missing_base_images = Vec::new();
 
+        let lookahead = cache.lookahead.max(2);
+        let proximity = cache.proximity.clamp(1, lookahead - 1);
         let scroll_kind = cache.scroll_kind;
         let scroll_kind_manga = cache.manga.scroll_kind;
         let ease_in_out_scroller = cache.ease_in_out_scroller.into();
@@ -3679,6 +3685,10 @@ impl<'a> MediaBrowser<'a> {
             grid_view_pending_op: default!(),
             lookahead,
             proximity,
+            lookahead_edit: default!(),
+            proximity_edit: default!(),
+            lookahead_display: default!(),
+            proximity_display: default!(),
             animation,
             residence,
             stream: default!(),
@@ -4338,7 +4348,7 @@ impl<'a> MediaBrowser<'a> {
         egui::Popup::context_menu(&background_resp)
             .close_behavior(close_behaviour)
             .show(|ui| {
-                self.common_submenus(ui, Stage::Grid);
+                self.common_grid_submenus(ui);
             });
     }
 
@@ -4696,6 +4706,7 @@ impl<'a> MediaBrowser<'a> {
                 ui.separator();
 
                 self.display_submenu_common(ui);
+                self.misc_submenu_common(ui);
                 self.scroll_submenu_common(ui, Stage::Manga);
 
                 ui.separator();
@@ -4938,10 +4949,11 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn common_submenus(&mut self, ui: &mut egui::Ui, stage: Stage) {
+    fn common_grid_submenus(&mut self, ui: &mut egui::Ui) {
         self.display_submenu_common(ui);
         self.library_submenu_common(ui);
-        self.scroll_submenu_common(ui, stage);
+        self.misc_submenu_common(ui);
+        self.scroll_submenu_common(ui, Stage::Grid);
 
         ui.separator();
 
@@ -5128,6 +5140,54 @@ impl<'a> MediaBrowser<'a> {
 
                 self.view_kind = ViewKind::Restart;
             }
+        });
+    }
+
+    fn misc_submenu_common(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Misc.", |ui| {
+            ui.set_max_width(SUBMENU_WIDTH_LRG);
+
+            egui::Grid::new("grid")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Lookahead:");
+
+                    self.lookahead_display.clear();
+                    write!(self.lookahead_display, "{}", self.lookahead).unwrap();
+                    let lookahead_edit_resp = egui::TextEdit::singleline(&mut self.lookahead_edit)
+                        .hint_text(&self.lookahead_display)
+                        .show(ui)
+                        .response;
+                    if lookahead_edit_resp.lost_focus() && enter_pressed(ui) {
+                        if let Ok(lookahead) = self.lookahead_edit.parse::<usize>() {
+                            self.lookahead_edit.clear();
+                            self.lookahead = lookahead.max(2);
+                        }
+
+                        lookahead_edit_resp.request_focus();
+                    }
+
+                    ui.end_row();
+
+                    ui.label("Proximity:");
+
+                    self.proximity_display.clear();
+                    write!(self.proximity_display, "{}", self.proximity).unwrap();
+                    let proximity_edit_resp = egui::TextEdit::singleline(&mut self.proximity_edit)
+                        .hint_text(&self.proximity_display)
+                        .show(ui)
+                        .response;
+                    if proximity_edit_resp.lost_focus() && enter_pressed(ui) {
+                        if let Ok(proximity) = self.proximity_edit.parse::<usize>() {
+                            self.proximity_edit.clear();
+                            self.proximity = proximity.clamp(1, self.lookahead - 1);
+                        }
+
+                        proximity_edit_resp.request_focus();
+                    }
+
+                    ui.end_row();
+                });
         });
     }
 
@@ -5762,7 +5822,7 @@ impl<'a> MediaBrowser<'a> {
 
                 ui.separator();
 
-                self.common_submenus(ui, Stage::Grid);
+                self.common_grid_submenus(ui);
             });
 
         egui::Popup::new(ui.make_persistent_id("multi"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)

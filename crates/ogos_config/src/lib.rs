@@ -450,17 +450,10 @@ impl Default for AnimationInfo {
     }
 }
 
-const fn lookahead() -> usize { 2 }
-const fn proximity() -> usize { 1 }
-
 #[derive(Deserialize)]
 pub struct MediaBrowser {
     pub grid_cell_width: u32,
     pub details_cell_width: u32,
-    #[serde(default = "lookahead")]
-    pub lookahead: usize,
-    #[serde(default = "proximity")]
-    pub proximity: usize,
     #[serde(default)]
     pub animation: AnimationInfo
 }
