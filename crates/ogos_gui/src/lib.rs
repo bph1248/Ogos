@@ -5628,7 +5628,7 @@ impl<'a> MediaBrowser<'a> {
 
                         tag_rename_edit_resp.request_focus();
 
-                        if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
+                        if tag_rename_edit_resp.lost_focus() && enter_pressed(ui) {
                             if !self.tag_win_rename_edit.is_empty() {
                                 self.tag_win_button_pending_tag_op = Some(PendingTagOp { tag: tag.clone(), op: TagOp::Rename });
 
@@ -6065,7 +6065,7 @@ impl<'a> MediaBrowser<'a> {
                 .show(ui)
                 .response;
 
-            if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
+            if sort_name_edit_resp.lost_focus() && enter_pressed(ui) {
                 if !self.sort_name_edit.is_empty() {
                     grid_entry_info.sort_name = Some(Rc::from(self.sort_name_edit.as_str()));
 
@@ -6104,7 +6104,7 @@ impl<'a> MediaBrowser<'a> {
                 .show(ui)
                 .response;
 
-            if ui.input(|state| state.key_pressed(egui::Key::Enter)) {
+            if new_tag_edit_resp.lost_focus() && enter_pressed(ui) {
                 if !self.new_tag_edit.is_empty() {
                     if let Some(selection_kind) = self.grid_entries_selection_kind.as_ref() {
                         let tag_entry = self.tags.entry(Rc::from(self.new_tag_edit.as_str()));
