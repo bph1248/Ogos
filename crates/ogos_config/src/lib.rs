@@ -46,17 +46,6 @@ pub trait Name {
     const NAME: &'static str;
 }
 
-fn deserialize_positive_f32<'de, D>(deserializer: D) -> Result<f32, D::Error> where
-    D: Deserializer<'de>
-{
-    let f = f32::deserialize(deserializer)?;
-    if f.is_sign_negative() {
-        Err(D::Error::custom(ErrVar::NegativeFloat))?;
-    }
-
-    Ok(f)
-}
-
 fn deserialize_key<'de, D>(deserializer: D) -> Result<Key, D::Error> where
     D: Deserializer<'de>
 {
@@ -408,54 +397,10 @@ pub struct Mpv<'a> {
 }
 impl_name!(Mpv, 'a);
 
-fn quartic_out(t: f32) -> f32 {
-    1.0 - (1.0 - t).powi(4)
-}
-
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AnimationKind {
-    Linear,
-    Quadratic,
-    Cubic,
-    Quartic,
-    Circular
-}
-impl AnimationKind {
-    pub fn as_easing(&self) -> fn(f32) -> f32 {
-        use eframe::egui::emath::easing::*;
-
-        match self {
-            Self::Linear => linear,
-            Self::Quadratic => quadratic_out,
-            Self::Cubic => cubic_out,
-            Self::Quartic => quartic_out,
-            Self::Circular => circular_out
-        }
-    }
-}
-
-#[derive(Clone, Copy, Deserialize)]
-pub struct AnimationInfo {
-    #[serde(deserialize_with = "deserialize_positive_f32", rename = "dur_s")]
-    pub dur: f32,
-    pub kind: AnimationKind
-}
-impl Default for AnimationInfo {
-    fn default() -> Self {
-        Self {
-            dur: 0.37,
-            kind: AnimationKind::Cubic
-        }
-    }
-}
-
 #[derive(Deserialize)]
 pub struct MediaBrowser {
     pub grid_cell_width: u32,
-    pub details_cell_width: u32,
-    #[serde(default)]
-    pub animation: AnimationInfo
+    pub details_cell_width: u32
 }
 impl_name!(MediaBrowser);
 

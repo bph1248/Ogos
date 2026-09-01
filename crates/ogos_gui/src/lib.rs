@@ -106,8 +106,32 @@ type Residence = Range<usize>;
 type ShouldStream = bool;
 type WrittenSize = usize;
 
+#[derive(Clone, Copy, Deserialize, Serialize)]
+struct AnimationCache {
+    dur: f32,
+    kind: AnimationKind
+}
+impl Default for AnimationCache {
+    fn default() -> Self {
+        Self {
+            dur: 0.37,
+            kind: AnimationKind::Cubic
+        }
+    }
+}
+impl From<&AnimationInfo> for AnimationCache {
+    fn from(value: &AnimationInfo) -> Self {
+        Self {
+            dur: value.dur,
+            kind: value.kind
+        }
+    }
+}
+
 struct AnimationInfo {
     dur: f32,
+    dur_edit: String,
+    dur_display: String,
     kind: AnimationKind,
     target: bool
 }
@@ -128,10 +152,12 @@ impl AnimationInfo {
         ui.animate_bool_with_time_and_easing("animate".into(), self.target, self.dur, self.kind.as_easing())
     }
 }
-impl From<config::AnimationInfo> for AnimationInfo {
-    fn from(value: config::AnimationInfo) -> Self {
+impl From<AnimationCache> for AnimationInfo {
+    fn from(value: AnimationCache) -> Self {
         Self {
             dur: value.dur,
+            dur_edit: default!(),
+            dur_display: default!(),
             kind: value.kind,
             target: true
         }
@@ -160,6 +186,8 @@ struct Cache {
     lookahead: usize,
     #[serde(default = "default_proximity")]
     proximity: usize,
+    #[serde(default)]
+    animation: AnimationCache,
     #[serde(default)]
     scroll_kind: ScrollKind,
     #[serde(default)]
@@ -1295,6 +1323,32 @@ struct WriteTex {
     last_write: bool
 }
 
+fn quartic_out(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(4)
+}
+
+#[derive(Clone, Copy, Deserialize, EnumIter, IntoStaticStr, PartialEq, Serialize)]
+pub enum AnimationKind {
+    Linear,
+    Quadratic,
+    Cubic,
+    Quartic,
+    Circular
+}
+impl AnimationKind {
+    pub fn as_easing(&self) -> fn(f32) -> f32 {
+        use eframe::egui::emath::easing::*;
+
+        match self {
+            Self::Linear => linear,
+            Self::Quadratic => quadratic_out,
+            Self::Cubic => cubic_out,
+            Self::Quartic => quartic_out,
+            Self::Circular => circular_out
+        }
+    }
+}
+
 #[derive(Clone)]
 enum BaseImageKind {
     Pick { path: PathBuf },
@@ -1508,6 +1562,16 @@ enum Watching {
     #[default]
     TV,
     Words
+}
+
+fn add_enum_radios<T>(ui: &mut egui::Ui, target: &mut T) where
+    T: IntoEnumIterator + PartialEq, &'static str: for<'a> From<&'a T>
+{
+    for var in T::iter() {
+        if ui.radio(*target == var, var.as_::<&str>()).clicked() {
+            *target = var;
+        }
+    }
 }
 
 fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, text: &str, poll_ready: &PollReady, animation: Option<&mut AnimationInfo>) -> egui::Response {
@@ -3375,6 +3439,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
         self.cache.details_cell_size = self.details_cell_size;
         self.cache.lookahead = self.lookahead;
         self.cache.proximity = self.proximity;
+        self.cache.animation = self.animation.as_();
         self.cache.scroll_kind = self.scroll_kind;
         self.cache.ease_in_out_scroller = self.ease_in_out_scroller.as_();
         self.cache.spring_damper_scroller = self.spring_damper_scroller.as_();
@@ -3437,15 +3502,14 @@ impl<'a> MediaBrowser<'a> {
         }
 
         let config = config::get().read()?;
-        let (grid_cell_width,
-            details_cell_width,
-            animation
+        let (
+            grid_cell_width,
+            details_cell_width
         ) = config.media_browser.as_ref()
             .map(|media_browser_config| {
                 (
                     media_browser_config.grid_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.details_cell_width.next_multiple_of(2) as f32,
-                    media_browser_config.animation.into()
+                    media_browser_config.details_cell_width.next_multiple_of(2) as f32
                 )
             })
             .ok_or(ErrVar::MissingConfigOption { name: config::MediaBrowser::NAME })?;
@@ -3509,6 +3573,7 @@ impl<'a> MediaBrowser<'a> {
 
         let lookahead = cache.lookahead.max(2);
         let proximity = cache.proximity.clamp(1, lookahead - 1);
+        let animation = cache.animation.into();
         let scroll_kind = cache.scroll_kind;
         let scroll_kind_manga = cache.manga.scroll_kind;
         let ease_in_out_scroller = cache.ease_in_out_scroller.into();
@@ -5147,7 +5212,7 @@ impl<'a> MediaBrowser<'a> {
         ui.menu_button("Misc.", |ui| {
             ui.set_max_width(SUBMENU_WIDTH_LRG);
 
-            egui::Grid::new("grid")
+            egui::Grid::new("grid_prefetch")
                 .num_columns(2)
                 .show(ui, |ui| {
                     ui.label("Lookahead:");
@@ -5184,6 +5249,39 @@ impl<'a> MediaBrowser<'a> {
                         }
 
                         proximity_edit_resp.request_focus();
+                    }
+
+                    ui.end_row();
+                });
+
+            ui.horizontal(|ui| {
+                ui.label("Animation");
+                ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
+            });
+
+            ui.menu_button("Kind", |ui| {
+                add_enum_radios(ui, &mut self.animation.kind);
+            });
+
+            egui::Grid::new("grid_animation")
+                .num_columns(2)
+                .min_col_width(min_col_width)
+                .show(ui, |ui| {
+                    ui.label("Duration:");
+
+                    self.animation.dur_display.clear();
+                    write!(self.animation.dur_display, "{:.2}", self.animation.dur).unwrap();
+                    let animation_dur_edit_resp = egui::TextEdit::singleline(&mut self.animation.dur_edit)
+                        .hint_text(&self.animation.dur_display)
+                        .show(ui)
+                        .response;
+                    if animation_dur_edit_resp.lost_focus() && enter_pressed(ui) {
+                        if let Ok(dur) = self.animation.dur_edit.parse::<f32>() {
+                            self.animation.dur_edit.clear();
+                            self.animation.dur = dur.max(0.1);
+                        }
+
+                        animation_dur_edit_resp.request_focus();
                     }
 
                     ui.end_row();
