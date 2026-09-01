@@ -2848,6 +2848,10 @@ fn get_default_handler(path: &Path) -> Res<PathBuf> { unsafe {
     Ok(PathBuf::from(path_str))
 } }
 
+fn get_font_id(ui: &mut egui::Ui, text_style: egui::TextStyle) -> egui::FontId {
+    text_style.resolve(ui.style())
+}
+
 fn get_image_states_mut(images: &mut IndexMap<Arc<str>, ImageStates>, image_i: Option<usize>) -> Option<&mut ImageStates> {
     let (_, image_states) = image_i.and_then(|image_i| images.get_index_mut(image_i)).unzip();
 
@@ -2869,6 +2873,10 @@ fn get_refresh_rate(window: &Arc<Window>) -> u32 {
     monitor.refresh_rate_millihertz().unwrap() / 1000
 }
 
+fn get_text_color(ui: &mut egui::Ui) -> egui::Color32 {
+    ui.visuals().text_color()
+}
+
 fn stroke_rect(ui: &mut egui::Ui, rect: egui::Rect, clip_rect: Option<egui::Rect>) {
     let mut painter = ui.layer_painter(ui.layer_id());
     if let Some(clip_rect) = clip_rect {
@@ -2886,6 +2894,13 @@ fn init_residence(max_cell_count: usize, central_size: egui::Vec2, grid_cell_siz
     let residence = 0..resident_cell_count;
 
     residence
+}
+
+fn make_galley(ui: &mut egui::Ui, text: String, text_style: egui::TextStyle) -> Arc<egui::Galley> {
+    let font_id = get_font_id(ui, text_style);
+    let text_color = get_text_color(ui);
+
+    ui.painter().layout_no_wrap(text, font_id, text_color)
 }
 
 fn open_media(path: PathBuf, file_kind: FileKind, maintain_sample_rate: bool, override_glsl_shaders: bool, discord_activity_info: Option<DiscordActivityInfo>, discord_display_kind: DiscordDisplayKind, error_sx: mpmc::Sender<String>) {
@@ -4863,7 +4878,6 @@ impl<'a> MediaBrowser<'a> {
 
                     ui.horizontal(|ui| {
                         ui.label("CPU");
-
                         ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
                     });
 
@@ -4898,7 +4912,6 @@ impl<'a> MediaBrowser<'a> {
 
                     ui.horizontal(|ui| {
                         ui.label("GPU");
-
                         ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
                     });
 
@@ -5107,7 +5120,7 @@ impl<'a> MediaBrowser<'a> {
                             .char_limit(4)
                             .desired_width(60.)
                             .show(ui)
-                            .response.response;
+                            .response;
 
                         self.window_inner_extent_height_display.clear();
                         write!(self.window_inner_extent_height_display, "{}", self.window_inner_extent.height).unwrap();
@@ -5116,7 +5129,7 @@ impl<'a> MediaBrowser<'a> {
                             .char_limit(4)
                             .desired_width(60.)
                             .show(ui)
-                            .response.response;
+                            .response;
 
                         let mut try_set_extent = |ui: &mut egui::Ui| {
                             let window_inner_width = if self.window_inner_extent_width_edit.is_empty() {
@@ -5212,10 +5225,19 @@ impl<'a> MediaBrowser<'a> {
         ui.menu_button("Misc.", |ui| {
             ui.set_max_width(SUBMENU_WIDTH_LRG);
 
+            ui.horizontal(|ui| {
+                ui.label("Prefetch");
+                ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
+            });
+
+            let lookahead_lynchpin = make_galley(ui, "Lookahead:".into(), egui::TextStyle::Body);
+            let min_col_width = lookahead_lynchpin.rect.width();
+
             egui::Grid::new("grid_prefetch")
                 .num_columns(2)
+                .min_col_width(min_col_width)
                 .show(ui, |ui| {
-                    ui.label("Lookahead:");
+                    ui.label(lookahead_lynchpin);
 
                     self.lookahead_display.clear();
                     write!(self.lookahead_display, "{}", self.lookahead).unwrap();
@@ -5327,7 +5349,6 @@ impl<'a> MediaBrowser<'a> {
             if let Stage::Manga = stage {
                 ui.horizontal(|ui| {
                     ui.label("Wheel");
-
                     ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
                 });
             }
@@ -5355,17 +5376,19 @@ impl<'a> MediaBrowser<'a> {
                 *scroll_kind = ScrollKind::EaseInOut;
             }
 
-            const MIN_COL_WIDTH: f32 = 104.; // "Multiplier:" galley width + item spacing
-            egui::Grid::new("grid_wheel")
-                .num_columns(2)
-                .min_col_width(MIN_COL_WIDTH)
-                .show(ui, |ui| {
-                    match scroll_kind {
-                        ScrollKind::EaseInOut => {
-                            ui.label("Distance:");
+            let multiplier_lynchpin = make_galley(ui, "Multiplier:".into(), egui::TextStyle::Body);
+            let min_col_width = multiplier_lynchpin.rect.width();
+
+            match scroll_kind {
+                ScrollKind::EaseInOut => {
+                    egui::Grid::new("grid_wheel_ease_in_out")
+                        .num_columns(2)
+                        .min_col_width(min_col_width)
+                        .show(ui, |ui| {
+                            ui.label(multiplier_lynchpin.clone());
 
                             ease_in_out_scroller.multiplier_display.clear();
-                            write!(ease_in_out_scroller.multiplier_display, "{}", ease_in_out_scroller.multiplier).unwrap();
+                            write!(ease_in_out_scroller.multiplier_display, "{:.2}", ease_in_out_scroller.multiplier).unwrap();
                             let multiplier_edit_resp = egui::TextEdit::singleline(&mut ease_in_out_scroller.multiplier_edit)
                                 .hint_text(&ease_in_out_scroller.multiplier_display)
                                 .show(ui)
@@ -5380,15 +5403,18 @@ impl<'a> MediaBrowser<'a> {
                             }
 
                             ui.end_row();
-                        },
-                        ScrollKind::SpringDamper => {
+                        });
+                },
+                ScrollKind::SpringDamper => {
+                    ui.checkbox(&mut spring_damper_scroller.should_smooth, "Smooth");
+
+                    egui::Grid::new("grid_wheel_spring_damper")
+                        .num_columns(2)
+                        .min_col_width(min_col_width)
+                        .show(ui, |ui| {
                             spring_damper_scroller.update_display();
 
-                            ui.checkbox(&mut spring_damper_scroller.should_smooth, "Smooth");
-
-                            ui.end_row();
-
-                            ui.label("Distance:");
+                            ui.label(multiplier_lynchpin.clone());
 
                             let multiplier_edit_resp = egui::TextEdit::singleline(&mut spring_damper_scroller.multiplier_edit)
                                 .hint_text(&spring_damper_scroller.multiplier_display)
@@ -5438,22 +5464,21 @@ impl<'a> MediaBrowser<'a> {
                             }
 
                             ui.end_row();
-                        }
-                    }
-                });
+                        });
+                }
+            }
 
             if let Stage::Manga = stage {
                 ui.horizontal(|ui| {
                     ui.label("Auto");
-
                     ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
                 });
 
                 egui::Grid::new("grid_auto")
                     .num_columns(2)
-                    .min_col_width(MIN_COL_WIDTH)
+                    .min_col_width(min_col_width)
                     .show(ui, |ui| {
-                        ui.label("Multiplier:");
+                        ui.label(multiplier_lynchpin);
 
                         self.manga.auto_scroller.multiplier_display.clear();
                         write!(self.manga.auto_scroller.multiplier_display, "{:.2}", self.manga.auto_scroller.multiplier).unwrap();
