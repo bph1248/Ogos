@@ -199,19 +199,19 @@ pub fn launch_mpv(vid_path: &Path, maintain_sample_rate: MaintainSampleRate, ove
         }
 
         // Display mode
-        let profile_arg;
-        let set_display_mode_op;
-
-        match vid_color_transfer.as_str() {
-            "smpte2084" | "arib-std-b67" => {
-                profile_arg = MpvArg::Profile(mpv_config.hdr_profile).to_arg_string();
-                set_display_mode_op = SetDisplayModeOp::Set(DisplayMode::Hdr);
-            },
-            _ => {
-                profile_arg = MpvArg::Profile(mpv_config.sdr_profile).to_arg_string();
-                set_display_mode_op = SetDisplayModeOp::Set(DisplayMode::Sdr);
-            }
-        }
+        let (
+            profile_arg,
+            set_display_mode_op
+        ) = match vid_color_transfer.as_str() {
+            "smpte2084" | "arib-std-b67" => (
+                MpvArg::Profile(mpv_config.hdr_profile).to_arg_string(),
+                SetDisplayModeOp::Set(DisplayMode::Hdr)
+            ),
+            _ => (
+                MpvArg::Profile(mpv_config.sdr_profile).to_arg_string(),
+                SetDisplayModeOp::Set(DisplayMode::Sdr)
+            )
+        };
 
         drop(config);
 

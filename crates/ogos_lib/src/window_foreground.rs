@@ -853,13 +853,13 @@ pub(crate) fn get_hitbox_pos(taskbar_rect: RECT, taskbar_side: Side, hitbox_side
     }
 }
 
-pub(crate) fn get_hitbox_exit_snap_ordinate(taskbar_side: Side, extent_extent: Extent2d, pc: u32) -> i32 {
-    let pc = f64::from(pc) / f64::from(100);
+pub(crate) fn get_hitbox_exit_snap_ordinate(taskbar_side: Side, screen_extent: Extent2d, pc: u32) -> i32 {
+    let dim = match taskbar_side {
+        Side::Left | Side::Right => screen_extent.width,
+        Side::Top | Side::Bottom => screen_extent.height
+    };
 
-    match taskbar_side {
-        Side::Left | Side::Right => (f64::from(extent_extent.width) * pc) as i32,
-        Side::Top | Side::Bottom => (f64::from(extent_extent.height) * pc) as i32
-    }
+    ((dim as u64 * u64::from(pc)) / 100) as i32
 }
 
 pub(crate) fn get_taskbar_side(taskbar_rect: RECT, screen_extent: Extent2d) -> Side {

@@ -2930,6 +2930,97 @@ fn get_text_color(ui: &mut egui::Ui) -> egui::Color32 {
     ui.visuals().text_color()
 }
 
+fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, images: &mut IndexMap<Arc<str>, ImageStates>, missing_base_images: &mut Vec<Rc<str>>) {
+    let grid_entry_info_iter = cache.library.iter()
+        .map(|dir| dir.read_dir())
+        .filter_map(|read_dir| match read_dir {
+            Ok(read_dir) => Some(read_dir),
+            Err(err) => {
+                error!("{}: failed to read dir: {}", module_path!(), err);
+
+                None
+            }
+        })
+        .flatten()
+        .filter_map(|dir_entry| {
+            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
+                let path = dir_entry.path();
+
+                if let Some(ext) = path.extension() && ext == "ini" {
+                    return Ok(None)
+                }
+
+                let stem = Rc::from(path.get_file_stem()?);
+                let file_kind = path.get_file_kind()?;
+
+                let try_get_image_i = |images: &mut IndexMap<Arc<str>, ImageStates>| {
+                    for ext in IMAGE_EXTS {
+                        let attempt = concat_string!(stem, ".", ext);
+
+                        if let Some((image_i, _, states)) = images.get_full_mut(attempt.as_str()) {
+                            states.ref_count += 1;
+
+                            return Some(image_i)
+                        }
+                    }
+
+                    None
+                };
+
+                let grid_entry_info = match cache.entries.get_mut(&path) {
+                    Some(cache_entry_info) => {
+                        let sort_name = cache_entry_info.sort_name.clone();
+                        let image_i = cache_entry_info.image_i
+                            .and_then(|cache_image_i| cache.images.get_index(cache_image_i))
+                            .and_then(|image_file_name| images.get_full_mut(image_file_name.as_ref())
+                                .tap_none(|| missing_base_images.push(image_file_name.clone()))
+                            )
+                            .map(|(image_i, _, image_states)| {
+                                if cache_entry_info.should_scale.grid {
+                                    image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
+                                }
+                                if cache_entry_info.should_scale.details {
+                                    image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
+                                }
+                                image_states.ref_count += 1;
+
+                                image_i
+                            });
+                        let metadata = cache_entry_info.metadata.clone();
+                        let bookmark = cache_entry_info.bookmark;
+                        let current_preset = cache_entry_info.current_preset;
+
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark, current_preset }
+                    },
+                    None => { // This entry is new. If a base image exists, scale and cache it
+                        let sort_name = None;
+                        let image_i = try_get_image_i(images);
+                        let metadata = None;
+                        let bookmark = None;
+                        let current_preset = None;
+
+                        if let Some(image_states) = get_image_states_mut(images, image_i) {
+                            image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
+                            image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
+                        }
+
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark, current_preset }
+                    }
+                };
+
+                Ok(Some(grid_entry_info))
+            })
+            .unwrap_or_else(|err| {
+                error!("{}: failed to read dir entry: {}", module_path!(), err);
+
+                None
+            })
+        });
+
+    grid_entries.clear();
+    grid_entries.extend(grid_entry_info_iter);
+}
+
 fn init_residence(max_cell_count: usize, central_size: egui::Vec2, grid_cell_size: egui::Vec2, grid_cell_space: egui::Vec2, lookahead: usize) -> Residence {
     let available_row_cell_count = (central_size.x - grid_cell_size.x).div(grid_cell_space.x).ceil() as usize;
     let available_col_cell_count = central_size.y.div(grid_cell_space.y).ceil() as usize;
@@ -3110,97 +3201,6 @@ impl Info {
             .show(ui, |ui| ui.label(&self.msg))
             .content_size
     }
-}
-
-fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, images: &mut IndexMap<Arc<str>, ImageStates>, missing_base_images: &mut Vec<Rc<str>>) {
-    let grid_entry_info_iter = cache.library.iter()
-        .map(|dir| dir.read_dir())
-        .filter_map(|read_dir| match read_dir {
-            Ok(read_dir) => Some(read_dir),
-            Err(err) => {
-                error!("{}: failed to read dir: {}", module_path!(), err);
-
-                None
-            }
-        })
-        .flatten()
-        .filter_map(|dir_entry| {
-            dir_entry.map_err(into!()).and_then(|dir_entry| -> Res<_> {
-                let path = dir_entry.path();
-
-                if let Some(ext) = path.extension() && ext == "ini" {
-                    return Ok(None)
-                }
-
-                let stem = Rc::from(path.get_file_stem()?);
-                let file_kind = path.get_file_kind()?;
-
-                let try_get_image_i = |images: &mut IndexMap<Arc<str>, ImageStates>| {
-                    for ext in IMAGE_EXTS {
-                        let attempt = concat_string!(stem, ".", ext);
-
-                        if let Some((image_i, _, states)) = images.get_full_mut(attempt.as_str()) {
-                            states.ref_count += 1;
-
-                            return Some(image_i)
-                        }
-                    }
-
-                    None
-                };
-
-                let grid_entry_info = match cache.entries.get_mut(&path) {
-                    Some(cache_entry_info) => {
-                        let sort_name = cache_entry_info.sort_name.clone();
-                        let image_i = cache_entry_info.image_i
-                            .and_then(|cache_image_i| cache.images.get_index(cache_image_i))
-                            .and_then(|image_file_name| images.get_full_mut(image_file_name.as_ref())
-                                .tap_none(|| missing_base_images.push(image_file_name.clone()))
-                            )
-                            .map(|(image_i, _, image_states)| {
-                                if cache_entry_info.should_scale.grid {
-                                    image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
-                                }
-                                if cache_entry_info.should_scale.details {
-                                    image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
-                                }
-                                image_states.ref_count += 1;
-
-                                image_i
-                            });
-                        let metadata = cache_entry_info.metadata.clone();
-                        let bookmark = cache_entry_info.bookmark;
-                        let current_preset = cache_entry_info.current_preset;
-
-                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark, current_preset }
-                    },
-                    None => { // This entry is new. If a base image exists, scale and cache it
-                        let sort_name = None;
-                        let image_i = try_get_image_i(images);
-                        let metadata = None;
-                        let bookmark = None;
-                        let current_preset = None;
-
-                        if let Some(image_states) = get_image_states_mut(images, image_i) {
-                            image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
-                            image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
-                        }
-
-                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark, current_preset }
-                    }
-                };
-
-                Ok(Some(grid_entry_info))
-            })
-            .unwrap_or_else(|err| {
-                error!("{}: failed to read dir entry: {}", module_path!(), err);
-
-                None
-            })
-        });
-
-    grid_entries.clear();
-    grid_entries.extend(grid_entry_info_iter);
 }
 
 struct MediaBrowserInfo<'a> {
@@ -4643,19 +4643,24 @@ impl<'a> MediaBrowser<'a> {
                         ui.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
                     }
 
-                    let scroll_source;
-                    let scroll_multiplier;
-                    match self.manga.scroll_kind {
+                    let (
+                        scroll_source,
+                        scroll_multiplier
+                    ) = match self.manga.scroll_kind {
                         ScrollKind::EaseInOut => {
-                            scroll_source = ScrollSource::ALL;
-                            scroll_multiplier = self.manga.ease_in_out_scroller.multiplier;
+                            (
+                                ScrollSource::ALL,
+                                self.manga.ease_in_out_scroller.multiplier
+                            )
                         },
                         ScrollKind::SpringDamper => {
                             let delta = if self.manga.spring_damper_scroller.should_smooth { wheel_delta_smoothed } else { wheel_delta_raw };
                             self.manga.spring_damper_scroller.step(ui, dt, delta);
 
-                            scroll_source = ScrollSource::DRAG | ScrollSource::SCROLL_BAR;
-                            scroll_multiplier = self.manga.spring_damper_scroller.multiplier;
+                            (
+                                ScrollSource::DRAG | ScrollSource::SCROLL_BAR,
+                                self.manga.spring_damper_scroller.multiplier
+                            )
                         }
                     };
                     let scroll_offset_y = self.manga.scroll_offset_y_anchor.take().unwrap_or(self.manga.scroll_offset.y);
@@ -4674,12 +4679,15 @@ impl<'a> MediaBrowser<'a> {
                     }
                     let stop_kinesis = self.manga.stop_kinesis.take() || !self.manga.secondary_was_down;
 
-                    let scroll_source;
-                    let scroll_multiplier;
-                    match self.manga.scroll_kind {
+                    let (
+                        scroll_source,
+                        scroll_multiplier
+                    ) = match self.manga.scroll_kind {
                         ScrollKind::EaseInOut => {
-                            scroll_source = ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL;
-                            scroll_multiplier = self.manga.ease_in_out_scroller.multiplier;
+                            (
+                                ScrollSource::DRAG | ScrollSource::MOUSE_WHEEL,
+                                self.manga.ease_in_out_scroller.multiplier
+                            )
                         }
                         ScrollKind::SpringDamper => {
                             match stop_kinesis {
@@ -4690,8 +4698,10 @@ impl<'a> MediaBrowser<'a> {
                                 }
                             }
 
-                            scroll_source = ScrollSource::DRAG;
-                            scroll_multiplier = self.manga.spring_damper_scroller.multiplier;
+                            (
+                                ScrollSource::DRAG,
+                                self.manga.spring_damper_scroller.multiplier
+                            )
                         }
                     };
                     self.manga.scroll_offset_y_anchor.get_or_insert(self.manga.scroll_offset.y.round());
@@ -5427,21 +5437,22 @@ impl<'a> MediaBrowser<'a> {
                 });
             }
 
-            let scroll_kind;
-            let ease_in_out_scroller;
-            let spring_damper_scroller;
-            match stage {
-                Stage::Grid | Stage::Details => {
-                    scroll_kind = &mut self.scroll_kind;
-                    ease_in_out_scroller = &mut self.ease_in_out_scroller;
-                    spring_damper_scroller = &mut self.spring_damper_scroller;
-                },
-                Stage::Manga => {
-                    scroll_kind = &mut self.manga.scroll_kind;
-                    ease_in_out_scroller = &mut self.manga.ease_in_out_scroller;
-                    spring_damper_scroller = &mut self.manga.spring_damper_scroller;
-                }
-            }
+            let (
+                scroll_kind,
+                ease_in_out_scroller,
+                spring_damper_scroller
+            ) = match stage {
+                Stage::Grid | Stage::Details => (
+                    &mut self.scroll_kind,
+                    &mut self.ease_in_out_scroller,
+                    &mut self.spring_damper_scroller
+                ),
+                Stage::Manga => (
+                    &mut self.manga.scroll_kind,
+                    &mut self.manga.ease_in_out_scroller,
+                    &mut self.manga.spring_damper_scroller
+                )
+            };
 
             if ui.radio(*scroll_kind == ScrollKind::SpringDamper, "Spring-Damper").clicked() {
                 *scroll_kind = ScrollKind::SpringDamper;
@@ -5807,12 +5818,15 @@ impl<'a> MediaBrowser<'a> {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing = GRID_IMAGE_SPACING;
 
-            let scroll_source;
-            let scroll_offset;
-            match self.scroll_kind {
+            let (
+                scroll_source,
+                scroll_offset
+            ) = match self.scroll_kind {
                 ScrollKind::EaseInOut => {
-                    scroll_source = ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL;
-                    scroll_offset = self.grid_scroll_offset;
+                    (
+                        ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL,
+                        self.grid_scroll_offset
+                    )
                 },
                 ScrollKind::SpringDamper => {
                     let secondary_down = ui.input(|state| state.pointer.secondary_down());
@@ -5827,8 +5841,10 @@ impl<'a> MediaBrowser<'a> {
                         self.spring_damper_scroller.step(ui, dt, delta);
                     }
 
-                    scroll_source = ScrollSource::SCROLL_BAR;
-                    scroll_offset = (self.grid_scroll_offset + self.spring_damper_scroller.delta).clamp(0., max_scroll_offset);
+                    (
+                        ScrollSource::SCROLL_BAR,
+                        (self.grid_scroll_offset + self.spring_damper_scroller.delta).clamp(0., max_scroll_offset)
+                    )
                 }
             };
 
