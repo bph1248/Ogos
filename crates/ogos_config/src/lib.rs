@@ -397,13 +397,6 @@ pub struct Mpv<'a> {
 }
 impl_name!(Mpv, 'a);
 
-#[derive(Deserialize)]
-pub struct MediaBrowser {
-    pub grid_cell_width: u32,
-    pub details_cell_width: u32
-}
-impl_name!(MediaBrowser);
-
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscordActivity {
@@ -675,7 +668,6 @@ pub struct Config<'a> {
     pub discord: Discord<'a>,
     pub display_modes: Option<DisplayModes>,
     pub games: Option<Games<'a>>,
-    pub media_browser: Option<MediaBrowser>,
     pub mpv: Option<Mpv<'a>>,
     pub pixel_cleaning: Option<PixelCleaning>,
     pub taskbar: Option<Taskbar>,
