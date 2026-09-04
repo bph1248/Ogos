@@ -69,8 +69,8 @@ const CELL_STROKE_WIDTH: f32 = 3.;
 const DARK_GRAY: egui::Color32 = egui::Color32::from_gray(27);
 const DEFAULT_FRAME_INNER_MARGIN: f32 = 8.;
 const DETAILS_ENTRY_COUNT: usize = 64;
-const EXTENT_EDIT_CHAR_LIMIT: usize = 4;
-const EXTENT_EDIT_DESIRED_WIDTH: f32 = 60.;
+const DIM_EDIT_CHAR_LIMIT: usize = 4;
+const DIM_EDIT_DESIRED_WIDTH: f32 = 60.;
 const FRAME_INNER_MARGIN: f32 = 15.;
 const GRID_IMAGE_SPACING: egui::Vec2 = egui::vec2(30., 30.);
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
@@ -398,6 +398,7 @@ struct FerryBaseImageInfo<'a> {
     stage: Stage,
     grid_entry_i: usize,
     ship: mpmc::Sender<ImageResult>,
+    gen_id_check: &'a Option<GenerationIdCheck>,
     signal_cache_ready: CacheReady,
     signal_tex_ready: Option<PollReady>,
     metadata: Option<Metadata>,
@@ -433,8 +434,12 @@ struct GenerationIdCheck {
     expected: usize
 }
 impl GenerationIdCheck {
-    fn check(&self) -> ResVar<()> {
+    fn check(&self, signal_ready: Option<&PollReady>) -> ResVar<()> {
         if self.id.load(Ordering::Relaxed) != self.expected {
+            if let Some(signal_ready) = signal_ready {
+                signal_ready.mark_done();
+            }
+
             return Err(ErrVar::Cancel)
         }
 
@@ -518,33 +523,10 @@ impl ImageStates {
         }
     }
 
-    fn iter(&self) -> ImageStatesIter<'_> {
-        ImageStatesIter {
-            index: 0,
-            grid: &self.grid,
-            details: &self.details
-        }
-    }
-
-    fn new_none_check_cache(cache_readies: CacheReadies) -> Self {
-        Self {
-            grid: ImageState::NoneCheckCache { cache_ready: cache_readies.grid },
-            details: ImageState::NoneCheckCache { cache_ready: cache_readies.details },
-            ..default!()
-        }
-    }
-
-    fn take_cache_readies(&mut self) -> CacheReadies {
+    fn take_cache_readies_on_should_not_scale(&mut self) -> CacheReadies {
         CacheReadies {
-            grid: self.grid.take_cache_ready(),
-            details: self.details.take_cache_ready()
-        }
-    }
-
-    fn take_cache_readies_on_not_should_scale(&mut self) -> CacheReadies {
-        CacheReadies {
-            grid: self.grid.take_cache_ready_on_not_should_scale(),
-            details: self.details.take_cache_ready_on_not_should_scale()
+            grid: self.grid.take_cache_ready_on_should_not_scale(),
+            details: self.details.take_cache_ready_on_should_not_scale()
         }
     }
 
@@ -555,25 +537,35 @@ impl ImageStates {
         }
     }
 }
+impl IntoIterator for ImageStates {
+    type Item = ImageState;
+    type IntoIter = ImageStatesIntoIter;
 
-struct ImageStatesIter<'a> {
-    index: usize,
-    grid: &'a ImageState,
-    details: &'a ImageState
+    fn into_iter(self) -> Self::IntoIter {
+        ImageStatesIntoIter {
+            index: 0,
+            grid: Some(self.grid),
+            details: Some(self.details)
+        }
+    }
 }
-impl<'a> Iterator for ImageStatesIter<'a> {
-    type Item = &'a ImageState;
+
+struct ImageStatesIntoIter {
+    index: usize,
+    grid: Option<ImageState>,
+    details: Option<ImageState>
+}
+impl Iterator for ImageStatesIntoIter {
+    type Item = ImageState;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let item = match self.index {
-            0 => Some(self.grid),
-            1 => Some(self.details),
-            _ => None
-        };
-
         self.index += 1;
 
-        item
+        match self.index {
+            1 => self.grid.take(),
+            2 => self.details.take(),
+            _ => None
+        }
     }
 }
 
@@ -664,8 +656,8 @@ impl Manga {
         for page_info in self.view {
             page_info.gen_id.fetch_add(1, Ordering::Relaxed);
 
-            if let ImageStateManga::Ready { .. } = page_info.image_state {
-                self.to_thanatos.send(Soul::ImageState(page_info.image_state.into())).unwrap();
+            if let ImageStateManga::Ready { tex_id, .. } = page_info.image_state {
+                self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
             }
         }
 
@@ -1089,8 +1081,7 @@ impl SpringDamperScroller {
             self.pos_vel_coef = -e1_over_2zb      + e2_over_2zb;
             self.vel_pos_coef = (z1e1_over_2zb - z2e2_over_2zb + e2) * z2;
             self.vel_vel_coef = -z1e1_over_2zb + z2e2_over_2zb;
-        }
-        else if damping_ratio < 1. - EPSILON { // Under-damped
+        } else if damping_ratio < 1. - EPSILON { // Under-damped
             let omega_zeta = angular_frequency * damping_ratio;
             let alpha      = angular_frequency * (1. - damping_ratio * damping_ratio).sqrt();
 
@@ -1108,8 +1099,7 @@ impl SpringDamperScroller {
             self.pos_vel_coef = exp_sin * inv_alpha;
             self.vel_pos_coef = -exp_sin * alpha - omega_zeta * exp_omega_zeta_sin_over_alpha;
             self.vel_vel_coef =  exp_cos - exp_omega_zeta_sin_over_alpha;
-        }
-        else { // Critically damped
+        } else { // Critically damped
             let exp_term      = (-angular_frequency * dt).exp();
             let time_exp      = dt * exp_term;
             let time_exp_freq = time_exp * angular_frequency;
@@ -1291,6 +1281,11 @@ impl Stream {
         }
     }
 
+    fn flatten_refresh(&mut self, stream_builder: StreamBuilder, visible: Range<usize>, grid_view: &[usize]) {
+        self.flatten_drop(stream_builder.drop, grid_view);
+        self.flatten_load(stream_builder.load, visible, grid_view);
+    }
+
     fn refresh_manga(&mut self, stream_builder: StreamBuilder, visible: Range<usize>) {
         self.clear();
 
@@ -1309,11 +1304,6 @@ impl Stream {
                 }
             }
         }
-    }
-
-    fn refresh_flatten(&mut self, stream_builder: StreamBuilder, visible: Range<usize>, grid_view: &[usize]) {
-        self.flatten_drop(stream_builder.drop, grid_view);
-        self.flatten_load(stream_builder.load, visible, grid_view);
     }
 }
 
@@ -1494,26 +1484,16 @@ enum ImageKind {
     Webp
 }
 
-#[derive(Default)]
 enum ImageState {
-    #[default]
-    None,
-    NoneCheckCache { cache_ready: CacheReady },
+    None { cache_ready: CacheReady },
     ShouldScale { cache_ready: CacheReady },
     Ready { tex_id: egui::TextureId, extent: Extent2dF, cache_ready: CacheReady },
     Failed
 }
 impl ImageState {
-    fn clone_cache_ready_on_should_scale(&self) -> CacheReady {
-        match self {
-            Self::ShouldScale { cache_ready } => cache_ready.clone(),
-            _ => None
-        }
-    }
-
     fn take_cache_ready(&mut self) -> CacheReady {
         match self {
-            Self::NoneCheckCache { cache_ready } |
+            Self::None { cache_ready } |
             Self::ShouldScale { cache_ready } |
             Self::Ready { cache_ready, .. } =>
                 mem::take(cache_ready),
@@ -1521,11 +1501,23 @@ impl ImageState {
         }
     }
 
-    fn take_cache_ready_on_not_should_scale(&mut self) -> CacheReady {
+    fn clone_cache_ready_on_should_scale(&self) -> CacheReady {
+        match self {
+            Self::ShouldScale { cache_ready } => cache_ready.clone(),
+            _ => None
+        }
+    }
+
+    fn take_cache_ready_on_should_not_scale(&mut self) -> CacheReady {
         match self {
             Self::ShouldScale { .. } => None,
             _ => self.take_cache_ready()
         }
+    }
+}
+impl Default for ImageState {
+    fn default() -> Self {
+        Self::None { cache_ready: None }
     }
 }
 impl From<ImageStateManga> for ImageState {
@@ -1533,7 +1525,7 @@ impl From<ImageStateManga> for ImageState {
         match value {
             ImageStateManga::Ready { tex_id, extent, .. } =>
                 Self::Ready { tex_id, extent, cache_ready: None },
-            _ => Self::None
+            _ => Self::default()
         }
     }
 }
@@ -1588,8 +1580,6 @@ enum ScrollKind {
 }
 
 enum Soul {
-    ImageState(ImageState),
-    ImageStates(ImageStates),
     RgbaImage(image::RgbaImage),
     TexId(egui::TextureId)
 }
@@ -1634,6 +1624,18 @@ fn add_enum_radios<T>(ui: &mut egui::Ui, target: &mut T) where
             *target = var;
         }
     }
+}
+
+fn add_dim_edit(ui: &mut egui::Ui, enabled: bool, text: &mut TextRw, dim: f32) -> egui::Response {
+    text.display.clear();
+    write!(text.display, "{}", dim).unwrap();
+
+    let text_edit = egui::TextEdit::singleline(&mut text.edit)
+        .hint_text(&text.display)
+        .char_limit(DIM_EDIT_CHAR_LIMIT)
+        .desired_width(DIM_EDIT_DESIRED_WIDTH);
+
+    ui.add_enabled(enabled, text_edit)
 }
 
 fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, text: &str, poll_ready: &PollReady, animation: Option<&mut AnimationInfo>) -> egui::Response {
@@ -2248,6 +2250,7 @@ fn hephaestus(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Rece
                     if let Some(signal_tex_ready) = signal_tex_ready.as_ref() {
                         signal_tex_ready.mark_done()
                     }
+
                     captive_ = None;
                 }
 
@@ -2263,16 +2266,6 @@ fn thanatos(wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<Soul>) {
     for soul in port.iter() {
         hotpath::measure_block!(formatcp!("{}::thanatos", module_path!()), {
             match soul {
-                Soul::ImageState(image_state) => if let ImageState::Ready { tex_id, .. } = image_state {
-                    renderer.write().free_texture(&tex_id);
-                },
-                Soul::ImageStates(image_states) => {
-                    for image_state in image_states.iter() {
-                        if let ImageState::Ready { tex_id, .. } = image_state {
-                            renderer.write().free_texture(tex_id);
-                        }
-                    }
-                },
                 Soul::RgbaImage(image) => drop(image),
                 Soul::TexId(tex_id) => renderer.write().free_texture(&tex_id)
             }
@@ -2511,9 +2504,12 @@ fn resize_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::
 }
 
 fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
-    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, ship, signal_cache_ready, signal_tex_ready, metadata, error_sx } = info;
+    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, ship, gen_id_check, signal_cache_ready, signal_tex_ready, metadata, error_sx } = info;
 
     let inner = || -> Res1<image::RgbaImage> {
+        if let Some(gen_id_check_) = gen_id_check {
+            gen_id_check_.check(signal_tex_ready.as_ref())?;
+        }
         let src_image = load_rgba_image(src_path)?;
 
         let aspect_ratio_v = Extent2dF::from(src_image.dimensions()).aspect_ratio_v();
@@ -2521,6 +2517,10 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
             Orientation::Tall => (cell_extent.height.div(aspect_ratio_v).round(), cell_extent.height),
             Orientation::Wide => (cell_extent.width, cell_extent.width.mul(aspect_ratio_v).round())
         };
+
+        if let Some(gen_id_check_) = gen_id_check {
+            gen_id_check_.check(signal_tex_ready.as_ref())?;
+        }
         let dst_image = resize_image_common(src_image, [dst_width, dst_height].into(), fir::FilterType::Custom(blackman_filter_fir()))?;
 
         Ok(dst_image)
@@ -2530,7 +2530,10 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
         Ok(image) => {
             let image_ = image.clone();
 
-            if ship.send(Ok(ImageInfo { image: image_, stage, index: grid_entry_i, gen_id_check: None, signal_tex_ready, metadata })).is_ok() {
+            if let Some(gen_id_check_) = gen_id_check && gen_id_check_.check(signal_tex_ready.as_ref()).is_err() {
+                return Ok(())
+            }
+            if ship.send(Ok(ImageInfo { image: image_, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready, metadata })).is_ok() {
                 ctx.request_repaint();
             }
 
@@ -2551,9 +2554,14 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
             });
         },
         Err(err) => {
-            _ = ship.send(Err((stage, grid_entry_i)));
+            match err.var.as_ref() {
+                ErrVar::Cancel => return Ok(()),
+                _ => {
+                    _ = ship.send(Err((stage, grid_entry_i)));
 
-            Err(err)?;
+                    return Err(err)
+                }
+            }
         }
     }
 
@@ -2564,11 +2572,11 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
     let FerryImageMangaInfo { ctx, archive_path, archive_i, image_kind, view_i, scale, ship, gen_id_check, signal_tex_ready } = info;
 
     let inner = || -> Res1<image::RgbaImage> {
-        gen_id_check.check()?;
+        gen_id_check.check(signal_tex_ready.as_ref())?;
         let src_image = load_rgba_image_manga(archive_path, archive_i, image_kind)?;
 
         let dst_image = if let Some(ScaleImageManga { extent, filter }) = scale {
-            gen_id_check.check()?;
+            gen_id_check.check(signal_tex_ready.as_ref())?;
             resize_image_common(src_image, extent, filter)?
         } else {
             src_image
@@ -2582,10 +2590,6 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
             ctx.request_repaint();
         },
         Err(err) => {
-            if let Some(signal_tex_ready) = signal_tex_ready {
-                signal_tex_ready.mark_done();
-            }
-
             match err.var.as_ref() {
                 ErrVar::Cancel => return Ok(()),
                 _ => {
@@ -2604,7 +2608,7 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
     let FerryCachedImageInfo { ctx, path, stage, grid_entry_i, ship, gen_id_check, wait_cache_ready, signal_tex_ready } = info;
 
     let inner = || -> ResVar<image::RgbaImage> {
-        if let Some(gen_id_check) = gen_id_check { gen_id_check.check()? }
+        if let Some(gen_id_check) = gen_id_check { gen_id_check.check(signal_tex_ready.as_ref())? }
         let image = load_rgba_image_cached(path)?;
 
         Ok(image)
@@ -2619,10 +2623,6 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
             ctx.request_repaint();
         },
         Err(err) => {
-            if let Some(signal_tex_ready) = signal_tex_ready {
-                signal_tex_ready.mark_done();
-            }
-
             match err {
                 ErrVar::Cancel => return Ok(()),
                 _ => {
@@ -2703,6 +2703,7 @@ fn ferry_images(info: FerryImagesInfo) {
                             stage: Stage::Grid,
                             grid_entry_i,
                             ship: grid_ship,
+                            gen_id_check: &gen_id_check,
                             signal_cache_ready: signal_cache_readies.grid,
                             signal_tex_ready,
                             metadata: Some(metadata),
@@ -2713,7 +2714,7 @@ fn ferry_images(info: FerryImagesInfo) {
                         let error_sx_2 = error_sx_1.clone();
                         let error_sx_3 = error_sx_1.clone();
                         thread_pool_1.enqueue_low(move || {
-                            let ferry_base_image_info: FerryBaseImageInfo<'_> = FerryBaseImageInfo {
+                            let ferry_base_image_info = FerryBaseImageInfo {
                                 ctx,
                                 src_path: &base_image_path,
                                 dst_path: &details_image_path,
@@ -2721,6 +2722,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                 stage: Stage::Details,
                                 grid_entry_i,
                                 ship: details_ship,
+                                gen_id_check: &gen_id_check,
                                 signal_cache_ready: signal_cache_readies.details,
                                 signal_tex_ready: None,
                                 metadata: None,
@@ -2740,6 +2742,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                     stage: Stage::Grid,
                                     grid_entry_i,
                                     ship: grid_ship,
+                                    gen_id_check: &gen_id_check,
                                     signal_cache_ready: signal_cache_readies.grid,
                                     signal_tex_ready,
                                     metadata: None,
@@ -2776,6 +2779,7 @@ fn ferry_images(info: FerryImagesInfo) {
                                         stage: Stage::Details,
                                         grid_entry_i,
                                         ship: details_ship,
+                                        gen_id_check: &gen_id_check,
                                         signal_cache_ready: signal_cache_readies.details,
                                         signal_tex_ready: None,
                                         metadata: None,
@@ -3242,10 +3246,10 @@ struct MediaBrowser<'a> {
     grid_entries_selection: HashSet<usize>,
     grid_entries_selection_kind: Option<SelectionKind>,
     grid_cell_size: egui::Vec2,
+    grid_cell_size_text: TextRwExtent,
     grid_cell_space: egui::Vec2,
     grid_cell_strokes: Vec<egui::Rect>,
     grid_cell_tags_menu_selection: HashSet<Rc<str>>,
-    grid_cell_size_text: TextRwExtent,
     grid_scroll_offset: f32,
     /// Indices into [`grid_entries`]
     grid_view: Vec<usize>,
@@ -3274,6 +3278,7 @@ struct MediaBrowser<'a> {
     details_grid_entry_i: usize,
     details_dir_entries: Vec<DirEntryInfo>,
     details_cell_size: egui::Vec2,
+    details_cell_size_text: TextRwExtent,
     details_hovered_dir_entry_i: usize,
     details_levels: Vec<PathBuf>,
     scroll_kind: ScrollKind,
@@ -3381,18 +3386,19 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                         }
                     },
                     ViewKind::RescaleDetails => {
+                        self.reset_image_states_for_rescale(ui);
 
+                        self.view_kind = ViewKind::Details;
+                        self.central_panel_details(ui);
                     },
                     ViewKind::RescaleGrid => {
-                        self.rescale_images();
-
-                        self.reset_grid_view(ui);
+                        self.reset_image_states_for_rescale(ui);
 
                         self.view_kind = ViewKind::Grid;
                         self.central_panel_grid(ui);
                     },
                     ViewKind::Restart => {
-                        self.reset_images();
+                        self.reset_image_states_for_restart();
 
                         // Backup entry tag indices
                         let tags = self.tags.keys().cloned().collect::<Vec<_>>();
@@ -3775,10 +3781,10 @@ impl<'a> MediaBrowser<'a> {
             grid_entries_selection: default!(),
             grid_entries_selection_kind: default!(),
             grid_cell_size,
+            grid_cell_size_text: default!(),
             grid_cell_space,
             grid_cell_strokes: default!(),
             grid_cell_tags_menu_selection: default!(),
-            grid_cell_size_text: default!(),
             grid_scroll_offset: default!(),
             grid_view,
             grid_view_i: default!(),
@@ -3805,6 +3811,7 @@ impl<'a> MediaBrowser<'a> {
             details_grid_entry_i: default!(),
             details_dir_entries: Vec::with_capacity(DETAILS_ENTRY_COUNT),
             details_cell_size,
+            details_cell_size_text: default!(),
             details_hovered_dir_entry_i: default!(),
             details_levels: Vec::with_capacity(16),
             scroll_kind,
@@ -3842,10 +3849,17 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn assess_partial_tex_ready(&mut self, partial_tex: PartialTex) {
-        let PartialTex { tex, tex_id, stage, index, gen_id_check, .. } = partial_tex;
+        let PartialTex { tex, tex_id, captive, stage, index, gen_id_check, .. } = partial_tex;
         let extent = tex.as_();
 
-        if let Some(gen_id_check) = gen_id_check.as_ref() && gen_id_check.check().is_err() {
+        if let Some((image, signal_tex_ready)) = captive {
+            if let Some(signal_tex_ready) = signal_tex_ready {
+                signal_tex_ready.mark_done();
+            }
+            self.to_thanatos.send(Soul::RgbaImage(image)).unwrap();
+        }
+
+        if let Some(gen_id_check) = gen_id_check.as_ref() && gen_id_check.check(None).is_err() {
             self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
 
             return
@@ -3894,6 +3908,69 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
+    fn try_add_cell_extent_edit(&mut self, ui: &mut egui::Ui) {
+        let (
+            cell_text,
+            cell_size,
+            cell_space,
+            rescale_kind
+        ) = match self.view_kind {
+            ViewKind::Grid => (
+                &mut self.grid_cell_size_text,
+                &mut self.grid_cell_size,
+                Some(&mut self.grid_cell_space),
+                ViewKind::RescaleGrid
+            ),
+            ViewKind::Details => (
+                &mut self.details_cell_size_text,
+                &mut self.details_cell_size,
+                None,
+                ViewKind::RescaleDetails
+            ),
+            _ => return
+        };
+
+        let cell_width_edit_resp = add_dim_edit(ui, cell_text.height.edit.is_empty(), &mut cell_text.width, cell_size.x);
+        let cell_height_edit_resp = add_dim_edit(ui, cell_text.width.edit.is_empty(), &mut cell_text.height, cell_size.y);
+
+        let try_set_cell_extent = |ui: &mut egui::Ui, cell_text: &mut TextRwExtent, extent: Option<Extent2dF>| {
+            if let Some(extent) = extent {
+                cell_text.width.edit.clear();
+
+                *cell_size = extent.into();
+                if let Some(cell_space) = cell_space {
+                    *cell_space = *cell_size + GRID_IMAGE_SPACING;
+                }
+                self.view_kind = rescale_kind;
+
+                egui::Popup::close_all(ui);
+            }
+        };
+
+        if cell_width_edit_resp.lost_focus() && enter_pressed(ui) {
+            let extent = cell_text.width.edit.parse::<u32>().ok().map(|val| {
+                let width = val.next_multiple_of(2) as f32;
+                let height = width * ASPECT_RATIO_3_2;
+
+                Extent2dF { width, height }
+            });
+
+            try_set_cell_extent(ui, cell_text, extent);
+            cell_width_edit_resp.request_focus();
+        } else if cell_height_edit_resp.lost_focus() && enter_pressed(ui) {
+            let extent = cell_text.height.edit.parse::<u32>().ok().map(|val| {
+                let width = (val as f32 / ASPECT_RATIO_3_2) as u32;
+                let width = width.next_multiple_of(2) as f32;
+                let height = width * ASPECT_RATIO_3_2;
+
+                Extent2dF { width, height }
+            });
+
+            try_set_cell_extent(ui, cell_text, extent);
+            cell_height_edit_resp.request_focus();
+        }
+    }
+
     fn get_image_states_mut(&mut self, image_i: Option<usize>) -> Option<&mut ImageStates> {
         get_image_states_mut(&mut self.images, image_i)
     }
@@ -3926,7 +4003,7 @@ impl<'a> MediaBrowser<'a> {
     }
 
     #[hotpath::measure]
-    fn init_manga(&mut self, ui: &mut egui::Ui, selected_details_dir_entry_i: usize) -> Res1<()> { //$ Slow
+    fn init_manga(&mut self, ui: &mut egui::Ui, selected_details_dir_entry_i: usize) -> Res1<()> {
         let dir_entry_info = &self.details_dir_entries[selected_details_dir_entry_i];
         let archive_path = Arc::new(dir_entry_info.path.clone());
         let archive = fs::File::open(archive_path.as_path())?;
@@ -4026,20 +4103,6 @@ impl<'a> MediaBrowser<'a> {
         GridViewCellCounts { row: row_cell_count, max: self.grid_view.len() }
     }
 
-    fn rescale_images(&mut self) {
-        for image_states in self.images.values_mut() {
-            let new_image_states = ImageStates {
-                grid: if let ViewKind::RescaleGrid = self.view_kind { ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) } } else { default!() },
-                details: if let ViewKind::RescaleDetails = self.view_kind { ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) } } else { default!() },
-                ..default!()
-            };
-            let old_image_states = mem::replace(image_states, new_image_states);
-
-            old_image_states.gen_id.fetch_add(1, Ordering::Relaxed);
-            self.to_thanatos.send(Soul::ImageStates(old_image_states)).unwrap();
-        }
-    }
-
     fn reset_grid_entries_selection(&mut self) {
         self.grid_cell_tags_menu_selection.clear();
         self.grid_entries_selection.clear();
@@ -4053,7 +4116,7 @@ impl<'a> MediaBrowser<'a> {
 
         let ResetResidence { row_cell_count, visible_cell_count } = self.reset_residence();
         let stream_builder = StreamBuilder::default().with_load(self.residence.clone());
-        self.stream.refresh_flatten(stream_builder, 0..visible_cell_count, &self.grid_view);
+        self.stream.flatten_refresh(stream_builder, 0..visible_cell_count, &self.grid_view);
         self.stream(ui);
 
         self.reset_grid_entries_selection();
@@ -4064,12 +4127,60 @@ impl<'a> MediaBrowser<'a> {
         GridViewCellCounts { row: row_cell_count, max: self.grid_view.len() }
     }
 
-    fn reset_images(&mut self) {
+    fn reset_image_states_for_rescale(&mut self, ui: &mut egui::Ui) {
         for image_states in self.images.values_mut() {
-            let image_states = mem::take(image_states);
+            image_states.gen_id.fetch_add(1, Ordering::Relaxed);
 
-            image_states.gen_id.fetch_add(1, Ordering::Relaxed); // Cancel jobs in flight
-            self.to_thanatos.send(Soul::ImageStates(image_states)).unwrap(); // Destroy resident textures
+            let new_image_states = match self.view_kind {
+                ViewKind::RescaleGrid => ImageStates {
+                    grid: ImageState::ShouldScale { cache_ready: image_states.grid.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
+                    details: ImageState::ShouldScale { cache_ready: image_states.details.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
+                    gen_id: mem::take(&mut image_states.gen_id),
+                    ..default!()
+                },
+                ViewKind::RescaleDetails => ImageStates {
+                    grid: mem::take(&mut image_states.grid),
+                    details: ImageState::ShouldScale { cache_ready: image_states.details.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
+                    gen_id: mem::take(&mut image_states.gen_id),
+                    ..default!()
+                },
+                _ => return
+            };
+            let old_image_states = mem::replace(image_states, new_image_states);
+
+            for image_state in old_image_states.into_iter() {
+                if let ImageState::Ready { tex_id, .. } = image_state {
+                    self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
+                }
+            }
+        }
+
+        let ResetResidence { visible_cell_count, .. } = self.reset_residence();
+        let stream_builder = StreamBuilder::default().with_load(self.residence.clone());
+        self.stream.flatten_refresh(stream_builder, 0..visible_cell_count, &self.grid_view);
+        self.stream(ui);
+
+        self.grid_scroll_offset = 0.;
+        self.animation.target = false;
+    }
+
+    fn reset_image_states_for_restart(&mut self) {
+        for image_states in self.images.values_mut() {
+            image_states.gen_id.fetch_add(1, Ordering::Relaxed);
+
+            let new_image_states = ImageStates {
+                grid: ImageState::ShouldScale { cache_ready: image_states.grid.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
+                details: ImageState::ShouldScale { cache_ready: image_states.details.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
+                gen_id: mem::take(&mut image_states.gen_id),
+                ..default!()
+            };
+            let old_image_states = mem::replace(image_states, new_image_states);
+
+            for image_state in old_image_states.into_iter() {
+                if let ImageState::Ready { tex_id, .. } = image_state {
+                    self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
+                }
+            }
         }
     }
 
@@ -4116,19 +4227,29 @@ impl<'a> MediaBrowser<'a> {
 
                 image_states.ref_count = image_states.ref_count.saturating_sub(1);
                 if image_states.ref_count == 0 {
-                    let cache_readies = image_states.take_cache_readies();
-                    let gen_id = mem::take(&mut image_states.gen_id);
-                    gen_id.fetch_add(1, Ordering::Relaxed);
+                    image_states.gen_id.fetch_add(1, Ordering::Relaxed);
 
-                    let new_image_states = ImageStates {
-                        grid: ImageState::NoneCheckCache { cache_ready: cache_readies.grid },
-                        details: ImageState::NoneCheckCache { cache_ready: cache_readies.details },
-                        ref_count: 0,
-                        gen_id
+                    let new_grid_image_state = match image_states.grid {
+                        ImageState::Ready { .. } => ImageState::None { cache_ready: image_states.grid.take_cache_ready() },
+                        _ => mem::take(&mut image_states.grid)
                     };
-
+                    let new_details_image_state = match image_states.details {
+                        ImageState::Ready { .. } => ImageState::None { cache_ready: image_states.details.take_cache_ready() },
+                        _ => mem::take(&mut image_states.details)
+                    };
+                    let new_image_states = ImageStates {
+                        grid: new_grid_image_state,
+                        details: new_details_image_state,
+                        gen_id: mem::take(&mut image_states.gen_id),
+                        ..default!()
+                    };
                     let old_image_states = mem::replace(image_states, new_image_states);
-                    self.to_thanatos.send(Soul::ImageStates(old_image_states)).unwrap();
+
+                    for image_state in old_image_states.into_iter() {
+                        if let ImageState::Ready { tex_id, .. } = image_state {
+                            self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
+                        }
+                    }
                 }
             }
         }
@@ -4147,7 +4268,7 @@ impl<'a> MediaBrowser<'a> {
                             grid_entry_i,
                             gen_id_check: Some(image_states.gen_id.get_next_check()),
                             signal_cache_readies: image_states.clone_cache_readies_on_should_scale(),
-                            wait_cache_readies: image_states.take_cache_readies_on_not_should_scale(),
+                            wait_cache_readies: image_states.take_cache_readies_on_should_not_scale(),
                             signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
                         })
                     }
@@ -4178,9 +4299,13 @@ impl<'a> MediaBrowser<'a> {
         if !self.manga.stream.drop.is_empty() {
             for view_i in self.manga.stream.drop.iter() {
                 let page_info = &mut self.manga.view[*view_i];
+
                 page_info.gen_id.fetch_add(1, Ordering::Relaxed);
                 let old_image_state = mem::take(&mut page_info.image_state);
-                self.to_thanatos.send(Soul::ImageState(old_image_state.into())).unwrap();
+
+                if let ImageState::Ready { tex_id, .. } = old_image_state.into() {
+                    self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
+                }
             }
         }
 
@@ -4225,7 +4350,7 @@ impl<'a> MediaBrowser<'a> {
         while let Ok(scaled_tex) = self.from_iris.try_recv() {
             let ScaledTexManga { tex_id, index, gen_id_check, extent } = scaled_tex;
 
-            if let Some(gen_id_check) = gen_id_check && gen_id_check.check().is_ok() {
+            if let Some(gen_id_check) = gen_id_check && gen_id_check.check(None).is_ok() {
                 self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
             } else {
                 self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
@@ -4235,15 +4360,8 @@ impl<'a> MediaBrowser<'a> {
         let mut sentinel = self.chunk_size;
         sentinel -= self.try_write_partial_tex(sentinel);
 
-        while let Ok(mut partial_tex) = self.from_demeter.try_recv() {
+        while let Ok(partial_tex) = self.from_demeter.try_recv() {
             if partial_tex.offset == partial_tex.tex.height() as usize {
-                if let Some((image, signal_tex_ready)) = partial_tex.captive.take() {
-                    if let Some(signal_tex_ready) = signal_tex_ready {
-                        signal_tex_ready.mark_done();
-                    }
-                    self.to_thanatos.send(Soul::RgbaImage(image)).unwrap();
-                }
-
                 self.assess_partial_tex_ready(partial_tex);
             } else {
                 self.partial_tex_stash.push_back(partial_tex);
@@ -4379,7 +4497,7 @@ impl<'a> MediaBrowser<'a> {
             RangeCmpResult::SameEndOtherShorter { original_before_not_included, .. } =>
                 StreamBuilder::default().with_drop(original_before_not_included)
         };
-        self.stream.refresh_flatten(stream_builder, visible_cell_range, &self.grid_view);
+        self.stream.flatten_refresh(stream_builder, visible_cell_range, &self.grid_view);
         self.residence = new_residence;
 
         true
@@ -4483,8 +4601,8 @@ impl<'a> MediaBrowser<'a> {
             let pivot = self.get_pivot();
 
             for page_info in self.manga.view.drain(..) {
-                if let ImageStateManga::Ready { .. } = page_info.image_state {
-                    self.to_thanatos.send(Soul::ImageState(page_info.image_state.into())).unwrap();
+                if let ImageStateManga::Ready { tex_id, .. } = page_info.image_state {
+                    self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
                 }
             }
 
@@ -5159,57 +5277,13 @@ impl<'a> MediaBrowser<'a> {
             egui::Grid::new("grid")
                 .num_columns(3)
                 .show(ui, |ui| {
-                    ui.label("Image cell:");
+                    if !matches!(self.view_kind, ViewKind::Manga) {
+                        ui.label("Image cell:");
 
-                    let add_dim_edit = |ui: &mut egui::Ui, enabled: bool, text: &mut TextRw, dim: f32| -> egui::Response {
-                        text.display.clear();
-                        write!(text.display, "{}", dim).unwrap();
+                        self.try_add_cell_extent_edit(ui);
 
-                        let text_edit = egui::TextEdit::singleline(&mut text.edit)
-                            .hint_text(&text.display)
-                            .char_limit(EXTENT_EDIT_CHAR_LIMIT)
-                            .desired_width(EXTENT_EDIT_DESIRED_WIDTH);
-
-                        ui.add_enabled(enabled, text_edit)
-                    };
-
-                    let grid_cell_width_edit_resp = add_dim_edit(ui, self.grid_cell_size_text.height.edit.is_empty(), &mut self.grid_cell_size_text.width, self.grid_cell_size.x);
-                    let grid_cell_height_edit_resp = add_dim_edit(ui, self.grid_cell_size_text.width.edit.is_empty(), &mut self.grid_cell_size_text.height, self.grid_cell_size.y);
-
-                    let mut try_set_grid_cell_extent = |text: &mut TextRw, extent: Option<Extent2dF>| {
-                        if let Some(extent) = extent {
-                            text.edit.clear();
-
-                            self.grid_cell_size = extent.into();
-                            self.grid_cell_space = self.grid_cell_size + GRID_IMAGE_SPACING;
-                            self.view_kind = ViewKind::RescaleGrid;
-                        }
-                    };
-                    if grid_cell_width_edit_resp.lost_focus() && enter_pressed(ui) {
-                        let extent = self.grid_cell_size_text.width.edit.parse::<u32>().ok().map(|val| {
-                            let width = val.next_multiple_of(2) as f32;
-                            let height = width * ASPECT_RATIO_3_2;
-
-                            Extent2dF { width, height }
-                        });
-
-                        try_set_grid_cell_extent(&mut self.grid_cell_size_text.width, extent);
-                        grid_cell_width_edit_resp.request_focus();
+                        ui.end_row();
                     }
-                    if grid_cell_height_edit_resp.lost_focus() && enter_pressed(ui) {
-                        let extent = self.grid_cell_size_text.height.edit.parse::<u32>().ok().map(|val| {
-                            let width = (val as f32 / ASPECT_RATIO_3_2) as u32;
-                            let width = width.next_multiple_of(2) as f32;
-                            let height = width * ASPECT_RATIO_3_2;
-
-                            Extent2dF { width, height }
-                        });
-
-                        try_set_grid_cell_extent(&mut self.grid_cell_size_text.height, extent);
-                        grid_cell_height_edit_resp.request_focus();
-                    }
-
-                    ui.end_row();
 
                     ui.label("Window inner:");
 
@@ -6106,7 +6180,11 @@ impl<'a> MediaBrowser<'a> {
         let cache_readies = CacheReadies::new();
         let (image_i, _) = self.images.insert_full(
             new_image_file_name.clone(),
-            ImageStates::new_none_check_cache(cache_readies.clone())
+            ImageStates {
+                grid: ImageState::None { cache_ready: cache_readies.grid.clone() },
+                details: ImageState::None { cache_ready: cache_readies.details.clone() },
+                ..default!()
+            }
         );
         grid_entry_info.image_i = Some(image_i);
 
@@ -6526,15 +6604,15 @@ impl<'a> MediaBrowser<'a> {
                     ui.checkbox(&mut self.maintain_sample_rate, "Maintain sample rate");
                     ui.add_enabled(self.enable_override_glsl_shaders_checkbox, egui::Checkbox::new(&mut self.override_glsl_shaders, "Override GLSL shaders"));
                     ui.menu_button("Discord Rich Presence", |ui| self.discord_menu(ui));
-
-                    ui.separator();
-
-                    self.display_submenu_common(ui);
-
-                    ui.separator();
-
-                    self.exit_button(ui);
                 });
+
+                ui.separator();
+
+                self.display_submenu_common(ui);
+
+                ui.separator();
+
+                self.exit_button(ui);
             });
     }
 
