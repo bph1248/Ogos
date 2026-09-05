@@ -77,6 +77,8 @@ const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 const IMMEDIATE_SIZE: u32 = (mem::size_of::<RenderPassKind>() + 2 * mem::size_of::<Extent2dF>()) as u32;
 const NIGHT_LIGHT: egui::Rgba = egui::Rgba::from_rgb(1., 0.6, 0.3);
 const PCIE_TRANSFER_LIMIT_MIBS: usize = 3840;
+const SEPARATOR_STROKE_BRIGHT_GRAY: egui::Color32 = egui::Color32::from_gray(90);
+const SEPARATOR_STROKE_DEFAULT_GRAY: egui::Color32 = egui::Color32::from_gray(60);
 const SEPARATOR_WIDTH: f32 = 2.;
 const SUBMENU_WIDTH_SML: f32 = 216.;
 const SUBMENU_WIDTH_LRG: f32 = 260.;
@@ -1626,6 +1628,13 @@ fn add_enum_radios<T>(ui: &mut egui::Ui, target: &mut T) where
     }
 }
 
+fn add_pseudo_heading(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) {
+    ui.horizontal(|ui| {
+        ui.label(text);
+        ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
+    });
+}
+
 fn add_dim_edit(ui: &mut egui::Ui, enabled: bool, text: &mut TextRw, dim: f32) -> egui::Response {
     text.display.clear();
     write!(text.display, "{}", dim).unwrap();
@@ -3122,6 +3131,10 @@ fn requested_go_back(ui: &mut egui::Ui) -> bool {
 fn send_log_err_msg(error_sx: &mpmc::Sender<String>, msg: String) {
     error!("{}", msg);
     error_sx.send(msg).unwrap();
+}
+
+fn set_separator_stroke(ui: &mut egui::Ui, color: impl Into<egui::Color32>) {
+    ui.style_mut().visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1., color);
 }
 
 fn sort_grid_view(view: &mut [usize], entries: &[GridEntryInfo]) {
@@ -4932,16 +4945,13 @@ impl<'a> MediaBrowser<'a> {
                     self.manga.cursor_visibility = CursorVisibility::Visible;
                 }
 
-                ui.menu_button("Bookmark", |ui| self.bookmark_submenu_manga(ui));
-                ui.menu_button("Preset", |ui| self.preset_submenu_manga(ui));
+                ui.menu_button("Save", |ui| self.save_submenu_manga(ui));
 
                 ui.separator();
 
                 ui.menu_button("Cursor", |ui| self.cursor_submenu_manga(ui));
-                ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
-                ui.menu_button("Kernel", |ui| self.filter_submenu_manga(ui));
                 ui.menu_button("Levels", |ui| self.levels_submenu_manga(ui));
-                ui.menu_button("Tint", |ui| self.tint_submenu_manga(ui));
+                ui.menu_button("Scale", |ui| self.scale_submenu_manga(ui, viewport));
 
                 ui.separator();
 
@@ -4962,6 +4972,121 @@ impl<'a> MediaBrowser<'a> {
             self.manga.hide_cursor_anchor = Some(now!());
         }
         self.manga.context_menu_open = context_menu_open;
+    }
+
+    fn save_submenu_manga(&mut self, ui: &mut egui::Ui) {
+        ui.set_min_width(SUBMENU_WIDTH_LRG);
+
+        add_pseudo_heading(ui, "Bookmark");
+
+        if ui.button("Set").clicked() {
+            let pivot = self.get_pivot();
+
+            let grid_entry_info = &mut self.grid_entries[self.details_grid_entry_i];
+            grid_entry_info.bookmark = Some(pivot);
+        }
+
+        let bookmark = &mut self.grid_entries[self.details_grid_entry_i].bookmark;
+
+        ui.add_enabled_ui(bookmark.is_some(), |ui| {
+            if ui.button("Clear").clicked() {
+                *bookmark = None;
+            }
+
+            if ui.button("Jump").clicked() {
+                let pivot = bookmark.unwrap();
+                let viewport_half_height = self.central_rect.height().div_euclid(2.);
+
+                let page_info = &self.manga.view[pivot.page_i];
+                let scroll_offset_y = page_info.offset +
+                    pivot.page_inset_pc.mul(page_info.extent.height) -
+                    viewport_half_height;
+
+                self.manga.go_to_scroll_offset_y = Some(scroll_offset_y);
+            }
+        });
+
+        add_pseudo_heading(ui, "Settings");
+
+        let mut checked = self.manga.remember_settings;
+        let remember_current_settings_checkbox_resp = ui.checkbox(&mut checked, "Remember");
+        if remember_current_settings_checkbox_resp.clicked() {
+            self.manga.remember_settings = checked;
+        }
+    }
+
+    fn cursor_submenu_manga(&mut self, ui: &mut egui::Ui) {
+        let mut checked = self.manga.should_hide_cursor;
+        let hide_cursor_checkbox_resp = ui.checkbox(&mut checked, "Hide");
+        if hide_cursor_checkbox_resp.clicked() {
+            match checked {
+                true => self.manga.should_hide_cursor = true,
+                false => {
+                    self.manga.should_hide_cursor = false;
+                    self.manga.hide_cursor_anchor = None;
+                }
+            }
+        }
+
+        ui.scope(|ui| {
+            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
+
+            ui.add_enabled_ui(self.manga.should_hide_cursor, |ui| {
+                ui.label("After:");
+
+                ui.add(egui::Slider::new(&mut self.manga.hide_cursor_after, 0.0..=10.)
+                    .clamping(egui::SliderClamping::Always));
+
+                ui.label("Dead zone:");
+
+                ui.add(egui::Slider::new(&mut self.manga.hide_cursor_dead_zone, 0.0..=200.)
+                    .clamping(egui::SliderClamping::Always)
+                    .fixed_decimals(0));
+            });
+        });
+    }
+
+    fn levels_submenu_manga(&mut self, ui: &mut egui::Ui) {
+        ui.scope(|ui| {
+            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
+
+            ui.label("Night light:");
+
+            let night_light_alpha_slider_resp = ui.add(egui::Slider::new(&mut self.manga.night_light_alpha_pc, 0.0..=100.)
+                .clamping(egui::SliderClamping::Always)
+                .fixed_decimals(0));
+
+            if night_light_alpha_slider_resp.dragged() || night_light_alpha_slider_resp.lost_focus() && enter_pressed(ui) {
+                self.set_tint();
+            }
+
+            ui.label("Page:");
+
+            let white_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_level_pc, 0.0..=100.)
+                .clamping(egui::SliderClamping::Always)
+                .fixed_decimals(0));
+
+            if white_level_slider_resp.dragged() || white_level_slider_resp.lost_focus() && enter_pressed(ui) {
+                self.set_tint();
+            }
+
+            ui.label("Background:");
+
+            let background_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.background_level_pc, 0.0..=100.)
+                .clamping(egui::SliderClamping::Always)
+                .fixed_decimals(0));
+
+            if background_level_slider_resp.dragged() || background_level_slider_resp.lost_focus() && enter_pressed(ui) {
+                let mut background: egui::Rgba = DARK_GRAY.into();
+
+                let background_level = self.manga.background_level_pc / 100.;
+                background[0] *= background_level;
+                background[1] *= background_level;
+                background[2] *= background_level;
+
+                self.frame = self.frame.fill(background.into());
+            }
+        });
     }
 
     fn scale_submenu_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
@@ -5029,17 +5154,14 @@ impl<'a> MediaBrowser<'a> {
         });
     }
 
-    fn filter_submenu_manga(&mut self, ui: &mut egui::Ui) {
+    fn kernel_submenu_manga(&mut self, ui: &mut egui::Ui) {
         egui::Grid::new("grid")
             .num_columns(2)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.set_min_width(SUBMENU_WIDTH_SML);
 
-                    ui.horizontal(|ui| {
-                        ui.label("CPU");
-                        ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
-                    });
+                    add_pseudo_heading(ui, "CPU");
 
                     if ui.radio(matches!(self.manga.filter, FilterAccel::Cpu(CpuFilter::Box)), "Box").clicked() {
                         self.manga.filter = FilterAccel::Cpu(CpuFilter::Box);
@@ -5070,10 +5192,7 @@ impl<'a> MediaBrowser<'a> {
                 ui.vertical(|ui| {
                     ui.set_min_width(SUBMENU_WIDTH_SML);
 
-                    ui.horizontal(|ui| {
-                        ui.label("GPU");
-                        ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
-                    });
+                    add_pseudo_heading(ui, "GPU");
 
                     if ui.radio(matches!(self.manga.filter, FilterAccel::Gpu(GpuFilter::Nearest)), "Nearest").clicked() {
                         self.manga.filter = FilterAccel::Gpu(GpuFilter::Nearest);
@@ -5092,101 +5211,6 @@ impl<'a> MediaBrowser<'a> {
             });
     }
 
-    fn tint_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.vertical(|ui| {
-            ui.scope(|ui| {
-                ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
-
-                ui.label("Night light:");
-
-                let night_light_alpha_slider_resp = ui.add(egui::Slider::new(&mut self.manga.night_light_alpha_pc, 0.0..=100.)
-                    .clamping(egui::SliderClamping::Always)
-                    .fixed_decimals(0));
-
-                if night_light_alpha_slider_resp.dragged() || night_light_alpha_slider_resp.lost_focus() && enter_pressed(ui) {
-                    self.set_tint();
-                }
-            });
-        });
-    }
-
-    fn levels_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.scope(|ui| {
-            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
-
-            ui.label("Page:");
-
-            let white_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_level_pc, 0.0..=100.)
-                .clamping(egui::SliderClamping::Always)
-                .fixed_decimals(0));
-
-            if white_level_slider_resp.dragged() || white_level_slider_resp.lost_focus() && enter_pressed(ui) {
-                self.set_tint();
-            }
-
-            ui.label("Background:");
-
-            let background_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.background_level_pc, 0.0..=100.)
-                .clamping(egui::SliderClamping::Always)
-                .fixed_decimals(0));
-
-            if background_level_slider_resp.dragged() || background_level_slider_resp.lost_focus() && enter_pressed(ui) {
-                let mut background: egui::Rgba = DARK_GRAY.into();
-
-                let background_level = self.manga.background_level_pc / 100.;
-                background[0] *= background_level;
-                background[1] *= background_level;
-                background[2] *= background_level;
-
-                self.frame = self.frame.fill(background.into());
-            }
-        });
-    }
-
-    fn bookmark_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(SUBMENU_WIDTH_LRG);
-
-        ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
-            if ui.button("Set").clicked() {
-                let pivot = self.get_pivot();
-
-                let grid_entry_info = &mut self.grid_entries[self.details_grid_entry_i];
-                grid_entry_info.bookmark = Some(pivot);
-            }
-
-            let bookmark = &mut self.grid_entries[self.details_grid_entry_i].bookmark;
-
-            if bookmark.is_some() {
-                ui.separator();
-
-                if ui.button("Clear").clicked() {
-                    *bookmark = None;
-                }
-            }
-
-            if let Some(pivot) = bookmark && ui.button("Jump").clicked() {
-                let viewport_half_height = self.central_rect.height().div_euclid(2.);
-
-                let page_info = &self.manga.view[pivot.page_i];
-                let scroll_offset_y = page_info.offset +
-                    pivot.page_inset_pc.mul(page_info.extent.height) -
-                    viewport_half_height;
-
-                self.manga.go_to_scroll_offset_y = Some(scroll_offset_y);
-            }
-        });
-    }
-
-    fn preset_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(SUBMENU_WIDTH_LRG);
-
-        let mut checked = self.manga.remember_settings;
-        let remember_current_settings_checkbox_resp = ui.checkbox(&mut checked, "Remember");
-        if remember_current_settings_checkbox_resp.clicked() {
-            self.manga.remember_settings = checked;
-        }
-    }
-
     fn common_grid_submenus(&mut self, ui: &mut egui::Ui) {
         self.display_submenu_common(ui);
         self.library_submenu_common(ui);
@@ -5201,6 +5225,29 @@ impl<'a> MediaBrowser<'a> {
     fn display_submenu_common(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Display", |ui| {
             ui.set_min_width(SUBMENU_WIDTH_LRG);
+
+            if !self.enable_fullscreen {
+                let mut checked = self.center_window;
+                let center_window_checkbox_resp = ui.checkbox(&mut checked, "Center");
+                if center_window_checkbox_resp.clicked() {
+                    if checked {
+                        ui.send_viewport_cmd(egui::ViewportCommand::Center);
+                    }
+
+                    self.center_window = checked;
+                }
+
+                let mut checked = self.enable_decorations;
+                let enable_decorations_checkbox_resp = ui.checkbox(&mut checked, "Decorations");
+                if enable_decorations_checkbox_resp.is_pointer_button_down_on() {
+                    ui.request_repaint(); // Keep rendering leading into decorations toggle - works around window outer/inner rect artifacts
+                }
+                if enable_decorations_checkbox_resp.clicked() {
+                    ui.send_viewport_cmd(egui::ViewportCommand::DecorationsEx { enable: checked, center_window: self.center_window });
+
+                    self.enable_decorations = checked;
+                }
+            }
 
             let mut checked = self.enable_fullscreen;
             let enable_fullscreen_checkbox_resp = ui.checkbox(&mut checked, "Fullscreen");
@@ -5245,87 +5292,61 @@ impl<'a> MediaBrowser<'a> {
             });
 
             if !self.enable_fullscreen {
-                ui.separator();
+                add_pseudo_heading(ui, "Extents");
 
-                let mut checked = self.center_window;
-                let center_window_checkbox_resp = ui.checkbox(&mut checked, "Center");
-                if center_window_checkbox_resp.clicked() {
-                    if checked {
-                        ui.send_viewport_cmd(egui::ViewportCommand::Center);
-                    }
+                egui::Grid::new("grid")
+                    .num_columns(3)
+                    .show(ui, |ui| {
+                        if !matches!(self.view_kind, ViewKind::Manga) {
+                            ui.label("Image cell:");
 
-                    self.center_window = checked;
-                }
+                            self.try_add_cell_extent_edit(ui);
 
-                let mut checked = self.enable_decorations;
-                let enable_decorations_checkbox_resp = ui.checkbox(&mut checked, "Decorations");
-                if enable_decorations_checkbox_resp.is_pointer_button_down_on() {
-                    ui.request_repaint(); // Keep rendering leading into decorations toggle - works around window outer/inner rect artifacts
-                }
-                if enable_decorations_checkbox_resp.clicked() {
-                    ui.send_viewport_cmd(egui::ViewportCommand::DecorationsEx { enable: checked, center_window: self.center_window });
+                            ui.end_row();
+                        }
 
-                    self.enable_decorations = checked;
-                }
-            }
+                        ui.label("Viewport:");
 
-            ui.horizontal(|ui| {
-                ui.label("Extents");
-                ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
-            });
+                        let window_inner_width_edit_resp = add_dim_edit(ui, true, &mut self.window_inner_extent_text.width, self.window_inner_extent.width);
+                        let window_inner_height_edit_resp = add_dim_edit(ui, true, &mut self.window_inner_extent_text.height, self.window_inner_extent.height);
 
-            egui::Grid::new("grid")
-                .num_columns(3)
-                .show(ui, |ui| {
-                    if !matches!(self.view_kind, ViewKind::Manga) {
-                        ui.label("Image cell:");
+                        let mut try_set_window_inner_extent = |ui: &mut egui::Ui| {
+                            let window_inner_width = if self.window_inner_extent_text.width.edit.is_empty() {
+                                Some(self.window_inner_extent.width)
+                            } else {
+                                self.window_inner_extent_text.width.edit.parse::<u32>().ok().map(|val| val.max(800) as f32)
+                            };
+                            let window_inner_height = if self.window_inner_extent_text.height.edit.is_empty() {
+                                Some(self.window_inner_extent.height)
+                            } else {
+                                self.window_inner_extent_text.height.edit.parse::<u32>().ok().map(|val| val.max(600) as f32)
+                            };
 
-                        self.try_add_cell_extent_edit(ui);
+                            let window_inner_extent = window_inner_width.zip(window_inner_height);
+                            if let Some((width, height)) = window_inner_extent {
+                                ui.send_viewport_cmd(egui::ViewportCommand::InnerSize([width, height].into()));
+                                if self.center_window {
+                                    ui.send_viewport_cmd(egui::ViewportCommand::Center);
+                                }
+
+                                self.window_inner_extent_text.width.edit.clear();
+                                self.window_inner_extent_text.height.edit.clear();
+
+                                self.window_inner_extent = Extent2dF { width, height };
+                            }
+                        };
+                        if window_inner_width_edit_resp.lost_focus() && enter_pressed(ui) {
+                            try_set_window_inner_extent(ui);
+                            window_inner_width_edit_resp.request_focus();
+                        }
+                        if window_inner_height_edit_resp.lost_focus() && enter_pressed(ui) {
+                            try_set_window_inner_extent(ui);
+                            window_inner_height_edit_resp.request_focus();
+                        }
 
                         ui.end_row();
-                    }
-
-                    ui.label("Window inner:");
-
-                    let window_inner_width_edit_resp = add_dim_edit(ui, true, &mut self.window_inner_extent_text.width, self.window_inner_extent.width);
-                    let window_inner_height_edit_resp = add_dim_edit(ui, true, &mut self.window_inner_extent_text.height, self.window_inner_extent.height);
-
-                    let mut try_set_window_inner_extent = |ui: &mut egui::Ui| {
-                        let window_inner_width = if self.window_inner_extent_text.width.edit.is_empty() {
-                            Some(self.window_inner_extent.width)
-                        } else {
-                            self.window_inner_extent_text.width.edit.parse::<u32>().ok().map(|val| val.max(800) as f32)
-                        };
-                        let window_inner_height = if self.window_inner_extent_text.height.edit.is_empty() {
-                            Some(self.window_inner_extent.height)
-                        } else {
-                            self.window_inner_extent_text.height.edit.parse::<u32>().ok().map(|val| val.max(600) as f32)
-                        };
-
-                        let window_inner_extent = window_inner_width.zip(window_inner_height);
-                        if let Some((width, height)) = window_inner_extent {
-                            ui.send_viewport_cmd(egui::ViewportCommand::InnerSize([width, height].into()));
-                            if self.center_window {
-                                ui.send_viewport_cmd(egui::ViewportCommand::Center);
-                            }
-
-                            self.window_inner_extent_text.width.edit.clear();
-                            self.window_inner_extent_text.height.edit.clear();
-
-                            self.window_inner_extent = Extent2dF { width, height };
-                        }
-                    };
-                    if window_inner_width_edit_resp.lost_focus() && enter_pressed(ui) {
-                        try_set_window_inner_extent(ui);
-                        window_inner_width_edit_resp.request_focus();
-                    }
-                    if window_inner_height_edit_resp.lost_focus() && enter_pressed(ui) {
-                        try_set_window_inner_extent(ui);
-                        window_inner_height_edit_resp.request_focus();
-                    }
-
-                    ui.end_row();
-                });
+                    });
+            }
         });
     }
 
@@ -5383,13 +5404,40 @@ impl<'a> MediaBrowser<'a> {
         ui.menu_button("Misc.", |ui| {
             ui.set_max_width(SUBMENU_WIDTH_LRG);
 
-            ui.horizontal(|ui| {
-                ui.label("Prefetch");
-                ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
-            });
-
             let lookahead_lynchpin = make_galley(ui, "Lookahead:".into(), egui::TextStyle::Body);
             let min_col_width = lookahead_lynchpin.rect.width();
+
+            add_pseudo_heading(ui, "Animation");
+
+            egui::Grid::new("grid_animation")
+                .num_columns(2)
+                .min_col_width(min_col_width)
+                .show(ui, |ui| {
+                    ui.label("Duration:");
+
+                    self.animation.dur_display.clear();
+                    write!(self.animation.dur_display, "{:.2}", self.animation.dur).unwrap();
+                    let animation_dur_edit_resp = egui::TextEdit::singleline(&mut self.animation.dur_edit)
+                        .hint_text(&self.animation.dur_display)
+                        .show(ui)
+                        .response;
+                    if animation_dur_edit_resp.lost_focus() && enter_pressed(ui) {
+                        if let Ok(dur) = self.animation.dur_edit.parse::<f32>() {
+                            self.animation.dur_edit.clear();
+                            self.animation.dur = dur.max(0.1);
+                        }
+
+                        animation_dur_edit_resp.request_focus();
+                    }
+
+                    ui.end_row();
+                });
+
+            ui.menu_button("Easing", |ui| {
+                add_enum_radios(ui, &mut self.animation.kind);
+            });
+
+            add_pseudo_heading(ui, "Prefetch");
 
             egui::Grid::new("grid_prefetch")
                 .num_columns(2)
@@ -5434,69 +5482,9 @@ impl<'a> MediaBrowser<'a> {
                     ui.end_row();
                 });
 
-            ui.horizontal(|ui| {
-                ui.label("Animation");
-                ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
-            });
+            add_pseudo_heading(ui, "Resampling");
 
-            ui.menu_button("Kind", |ui| {
-                add_enum_radios(ui, &mut self.animation.kind);
-            });
-
-            egui::Grid::new("grid_animation")
-                .num_columns(2)
-                .min_col_width(min_col_width)
-                .show(ui, |ui| {
-                    ui.label("Duration:");
-
-                    self.animation.dur_display.clear();
-                    write!(self.animation.dur_display, "{:.2}", self.animation.dur).unwrap();
-                    let animation_dur_edit_resp = egui::TextEdit::singleline(&mut self.animation.dur_edit)
-                        .hint_text(&self.animation.dur_display)
-                        .show(ui)
-                        .response;
-                    if animation_dur_edit_resp.lost_focus() && enter_pressed(ui) {
-                        if let Ok(dur) = self.animation.dur_edit.parse::<f32>() {
-                            self.animation.dur_edit.clear();
-                            self.animation.dur = dur.max(0.1);
-                        }
-
-                        animation_dur_edit_resp.request_focus();
-                    }
-
-                    ui.end_row();
-                });
-        });
-    }
-
-    fn cursor_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        let mut checked = self.manga.should_hide_cursor;
-        let hide_cursor_checkbox_resp = ui.checkbox(&mut checked, "Hide");
-        if hide_cursor_checkbox_resp.clicked() {
-            match checked {
-                true => self.manga.should_hide_cursor = true,
-                false => {
-                    self.manga.should_hide_cursor = false;
-                    self.manga.hide_cursor_anchor = None;
-                }
-            }
-        }
-
-        ui.scope(|ui| {
-            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
-
-            ui.add_enabled_ui(self.manga.should_hide_cursor, |ui| {
-                ui.label("After:");
-
-                ui.add(egui::Slider::new(&mut self.manga.hide_cursor_after, 0.0..=10.)
-                    .clamping(egui::SliderClamping::Always));
-
-                ui.label("Dead zone:");
-
-                ui.add(egui::Slider::new(&mut self.manga.hide_cursor_dead_zone, 0.0..=200.)
-                    .clamping(egui::SliderClamping::Always)
-                    .fixed_decimals(0));
-            });
+            ui.menu_button("Kernel", |ui| self.kernel_submenu_manga(ui));
         });
     }
 
@@ -5505,10 +5493,7 @@ impl<'a> MediaBrowser<'a> {
             ui.set_max_width(SUBMENU_WIDTH_LRG);
 
             if let Stage::Manga = stage {
-                ui.horizontal(|ui| {
-                    ui.label("Wheel");
-                    ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
-                });
+                add_pseudo_heading(ui, "Wheel");
             }
 
             let (
@@ -5628,10 +5613,7 @@ impl<'a> MediaBrowser<'a> {
             }
 
             if let Stage::Manga = stage {
-                ui.horizontal(|ui| {
-                    ui.label("Auto");
-                    ui.centered_and_justified(|ui| ui.add(egui::Separator::default().horizontal()))
-                });
+                add_pseudo_heading(ui, "Auto");
 
                 egui::Grid::new("grid_auto")
                     .num_columns(2)
@@ -6415,6 +6397,8 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn details_view(&mut self, ui: &mut egui::Ui) {
+        set_separator_stroke(ui, SEPARATOR_STROKE_DEFAULT_GRAY);
+
         let image_states = get_image_states_from_grid_entry_mut(&mut self.images, &self.grid_entries, self.details_grid_entry_i);
 
         // Subdivisions
@@ -6760,7 +6744,13 @@ pub fn begin(kind: GuiKind) -> Res<(), { loc_var!(Gui) }> {
                 style.spacing.icon_spacing = (style.spacing.icon_spacing * factor).round();
                 style.spacing.icon_width = (style.spacing.icon_width * factor).round();
                 style.spacing.icon_width_inner = (style.spacing.icon_width_inner * factor).round();
-                // style.visuals.handle_shape = egui::style::HandleShape::Circle;
+
+                style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(3);
+                style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(3);
+                style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(3);
+                style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(3);
+
+                style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1., SEPARATOR_STROKE_BRIGHT_GRAY);
 
                 for font_id in style.text_styles.values_mut() {
                     font_id.size = (font_id.size * factor).round();
