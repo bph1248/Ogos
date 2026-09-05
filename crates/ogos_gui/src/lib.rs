@@ -5028,83 +5028,77 @@ impl<'a> MediaBrowser<'a> {
             }
         }
 
-        ui.scope(|ui| {
-            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
+        ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
 
-            ui.add_enabled_ui(self.manga.should_hide_cursor, |ui| {
-                ui.label("After:");
+        ui.add_enabled_ui(self.manga.should_hide_cursor, |ui| {
+            ui.label("After:");
 
-                ui.add(egui::Slider::new(&mut self.manga.hide_cursor_after, 0.0..=10.)
-                    .clamping(egui::SliderClamping::Always));
+            ui.add(egui::Slider::new(&mut self.manga.hide_cursor_after, 0.0..=10.)
+                .clamping(egui::SliderClamping::Always));
 
-                ui.label("Dead zone:");
+            ui.label("Dead zone:");
 
-                ui.add(egui::Slider::new(&mut self.manga.hide_cursor_dead_zone, 0.0..=200.)
-                    .clamping(egui::SliderClamping::Always)
-                    .fixed_decimals(0));
-            });
+            ui.add(egui::Slider::new(&mut self.manga.hide_cursor_dead_zone, 0.0..=200.)
+                .clamping(egui::SliderClamping::Always)
+                .fixed_decimals(0));
         });
     }
 
     fn levels_submenu_manga(&mut self, ui: &mut egui::Ui) {
-        ui.scope(|ui| {
-            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
+        ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
 
-            ui.label("Night light:");
+        ui.label("Night light:");
 
-            let night_light_alpha_slider_resp = ui.add(egui::Slider::new(&mut self.manga.night_light_alpha_pc, 0.0..=100.)
-                .clamping(egui::SliderClamping::Always)
-                .fixed_decimals(0));
+        let night_light_alpha_slider_resp = ui.add(egui::Slider::new(&mut self.manga.night_light_alpha_pc, 0.0..=100.)
+            .clamping(egui::SliderClamping::Always)
+            .fixed_decimals(0));
 
-            if night_light_alpha_slider_resp.dragged() || night_light_alpha_slider_resp.lost_focus() && enter_pressed(ui) {
-                self.set_tint();
-            }
+        if night_light_alpha_slider_resp.dragged() || night_light_alpha_slider_resp.lost_focus() && enter_pressed(ui) {
+            self.set_tint();
+        }
 
-            ui.label("Page:");
+        ui.label("Page:");
 
-            let white_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_level_pc, 0.0..=100.)
-                .clamping(egui::SliderClamping::Always)
-                .fixed_decimals(0));
+        let white_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.white_level_pc, 0.0..=100.)
+            .clamping(egui::SliderClamping::Always)
+            .fixed_decimals(0));
 
-            if white_level_slider_resp.dragged() || white_level_slider_resp.lost_focus() && enter_pressed(ui) {
-                self.set_tint();
-            }
+        if white_level_slider_resp.dragged() || white_level_slider_resp.lost_focus() && enter_pressed(ui) {
+            self.set_tint();
+        }
 
-            ui.label("Background:");
+        ui.label("Background:");
 
-            let background_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.background_level_pc, 0.0..=100.)
-                .clamping(egui::SliderClamping::Always)
-                .fixed_decimals(0));
+        let background_level_slider_resp = ui.add(egui::Slider::new(&mut self.manga.background_level_pc, 0.0..=100.)
+            .clamping(egui::SliderClamping::Always)
+            .fixed_decimals(0));
 
-            if background_level_slider_resp.dragged() || background_level_slider_resp.lost_focus() && enter_pressed(ui) {
-                let mut background: egui::Rgba = DARK_GRAY.into();
+        if background_level_slider_resp.dragged() || background_level_slider_resp.lost_focus() && enter_pressed(ui) {
+            let mut background: egui::Rgba = DARK_GRAY.into();
 
-                let background_level = self.manga.background_level_pc / 100.;
-                background[0] *= background_level;
-                background[1] *= background_level;
-                background[2] *= background_level;
+            let background_level = self.manga.background_level_pc / 100.;
+            background[0] *= background_level;
+            background[1] *= background_level;
+            background[2] *= background_level;
 
-                self.frame = self.frame.fill(background.into());
-            }
-        });
+            self.frame = self.frame.fill(background.into());
+        }
     }
 
     fn scale_submenu_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
         const SCALE_MIN: f32 = 25.;
         const SCALE_MAX: f32 = 300.;
 
-        ui.scope(|ui| {
-            ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
+        ui.spacing_mut().slider_width = SUBMENU_WIDTH_SML;
 
-            let scale_slider_resp = ui.add(egui::Slider::new(&mut self.manga.scale_pc, SCALE_MIN..=SCALE_MAX)
-                .clamping(egui::SliderClamping::Always)
-                .fixed_decimals(0)
-                .step_by(5.));
+        let scale_slider_resp = ui.add(egui::Slider::new(&mut self.manga.scale_pc, SCALE_MIN..=SCALE_MAX)
+            .clamping(egui::SliderClamping::Always)
+            .fixed_decimals(0)
+            .step_by(5.));
 
-            if scale_slider_resp.drag_stopped() || scale_slider_resp.lost_focus() && enter_pressed(ui) {
-                self.manga.should_restream = Some(viewport);
-            }
-        });
+        if scale_slider_resp.drag_stopped() || scale_slider_resp.lost_focus() && enter_pressed(ui) {
+            self.manga.should_restream = Some(viewport);
+        }
 
         ui.separator();
 
