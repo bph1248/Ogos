@@ -1663,46 +1663,56 @@ fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, text: &str, po
                 Orientation::Wide => ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.add(image)).inner
             }
         },
-        ImageState::Failed => alloc_painted_text(ui, text),
-        _ => alloc_painted_text(ui, "...")
+        ImageState::Failed => alloc_paint_text_centered_margin(ui, text),
+        _ => alloc_paint_text_centered_margin(ui, "...")
     }
 }
 
 fn try_add_image_manga(ui: &mut egui::Ui, image_state: &mut ImageStateManga, rect: egui::Rect, tint: egui::Rgba) -> Option<egui::Response> {
-    if let ImageStateManga::Ready { tex_id, extent, .. } = image_state {
-        let tex = egui::load::SizedTexture::new(*tex_id, *extent);
-        let tint: egui::Color32 = tint.into();
-        let image = egui::Image::new(tex).sense(egui::Sense::click()).tint(tint);
+    match image_state {
+        ImageStateManga::Ready { tex_id, extent } => {
+            let tex = egui::load::SizedTexture::new(*tex_id, *extent);
+            let tint: egui::Color32 = tint.into();
+            let image = egui::Image::new(tex).sense(egui::Sense::click()).tint(tint);
 
-        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Center)));
+            let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Center)));
 
-        return Some(ui.add(image))
+            Some(ui.add(image))
+        },
+        ImageStateManga::Failed => {
+            paint_text_centered(ui, "Failed to load page", rect);
+
+            None
+        },
+        _ => None
     }
-
-    None
 }
 
-fn alloc_painted_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
+fn alloc_paint_text_centered_margin(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let (space_id, space_rect) = ui.allocate_space(ui.available_size());
     let space_resp = ui.interact(space_rect, space_id, egui::Sense::click());
+    let text_rect = space_rect.shrink(15.);
 
-    let text_place_rect = space_rect.shrink(15.);
+    paint_text_centered(ui, text, text_rect);
+
+    space_resp
+}
+
+fn paint_text_centered(ui: &mut egui::Ui, text: &str, rect: egui::Rect) {
     let mut layout_job = egui::text::LayoutJob {
         wrap: egui::text::TextWrapping {
-            max_width: text_place_rect.width(),
+            max_width: rect.width(),
             ..default!()
         },
         ..default!()
     };
     let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap().clone();
     let text_color = ui.visuals().text_color();
-    layout_job.append(text, 0.0, egui::TextFormat::simple(font_id, text_color));
+    layout_job.append(text, 0., egui::TextFormat::simple(font_id, text_color));
 
     let galley = ui.painter().layout_job(layout_job);
-    let galley_pos = egui::Align2::CENTER_CENTER.align_size_within_rect(galley.size(), text_place_rect).min;
+    let galley_pos = egui::Align2::CENTER_CENTER.align_size_within_rect(galley.size(), rect).min;
     ui.painter().galley(galley_pos, galley, text_color);
-
-    space_resp
 }
 
 #[hotpath::measure]
@@ -4858,12 +4868,7 @@ impl<'a> MediaBrowser<'a> {
             .scroll_offset(scroll_offset)
             .horizontal_scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
             .wheel_scroll_multiplier(scroll_multiplier)
-            .show_viewport(ui, |ui, viewport| {
-                ui.set_min_size([self.manga.view_extent.width.max(self.central_rect.width()), self.manga.view_extent.height].into());
-                let background_resp = ui.interact(ui.min_rect(), ui.id().with("background"), egui::Sense::click());
-
-                self.show_viewport_manga(ui, viewport, background_resp)
-            })
+            .show_viewport(ui, |ui, viewport| self.show_viewport_manga(ui, viewport))
             .state.offset;
 
         match new_scroll_offset == self.manga.scroll_offset {
@@ -4877,57 +4882,64 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn show_viewport_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, background_resp: egui::Response) {
+    fn show_viewport_manga(&mut self, ui: &mut egui::Ui, viewport: egui::Rect) {
+        ui.set_min_size([self.manga.view_extent.width.max(self.central_rect.width()), self.manga.view_extent.height].into());
         ui.set_clip_rect(self.central_rect);
         ui.spacing_mut().item_spacing = egui::Vec2::splat(0.0);
 
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-            // Note: partition_point gives the index of the point at which the predicate ceases to be true (ie. the index of the next partition)
-            let start_visible = self.manga.view.partition_point(|page_info| page_info.offset < viewport.min.y)
-                .saturating_sub(1); // ..so sat sub to go back to the index where page_info.offset < viewport.min.y
-            let end_visible = self.manga.view.partition_point(|page_info| page_info.offset <= viewport.max.y)
-                .min(self.manga.view.len());
-            self.manga.visible_view = start_visible..end_visible;
+        // Note: partition_point gives the index of the point at which the predicate ceases to be true (ie. the index of the next partition)
+        let start_visible = self.manga.view.partition_point(|page_info| page_info.offset < viewport.min.y)
+            .saturating_sub(1); // ..so sat sub to go back to the index where page_info.offset < viewport.min.y
+        let end_visible = self.manga.view.partition_point(|page_info| page_info.offset <= viewport.max.y)
+            .min(self.manga.view.len());
+        self.manga.visible_view = start_visible..end_visible;
 
-            if self.update_residence_manga(self.manga.visible_view.clone(), self.manga.view.len()) {
-                self.stream_manga(ui, self.manga.scale_pc != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
+        if self.update_residence_manga(self.manga.visible_view.clone(), self.manga.view.len()) {
+            self.stream_manga(ui, self.manga.scale_pc != 100. && matches!(self.manga.filter, FilterAccel::Cpu(_)));
+        }
+
+        if self.manga.poll_ready.as_ref().is_some_and(|poll_ready| poll_ready.is_ready()) {
+            self.animation.target = true;
+            self.manga.poll_ready = None;
+        }
+        let opacity = self.animation.get_opacity(ui);
+        ui.set_opacity(opacity);
+
+        let background_resp = ui.interact(ui.min_rect(), ui.id().with("background"), egui::Sense::click());
+        ui.add_space(self.manga.view[start_visible].offset);
+
+        let mut visible_pages_displayable = true;
+        for view_i in self.manga.visible_view.clone() {
+            if let ImageStateManga::None = self.manga.view[view_i].image_state {
+                visible_pages_displayable = false;
+
+                break
             }
+        }
+        for view_i in self.manga.visible_view.clone() {
+            let page_extent = self.manga.view[view_i].extent;
+            let (page_rect, alloc_resp) = ui.allocate_exact_size([ui.min_size().x, page_extent.height].into(), egui::Sense::click());
 
-            if self.manga.poll_ready.as_ref().is_some_and(|poll_ready| poll_ready.is_ready()) {
-                self.animation.target = true;
-                self.manga.poll_ready = None;
-            }
-            let opacity = self.animation.get_opacity(ui);
-            ui.set_opacity(opacity);
+            let image_resp = visible_pages_displayable.and_then(|| try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect, self.manga.night_light_tint));
 
-            ui.add_space(self.manga.view[start_visible].offset);
+            let image_or_alloc_resp = image_resp.unwrap_or(alloc_resp);
+            self.context_menu_manga(viewport, &image_or_alloc_resp.union(background_resp.clone()));
+        }
 
-            for view_i in self.manga.visible_view.clone() {
-                let page_extent = self.manga.view[view_i].extent;
-                let (page_rect, _) = ui.allocate_exact_size([ui.min_size().x, page_extent.height].into(), egui::Sense::hover());
+        // let info = &[
+        //     format!("visible : {:?}", start_visible..end_visible),
+        //     format!("resi    : {:?}", self.manga.residence),
+        //     format!("viewport: {}", viewport),
+        // ];
 
-                let image_resp = try_add_image_manga(ui, &mut self.manga.view[view_i].image_state, page_rect, self.manga.night_light_tint);
+        // egui::Window::new("").show(ui, |ui| {
+        //     ui.set_width(550.);
+        //     ui.style_mut().override_font_id = Some(egui::FontId::monospace(18.0));
 
-                if let Some(image_resp) = image_resp {
-                    self.context_menu_manga(viewport, &image_resp.union(background_resp.clone()));
-                }
-            }
-
-            // let info = &[
-            //     format!("visible : {:?}", start_visible..end_visible),
-            //     format!("resi    : {:?}", self.manga.residence),
-            //     format!("viewport: {}", viewport),
-            // ];
-
-            // egui::Window::new("").show(ui, |ui| {
-            //     ui.set_width(550.);
-            //     ui.style_mut().override_font_id = Some(egui::FontId::monospace(18.0));
-
-            //     for i in info {
-            //         ui.label(i);
-            //     }
-            // });
-        });
+        //     for i in info {
+        //         ui.label(i);
+        //     }
+        // });
     }
 
     fn context_menu_manga(&mut self, viewport: egui::Rect, resp: &egui::Response) {
@@ -5972,7 +5984,7 @@ impl<'a> MediaBrowser<'a> {
         let cell_resp = match image_states {
             Some(ImageStates { grid: grid_state, .. }) =>
                 try_add_image(ui, grid_state, &grid_entry_info.stem, &self.poll_ready, Some(&mut self.animation)),
-            None => alloc_painted_text(ui, &grid_entry_info.stem)
+            None => alloc_paint_text_centered_margin(ui, &grid_entry_info.stem)
         };
 
         // Select cell or switch view
@@ -6420,7 +6432,7 @@ impl<'a> MediaBrowser<'a> {
 
             match details_state {
                 Some(details_state) => try_add_image(ui, details_state, dir_name, &self.poll_ready, None),
-                None => alloc_painted_text(ui, dir_name)
+                None => alloc_paint_text_centered_margin(ui, dir_name)
             }
         });
 
