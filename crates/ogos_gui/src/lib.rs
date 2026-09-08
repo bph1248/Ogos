@@ -5252,8 +5252,6 @@ impl<'a> MediaBrowser<'a> {
             let mut checked = self.enable_fullscreen;
             let enable_fullscreen_checkbox_resp = ui.checkbox(&mut checked, "Fullscreen");
             if enable_fullscreen_checkbox_resp.clicked() {
-                ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(checked));
-
                 match checked {
                     true => {
                         self.window_windowed_inner_extent = Some(self.window_inner_extent);
