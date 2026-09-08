@@ -6242,11 +6242,11 @@ impl<'a> MediaBrowser<'a> {
 
         let mut sort_grid_view = false;
         ui.menu_button("Sort name", |ui| {
-            let sort_name_edit_resp = egui::TextEdit::singleline(&mut self.sort_name_edit)
+            let mut sort_name_edit = egui::TextEdit::singleline(&mut self.sort_name_edit)
                 .desired_width(SUBMENU_WIDTH_LRG)
                 .hint_text(grid_entry_info.sort_name.as_deref().unwrap_or("New"))
-                .show(ui)
-                .response;
+                .show(ui);
+            let sort_name_edit_resp = sort_name_edit.response;
 
             if sort_name_edit_resp.lost_focus() && enter_pressed(ui) {
                 if !self.sort_name_edit.is_empty() {
@@ -6257,6 +6257,18 @@ impl<'a> MediaBrowser<'a> {
                 }
 
                 sort_name_edit_resp.request_focus();
+            }
+
+            if sort_name_edit_resp.double_clicked() &&
+                self.sort_name_edit.is_empty() &&
+                let Some(hint_text) = grid_entry_info.sort_name.as_ref()
+            {
+                self.sort_name_edit.push_str(hint_text.as_ref());
+
+                // Move cursor to end
+                let cursor_pos = egui::text::CCursor::new(self.sort_name_edit.chars().count());
+                sort_name_edit.state.cursor.set_char_range(Some(egui::text::CCursorRange::one(cursor_pos)));
+                sort_name_edit.state.store(ui, sort_name_edit_resp.id);
             }
 
             if grid_entry_info.sort_name.is_some() {
