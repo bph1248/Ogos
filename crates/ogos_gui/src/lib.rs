@@ -3256,6 +3256,7 @@ struct MediaBrowser<'a> {
     grid_cell_size_text: TextRwExtent,
     grid_cell_space: egui::Vec2,
     grid_cell_strokes: Vec<egui::Rect>,
+    grid_cell_context_menu_open: bool,
     grid_cell_tags_menu_selection: HashSet<Rc<str>>,
     grid_scroll_offset: f32,
     /// Indices into [`grid_entries`]
@@ -3796,6 +3797,7 @@ impl<'a> MediaBrowser<'a> {
             grid_cell_size_text: default!(),
             grid_cell_space,
             grid_cell_strokes: default!(),
+            grid_cell_context_menu_open: default!(),
             grid_cell_tags_menu_selection: default!(),
             grid_scroll_offset: default!(),
             grid_view,
@@ -4871,7 +4873,7 @@ impl<'a> MediaBrowser<'a> {
             false => {
                 self.manga.scroll_offset = new_scroll_offset;
 
-                egui::Popup::close_all(ui)
+                egui::Popup::close_all(ui);
             }
         }
     }
@@ -5943,7 +5945,13 @@ impl<'a> MediaBrowser<'a> {
                 false => {
                     self.grid_scroll_offset = new_grid_scroll_offset;
 
-                    egui::Popup::close_all(ui)
+                    if self.grid_cell_context_menu_open && let Some(SelectionKind::Single) = self.grid_entries_selection_kind {
+                        self.reset_grid_entries_selection();
+
+                        self.grid_cell_context_menu_open = false;
+                    }
+
+                    egui::Popup::close_all(ui);
                 }
             }
         });
@@ -6062,7 +6070,7 @@ impl<'a> MediaBrowser<'a> {
             false => egui::PopupCloseBehavior::IgnoreClicks
         };
 
-        egui::Popup::new(ui.make_persistent_id("single"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
+        let single = egui::Popup::new(ui.make_persistent_id("single"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
             .kind(egui::PopupKind::Menu)
             .layout(egui::Layout::top_down_justified(egui::Align::Min))
             .style(egui::containers::menu::menu_style)
@@ -6092,7 +6100,7 @@ impl<'a> MediaBrowser<'a> {
                 self.common_grid_submenus(ui);
             });
 
-        egui::Popup::new(ui.make_persistent_id("multi"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
+        let multi = egui::Popup::new(ui.make_persistent_id("multi"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
             .kind(egui::PopupKind::Menu)
             .layout(egui::Layout::top_down_justified(egui::Align::Min))
             .style(egui::containers::menu::menu_style)
@@ -6100,6 +6108,8 @@ impl<'a> MediaBrowser<'a> {
             .open_memory(multi_open_memory)
             .close_behavior(close_behaviour)
             .show(|ui| self.grid_cell_tag_submenus(ui));
+
+        self.grid_cell_context_menu_open |= single.or(multi).is_some();
     }
 
     fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf) -> Res<()> {
