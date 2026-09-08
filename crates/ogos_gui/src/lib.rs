@@ -614,7 +614,7 @@ struct Manga {
     go_to_scroll_offset_y: Option<f32>,
     ease_in_out_scroller: EaseInOutScroller,
     spring_damper_scroller: SpringDamperScroller,
-    auto_scroller: AutoScroller,
+    auto_scroller: SpringDamperScroller,
     enable_auto_scroll: bool,
     auto_scroll_vel: f32,
     cursor_visibility: CursorVisibility,
@@ -728,7 +728,7 @@ struct MangaInfo {
     scroll_kind: ScrollKind,
     ease_in_out_scroller: EaseInOutScroller,
     spring_damper_scroller: SpringDamperScroller,
-    auto_scroller: AutoScroller,
+    auto_scroller: SpringDamperScroller,
     stop_kinesis: bool
 }
 
@@ -1169,22 +1169,6 @@ impl From<SpringDamperScrollerCache> for SpringDamperScroller {
     }
 }
 
-#[derive(Default)]
-struct AutoScroller {
-    multiplier: f32,
-    multiplier_edit: String,
-    multiplier_display: String
-}
-impl From<AutoScrollerCache> for AutoScroller {
-    fn from(value: AutoScrollerCache) -> Self {
-        Self {
-            multiplier: value.multiplier,
-            multiplier_display: format!("{}", value.multiplier),
-            ..default!()
-        }
-    }
-}
-
 #[derive(Clone, Copy, Deserialize, Serialize)]
 struct AutoScrollerCache {
     multiplier: f32
@@ -1196,8 +1180,8 @@ impl Default for AutoScrollerCache {
         }
     }
 }
-impl From<&AutoScroller> for AutoScrollerCache {
-    fn from(value: &AutoScroller) -> Self {
+impl From<&SpringDamperScroller> for AutoScrollerCache {
+    fn from(value: &SpringDamperScroller) -> Self {
         Self {
             multiplier: value.multiplier
         }
@@ -3647,7 +3631,12 @@ impl<'a> MediaBrowser<'a> {
         let ease_in_out_scroller_manga = cache.manga.ease_in_out_scroller.into();
         let spring_damper_scroller = cache.spring_damper_scroller.into();
         let spring_damper_scroller_manga = cache.manga.spring_damper_scroller.into();
-        let auto_scroller = cache.manga.auto_scroller.into();
+        let auto_scroller = SpringDamperScroller {
+            multiplier: cache.manga.auto_scroller.multiplier,
+            angular_frequency: 10.,
+            damping_ratio: 1.,
+            ..default!()
+        };
 
         let manga_info = MangaInfo {
             scroll_kind: scroll_kind_manga,
@@ -4727,10 +4716,15 @@ impl<'a> MediaBrowser<'a> {
         if ui.input(|state| state.pointer.button_pressed(egui::PointerButton::Middle)) {
             self.manga.enable_auto_scroll = !self.manga.enable_auto_scroll;
 
-            if self.manga.enable_auto_scroll {
-                self.manga.spring_damper_scroller.stop();
-                self.manga.auto_scroll_vel = default!();
-                self.manga.stop_kinesis = true;
+            match self.manga.enable_auto_scroll {
+                true => {
+                    self.manga.spring_damper_scroller.stop();
+                    self.manga.auto_scroll_vel = default!();
+                    self.manga.stop_kinesis = true;
+                },
+                false => {
+                    self.manga.auto_scroller.stop();
+                }
             }
         }
 
@@ -4740,8 +4734,8 @@ impl<'a> MediaBrowser<'a> {
         );
 
         let scroll_area_info = if self.manga.enable_auto_scroll {
-            let wheel_delta_smoothed = -wheel_delta_smoothed; // Make camera (not content) move in direction of wheel
-            self.manga.auto_scroll_vel += wheel_delta_smoothed * self.manga.auto_scroller.multiplier;
+            self.manga.auto_scroller.step(ui, dt, wheel_delta_raw);
+            self.manga.auto_scroll_vel += self.manga.auto_scroller.delta;
 
             if ui.input(|state| state.pointer.secondary_pressed()) && self.manga.auto_scroll_vel.is_sign_positive() ||
                 ui.input(|state| state.pointer.primary_pressed()) && self.manga.auto_scroll_vel.is_sign_negative()
