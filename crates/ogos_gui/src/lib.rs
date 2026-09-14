@@ -204,7 +204,7 @@ struct Cache {
     spring_damper_scroller: SpringDamperScrollerCache,
     #[serde(default)]
     manga: MangaCache,
-    images: IndexSet<Rc<str>>,
+    images: IndexSet<Arc<str>>,
     tags: Vec<Rc<str>>,
     entries: HashMap<PathBuf, CacheEntryInfo>
 }
@@ -522,6 +522,13 @@ impl ImageStates {
         CacheReadies {
             grid: self.grid.clone_cache_ready_on_should_scale(),
             details: self.details.clone_cache_ready_on_should_scale()
+        }
+    }
+
+    fn take_cache_readies(&mut self) -> CacheReadies {
+        CacheReadies {
+            grid: self.grid.take_cache_ready(),
+            details: self.details.take_cache_ready()
         }
     }
 
@@ -2611,15 +2618,15 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
     let FerryCachedImageInfo { ctx, path, stage, grid_entry_i, ship, gen_id_check, wait_cache_ready, signal_tex_ready } = info;
 
     let inner = || -> ResVar<image::RgbaImage> {
+        if let Some(wait_cache_ready) = wait_cache_ready {
+            wait_cache_ready.wait();
+        }
+
         if let Some(gen_id_check) = gen_id_check { gen_id_check.check(signal_tex_ready.as_ref())? }
         let image = load_rgba_image_cached(path)?;
 
         Ok(image)
     };
-
-    if let Some(wait_cache_ready) = wait_cache_ready {
-        wait_cache_ready.wait();
-    }
 
     match inner() {
         Ok(image) => if ship.send(Ok(ImageInfo { image, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready, metadata: None })).is_ok() {
@@ -2937,7 +2944,7 @@ fn get_text_color(ui: &mut egui::Ui) -> egui::Color32 {
     ui.visuals().text_color()
 }
 
-fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, images: &mut IndexMap<Arc<str>, ImageStates>, missing_base_images: &mut Vec<Rc<str>>) {
+fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, images: &mut IndexMap<Arc<str>, ImageStates>, missing_base_images: &mut Vec<Arc<str>>) {
     let grid_entry_info_iter = cache.library.iter()
         .map(|dir| dir.read_dir())
         .filter_map(|read_dir| match read_dir {
@@ -3244,7 +3251,7 @@ struct MediaBrowser<'a> {
     cache_path: PathBuf,
     cache: Cache,
     selected_library_entries: HashSet<usize>,
-    missing_base_images: Vec<Rc<str>>,
+    missing_base_images: Vec<Arc<str>>,
     frame: egui::Frame,
     central_rect: egui::Rect,
     view_kind: ViewKind,
@@ -3513,7 +3520,6 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             auto_scroller: self.manga.auto_scroller.as_()
         };
         self.cache.tags = self.tags.keys().cloned().collect();
-        self.cache.images = self.images.keys().map(|key| Rc::from(key.as_ref())).collect();
 
         let mut grid_entry_tags = vec![Vec::with_capacity(self.tags.len()); self.grid_entries.len()];
         for (tag_i, (_, set)) in self.tags.iter().enumerate() {
@@ -3527,19 +3533,37 @@ impl<'a> eframe::App for MediaBrowser<'a> {
         }
 
         self.cache.entries.clear();
+        self.cache.images.clear();
+
         for (grid_entry_i, info) in mem::take(&mut self.grid_entries).into_iter().enumerate() {
-            let image_states = self.get_image_states_mut(info.image_i);
-            let should_scale = image_states.as_ref()
-                .map(|image_states| image_states.should_scale())
-                .unwrap_or_default();
+            let (
+                image_i,
+                should_scale,
+                metadata
+            ) = match info.image_i {
+                Some(image_i) => {
+                    let (image_file_name, image_states) = self.images.get_index(image_i).unwrap();
+
+                    (
+                        Some(self.cache.images.insert_full(image_file_name.clone()).0),
+                        image_states.should_scale(),
+                        info.metadata
+                    )
+                },
+                None => (
+                    None,
+                    ShouldScale::default(),
+                    None
+                )
+            };
 
             self.cache.entries.insert(
                 info.path,
                 CacheEntryInfo {
-                    image_i: info.image_i,
+                    image_i,
                     should_scale,
                     sort_name: info.sort_name,
-                    metadata: info.image_i.map(|_| info.metadata).unwrap_or_default(),
+                    metadata,
                     tags: mem::take(&mut grid_entry_tags[grid_entry_i]),
                     bookmark: info.bookmark,
                     current_preset: info.current_preset,
@@ -3983,10 +4007,6 @@ impl<'a> MediaBrowser<'a> {
             try_set_cell_extent(ui, cell_text, extent);
             cell_height_edit_resp.request_focus();
         }
-    }
-
-    fn get_image_states_mut(&mut self, image_i: Option<usize>) -> Option<&mut ImageStates> {
-        get_image_states_mut(&mut self.images, image_i)
     }
 
     fn get_image_states_from_grid_entry_mut(&mut self, grid_entry_i: usize) -> Option<&mut ImageStates> {
@@ -6078,20 +6098,7 @@ impl<'a> MediaBrowser<'a> {
             .open_memory(single_open_memory)
             .close_behavior(close_behaviour)
             .show(|ui| {
-                if ui.button("Image").clicked() {
-                    ui.close();
-
-                    let pick_image_file = rfd::FileDialog::new()
-                        .add_filter("images", IMAGE_EXTS)
-                        .pick_file();
-
-                    if let Some(path) = pick_image_file {
-                        self.pick_image(ui, path).unwrap_or_else(|err| {
-                            error!("{}: failed to pick image: {}", module_path!(), err);
-                        });
-                    }
-                }
-
+                self.grid_cell_image_submenu(ui);
                 self.grid_cell_sort_submenu(ui);
                 self.grid_cell_tag_submenus(ui);
 
@@ -6235,6 +6242,57 @@ impl<'a> MediaBrowser<'a> {
         });
 
         Ok(())
+    }
+
+    fn delete_image(&mut self, ui: &mut egui::Ui, image_i: usize) {
+        self.stream.drop.clear();
+        self.stream.drop.insert(self.grid_entry_i);
+        self.stream(ui);
+
+        let (image_file_name, image_states) = self.images.get_index_mut(image_i).unwrap();
+
+        image_states.gen_id.fetch_add(1, Ordering::Relaxed);
+
+        _ = fs::remove_file(self.image_dirs.base.join(image_file_name.as_ref()));
+
+        let cache_readies = image_states.take_cache_readies();
+        if let Some(grid_cache_ready) = cache_readies.grid {
+            grid_cache_ready.wait();
+            _ = fs::remove_file(self.image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp"));
+        }
+        if let Some(details_cache_ready) = cache_readies.details {
+            details_cache_ready.wait();
+            _ = fs::remove_file(self.image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp"));
+        }
+
+        let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
+        grid_entry_info.image_i = None;
+        grid_entry_info.metadata = None;
+    }
+
+    fn grid_cell_image_submenu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Image", |ui| {
+            ui.set_min_width(SUBMENU_WIDTH_LRG);
+
+            if ui.button("New").clicked() {
+                ui.close();
+
+                let pick_image_file = rfd::FileDialog::new()
+                    .add_filter("images", IMAGE_EXTS)
+                    .pick_file();
+
+                if let Some(path) = pick_image_file {
+                    self.pick_image(ui, path).unwrap_or_else(|err| {
+                        error!("{}: failed to pick image: {}", module_path!(), err);
+                    });
+                }
+            }
+
+            let image_i = self.grid_entries[self.grid_entry_i].image_i;
+            if ui.add_enabled(image_i.is_some(), egui::Button::new("Remove")).clicked() {
+                self.delete_image(ui, image_i.unwrap());
+            }
+        });
     }
 
     fn grid_cell_sort_submenu(&mut self, ui: &mut egui::Ui) {
