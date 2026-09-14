@@ -220,9 +220,7 @@ struct CacheEntryInfo {
     tags: Vec<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bookmark: Option<Pivot>,
-    current_preset: Option<Preset>,
-    #[serde(default)]
-    presets: Vec<Preset>
+    preset: Option<Preset>
 }
 
 #[derive(Clone)]
@@ -453,7 +451,7 @@ struct GridEntryInfo {
     file_kind: FileKind,
     image_i: Option<usize>,
     bookmark: Option<Pivot>,
-    current_preset: Option<Preset>
+    preset: Option<Preset>
 }
 
 struct GridViewCellCounts {
@@ -2930,22 +2928,22 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
                                 image_i
                             });
                         let bookmark = cache_entry_info.bookmark;
-                        let current_preset = cache_entry_info.current_preset;
+                        let preset = cache_entry_info.preset;
 
-                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, bookmark, current_preset }
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, bookmark, preset }
                     },
                     None => { // This entry is new. If a base image exists, scale and cache it
                         let sort_name = None;
                         let image_i = try_get_image_i(images);
                         let bookmark = None;
-                        let current_preset = None;
+                        let preset = None;
 
                         if let Some(image_states) = get_image_states_mut(images, image_i) {
                             image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
                             image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
                         }
 
-                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, bookmark, current_preset }
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, bookmark, preset }
                     }
                 };
 
@@ -3315,7 +3313,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     ViewKind::Manga => {
                         if requested_go_back(ui) {
                             self.frame = self.frame.fill(DARK_GRAY);
-                            self.grid_entries[self.details_grid_entry_i].current_preset =
+                            self.grid_entries[self.details_grid_entry_i].preset =
                                 self.manga.remember_settings.then(|| self.manga.make_preset());
                             self.manga = mem::take(&mut self.manga).reset();
                             self.view_kind = ViewKind::Details;
@@ -3407,7 +3405,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
 
     fn on_exit(&mut self) {
         if let ViewKind::Manga = self.view_kind {
-            self.grid_entries[self.details_grid_entry_i].current_preset =
+            self.grid_entries[self.details_grid_entry_i].preset =
                 self.manga.remember_settings.then(|| self.manga.make_preset());
         }
 
@@ -3483,8 +3481,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     sort_name: info.sort_name,
                     tags: mem::take(&mut grid_entry_tags[grid_entry_i]),
                     bookmark: info.bookmark,
-                    current_preset: info.current_preset,
-                    presets: default!()
+                    preset: info.preset
                 }
             );
         }
@@ -4011,7 +4008,7 @@ impl<'a> MediaBrowser<'a> {
         }
         self.manga.view_extent = [self.manga.archive_pages_width, view_page_offset].into();
 
-        if let Some(preset) = self.grid_entries[self.details_grid_entry_i].current_preset {
+        if let Some(preset) = self.grid_entries[self.details_grid_entry_i].preset {
             self.manga.apply_preset(&preset);
             self.manga.remember_settings = true;
         }
