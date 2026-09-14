@@ -216,7 +216,6 @@ struct CacheEntryInfo {
     #[serde(default, skip_serializing_if = "ShouldScale::is_false")]
     should_scale: ShouldScale,
     sort_name: Option<Rc<str>>,
-    metadata: Option<Arc<Metadata>>,
     #[serde(default)]
     tags: Vec<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -353,7 +352,6 @@ impl PartialEq<egui::Vec2> for Extent2dF {
 
 struct FerryImageInfo {
     image_file_name: Arc<str>,
-    expected_metadata: Option<Arc<Metadata>>,
     grid_entry_i: usize,
     gen_id_check: Option<GenerationIdCheck>,
     signal_cache_readies: CacheReadies,
@@ -403,7 +401,6 @@ struct FerryBaseImageInfo<'a> {
     gen_id_check: &'a Option<GenerationIdCheck>,
     signal_cache_ready: CacheReady,
     signal_tex_ready: Option<PollReady>,
-    metadata: Option<Metadata>,
     error_sx: mpmc::Sender<String>
 }
 
@@ -455,7 +452,6 @@ struct GridEntryInfo {
     sort_name: Option<Rc<str>>,
     file_kind: FileKind,
     image_i: Option<usize>,
-    metadata: Option<Arc<Metadata>>,
     bookmark: Option<Pivot>,
     current_preset: Option<Preset>
 }
@@ -476,8 +472,7 @@ struct ImageInfo {
     stage: Stage,
     index: usize,
     gen_id_check: Option<GenerationIdCheck>,
-    signal_tex_ready: Option<PollReady>,
-    metadata: Option<Metadata>
+    signal_tex_ready: Option<PollReady>
 }
 
 struct IrisInfo {
@@ -756,18 +751,6 @@ impl Default for MangaCache {
             auto_scroller: default!()
         }
     }
-}
-
-#[derive(Deserialize, Eq, PartialEq, Serialize)]
-struct Metadata {
-    created: SystemTime,
-    modified: SystemTime,
-    len: u64
-}
-
-struct MetadataInfo {
-    grid_entry_i: usize,
-    metadata: Arc<Metadata>
 }
 
 struct ArchivePageInfo {
@@ -2514,7 +2497,7 @@ fn resize_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::
 }
 
 fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
-    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, ship, gen_id_check, signal_cache_ready, signal_tex_ready, metadata, error_sx } = info;
+    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, ship, gen_id_check, signal_cache_ready, signal_tex_ready, error_sx } = info;
 
     let inner = || -> Res1<image::RgbaImage> {
         if let Some(gen_id_check_) = gen_id_check {
@@ -2543,7 +2526,7 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
             if let Some(gen_id_check_) = gen_id_check && gen_id_check_.check(signal_tex_ready.as_ref()).is_err() {
                 return Ok(())
             }
-            if ship.send(Ok(ImageInfo { image: image_, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready, metadata })).is_ok() {
+            if ship.send(Ok(ImageInfo { image: image_, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready })).is_ok() {
                 ctx.request_repaint();
             }
 
@@ -2596,7 +2579,7 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
     };
 
     match inner() {
-        Ok(image) => if ship.send(Ok(ImageInfo { image, stage: Stage::Manga, index: view_i, gen_id_check: Some(gen_id_check), signal_tex_ready, metadata: None })).is_ok() {
+        Ok(image) => if ship.send(Ok(ImageInfo { image, stage: Stage::Manga, index: view_i, gen_id_check: Some(gen_id_check), signal_tex_ready })).is_ok() {
             ctx.request_repaint();
         },
         Err(err) => {
@@ -2629,7 +2612,7 @@ fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
     };
 
     match inner() {
-        Ok(image) => if ship.send(Ok(ImageInfo { image, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready, metadata: None })).is_ok() {
+        Ok(image) => if ship.send(Ok(ImageInfo { image, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready })).is_ok() {
             ctx.request_repaint();
         },
         Err(err) => {
@@ -2669,7 +2652,6 @@ fn ferry_images(info: FerryImagesInfo) {
     for info in ferry_image_infos {
         let FerryImageInfo {
             image_file_name,
-            expected_metadata,
             grid_entry_i,
             gen_id_check,
             signal_cache_readies,
@@ -2693,18 +2675,8 @@ fn ferry_images(info: FerryImagesInfo) {
                 let grid_image_path = image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp");
                 let details_image_path = image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp");
 
-                // Check metadata for file changes
-                let base_image_file = File::open(base_image_path.as_path())?;
-                let metadata = base_image_file.metadata()?;
-                let metadata = Metadata {
-                    created: metadata.created()?,
-                    modified: metadata.modified()?,
-                    len: metadata.len()
-                };
-                let metadata_differs = expected_metadata.is_none_or(|expected_metadata| *expected_metadata != metadata);
-
-                match metadata_differs {
-                    true => { // Scale grid & details
+                match signal_cache_readies.grid.is_some() {
+                    true => { // Scale grid
                         let ferry_base_image_info = FerryBaseImageInfo {
                             ctx: ctx.clone(),
                             src_path: &base_image_path,
@@ -2716,11 +2688,28 @@ fn ferry_images(info: FerryImagesInfo) {
                             gen_id_check: &gen_id_check,
                             signal_cache_ready: signal_cache_readies.grid,
                             signal_tex_ready,
-                            metadata: Some(metadata),
                             error_sx: error_sx_1.clone()
                         };
-                        ferry_base_image(ferry_base_image_info)?;
+                        ferry_base_image(ferry_base_image_info)?
+                    },
+                    false => {
+                        drop(signal_cache_readies.grid);
 
+                        let ferry_cached_image_info = FerryCachedImageInfo {
+                            ctx: ctx.clone(),
+                            path: &grid_image_path,
+                            stage: Stage::Grid,
+                            grid_entry_i,
+                            ship: grid_ship,
+                            gen_id_check: &gen_id_check,
+                            wait_cache_ready: wait_cache_readies.grid,
+                            signal_tex_ready
+                        };
+                        ferry_cached_image(ferry_cached_image_info)?;
+                    }
+                }
+                match signal_cache_readies.details.is_some() {
+                    true => { // Scale details
                         let error_sx_2 = error_sx_1.clone();
                         let error_sx_3 = error_sx_1.clone();
                         thread_pool_1.enqueue_low(move || {
@@ -2735,88 +2724,28 @@ fn ferry_images(info: FerryImagesInfo) {
                                 gen_id_check: &gen_id_check,
                                 signal_cache_ready: signal_cache_readies.details,
                                 signal_tex_ready: None,
-                                metadata: None,
                                 error_sx: error_sx_2
                             };
                             ferry_base_image(ferry_base_image_info).unwrap_or_else(|err| handle_err(error_sx_3, err));
                         });
                     },
                     false => {
-                        match signal_cache_readies.grid.is_some() {
-                            true => { // Scale grid
-                                let ferry_base_image_info = FerryBaseImageInfo {
-                                    ctx: ctx.clone(),
-                                    src_path: &base_image_path,
-                                    dst_path: &grid_image_path,
-                                    cell_extent: grid_cell_extent,
-                                    stage: Stage::Grid,
-                                    grid_entry_i,
-                                    ship: grid_ship,
-                                    gen_id_check: &gen_id_check,
-                                    signal_cache_ready: signal_cache_readies.grid,
-                                    signal_tex_ready,
-                                    metadata: None,
-                                    error_sx: error_sx_1.clone()
-                                };
-                                ferry_base_image(ferry_base_image_info)?
-                            },
-                            false => {
-                                drop(signal_cache_readies.grid);
+                        drop(signal_cache_readies.details);
 
-                                let ferry_cached_image_info = FerryCachedImageInfo {
-                                    ctx: ctx.clone(),
-                                    path: &grid_image_path,
-                                    stage: Stage::Grid,
-                                    grid_entry_i,
-                                    ship: grid_ship,
-                                    gen_id_check: &gen_id_check,
-                                    wait_cache_ready: wait_cache_readies.grid,
-                                    signal_tex_ready
-                                };
-                                ferry_cached_image(ferry_cached_image_info)?;
-                            }
-                        }
-                        match signal_cache_readies.details.is_some() {
-                            true => { // Scale details
-                                let error_sx_2 = error_sx_1.clone();
-                                let error_sx_3 = error_sx_1.clone();
-                                thread_pool_1.enqueue_low(move || {
-                                    let ferry_base_image_info = FerryBaseImageInfo {
-                                        ctx,
-                                        src_path: &base_image_path,
-                                        dst_path: &details_image_path,
-                                        cell_extent: details_cell_extent,
-                                        stage: Stage::Details,
-                                        grid_entry_i,
-                                        ship: details_ship,
-                                        gen_id_check: &gen_id_check,
-                                        signal_cache_ready: signal_cache_readies.details,
-                                        signal_tex_ready: None,
-                                        metadata: None,
-                                        error_sx: error_sx_2
-                                    };
-                                    ferry_base_image(ferry_base_image_info).unwrap_or_else(|err| handle_err(error_sx_3, err));
-                                });
-                            },
-                            false => {
-                                drop(signal_cache_readies.details);
-
-                                let error_sx = error_sx_1.clone();
-                                thread_pool_1.enqueue_low(move || {
-                                    let ferry_cached_image_info = FerryCachedImageInfo {
-                                        ctx,
-                                        path: &details_image_path,
-                                        stage: Stage::Details,
-                                        grid_entry_i,
-                                        ship: details_ship,
-                                        gen_id_check: &gen_id_check,
-                                        wait_cache_ready: wait_cache_readies.details,
-                                        signal_tex_ready: None
-                                    };
-                                    ferry_cached_image(ferry_cached_image_info).unwrap_or_else(|err| handle_err(error_sx, err));
-                                });
-                            }
-                        }
+                        let error_sx = error_sx_1.clone();
+                        thread_pool_1.enqueue_low(move || {
+                            let ferry_cached_image_info = FerryCachedImageInfo {
+                                ctx,
+                                path: &details_image_path,
+                                stage: Stage::Details,
+                                grid_entry_i,
+                                ship: details_ship,
+                                gen_id_check: &gen_id_check,
+                                wait_cache_ready: wait_cache_readies.details,
+                                signal_tex_ready: None
+                            };
+                            ferry_cached_image(ferry_cached_image_info).unwrap_or_else(|err| handle_err(error_sx, err));
+                        });
                     }
                 }
 
@@ -3000,16 +2929,14 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
 
                                 image_i
                             });
-                        let metadata = cache_entry_info.metadata.clone();
                         let bookmark = cache_entry_info.bookmark;
                         let current_preset = cache_entry_info.current_preset;
 
-                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark, current_preset }
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, bookmark, current_preset }
                     },
                     None => { // This entry is new. If a base image exists, scale and cache it
                         let sort_name = None;
                         let image_i = try_get_image_i(images);
-                        let metadata = None;
                         let bookmark = None;
                         let current_preset = None;
 
@@ -3018,7 +2945,7 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
                             image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
                         }
 
-                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, metadata, bookmark, current_preset }
+                        GridEntryInfo { path, stem, sort_name, file_kind, image_i, bookmark, current_preset }
                     }
                 };
 
@@ -3246,8 +3173,6 @@ struct MediaBrowser<'a> {
     reactive_mode: ReactiveMode,
     image_dirs: &'static ImageDirs,
     images: IndexMap<Arc<str>, ImageStates>,
-    deferred_metadata_sx: mpmc::Sender<MetadataInfo>,
-    deferred_metadata_rx: mpmc::Receiver<MetadataInfo>,
     cache_path: PathBuf,
     cache: Cache,
     selected_library_entries: HashSet<usize>,
@@ -3528,32 +3453,25 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             }
         }
 
-        while let Ok(MetadataInfo { grid_entry_i, metadata }) = self.deferred_metadata_rx.try_recv() {
-            self.grid_entries[grid_entry_i].metadata = Some(metadata);
-        }
-
         self.cache.entries.clear();
         self.cache.images.clear();
 
         for (grid_entry_i, info) in mem::take(&mut self.grid_entries).into_iter().enumerate() {
             let (
                 image_i,
-                should_scale,
-                metadata
+                should_scale
             ) = match info.image_i {
                 Some(image_i) => {
                     let (image_file_name, image_states) = self.images.get_index(image_i).unwrap();
 
                     (
                         Some(self.cache.images.insert_full(image_file_name.clone()).0),
-                        image_states.should_scale(),
-                        info.metadata
+                        image_states.should_scale()
                     )
                 },
                 None => (
                     None,
-                    ShouldScale::default(),
-                    None
+                    ShouldScale::default()
                 )
             };
 
@@ -3563,7 +3481,6 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                     image_i,
                     should_scale,
                     sort_name: info.sort_name,
-                    metadata,
                     tags: mem::take(&mut grid_entry_tags[grid_entry_i]),
                     bookmark: info.bookmark,
                     current_preset: info.current_preset,
@@ -3593,8 +3510,6 @@ impl<'a> MediaBrowser<'a> {
         let discord_app_ids = config.discord.app_ids.clone();
         let discord_display_kind = config.discord.display_kind;
         let enable_override_glsl_shaders_checkbox = config.mpv.as_ref().map(|mpv_config| mpv_config.override_glsl_shaders.is_some()).unwrap_or(false);
-
-        let (deferred_metadata_sx, deferred_metadata_rx) = mpmc::bounded(1);
 
         let (high_priority_sx, high_priority_rx) = mpmc::unbounded();
         let (low_priority_sx, low_priority_rx) = mpmc::unbounded();
@@ -3736,7 +3651,6 @@ impl<'a> MediaBrowser<'a> {
 
                     return Some(FerryImageInfo {
                         image_file_name: image_file_name.clone(),
-                        expected_metadata: grid_entry_info.metadata.clone(),
                         grid_entry_i,
                         gen_id_check: Some(image_states.gen_id.get_next_check()),
                         signal_cache_readies: image_states.clone_cache_readies_on_should_scale(),
@@ -3766,12 +3680,7 @@ impl<'a> MediaBrowser<'a> {
         for res in resident_grid_rx.iter() {
             match res {
                 Ok(image_info) => {
-                    let ImageInfo { image, index, metadata, .. } = image_info;
-
-                    if let Some(metadata) = metadata {
-                        let grid_entry_info = &mut grid_entries[index];
-                        grid_entry_info.metadata = Some(Arc::new(metadata));
-                    }
+                    let ImageInfo { image, index, .. } = image_info;
 
                     let (tex, tex_id) = alloc_write_texture(wgpu, &image);
                     to_thanatos.send(Soul::RgbaImage(image)).unwrap();
@@ -3804,8 +3713,6 @@ impl<'a> MediaBrowser<'a> {
             reactive_mode: cache.reactive_mode,
             image_dirs,
             images,
-            deferred_metadata_sx,
-            deferred_metadata_rx,
             cache_path,
             cache,
             selected_library_entries: default!(),
@@ -4298,7 +4205,6 @@ impl<'a> MediaBrowser<'a> {
 
                         return Some(FerryImageInfo {
                             image_file_name: image_file_name.clone(),
-                            expected_metadata: grid_entry_info.metadata.clone(),
                             grid_entry_i,
                             gen_id_check: Some(image_states.gen_id.get_next_check()),
                             signal_cache_readies: image_states.clone_cache_readies_on_should_scale(),
@@ -4419,12 +4325,7 @@ impl<'a> MediaBrowser<'a> {
 
         while let Ok(res) = self.from_charon.try_recv() {
             match res {
-                Ok(mut image_info) => {
-                    if let Some(metadata) = image_info.metadata.take() {
-                        let grid_entry_info = &mut self.grid_entries[image_info.index];
-                        grid_entry_info.metadata = Some(Arc::new(metadata));
-                    }
-
+                Ok(image_info) => {
                     let image_size = image_info.image.as_raw().len();
                     if image_size <= sentinel {
                         // Writable now
@@ -6187,7 +6088,6 @@ impl<'a> MediaBrowser<'a> {
 
         let ferry_image_info = FerryImageInfo {
             image_file_name: new_image_file_name.clone(),
-            expected_metadata: None,
             grid_entry_i: self.grid_entry_i,
             gen_id_check: None,
             signal_cache_readies: cache_readies,
@@ -6209,21 +6109,10 @@ impl<'a> MediaBrowser<'a> {
         ferry_images(ferry_images_info);
 
         let base_image_path = self.image_dirs.base.join(new_image_file_name.as_ref());
-        let grid_entry_i = self.grid_entry_i;
-        let deferred_metadata_sx = self.deferred_metadata_sx.clone();
         let image_dirs = self.image_dirs;
         self.thread_pool.enqueue_high(move || {
             (|| -> Res<_> {
                 fs::copy(&path, &base_image_path)?;
-
-                let base_image_file = File::open(base_image_path.as_path())?;
-                let metadata = base_image_file.metadata()?;
-                let metadata = Arc::new(Metadata {
-                    created: metadata.created()?,
-                    modified: metadata.modified()?,
-                    len: metadata.len()
-                });
-                deferred_metadata_sx.send(MetadataInfo { grid_entry_i, metadata }).unwrap();
 
                 if let Some(prev_image_file_name) = prev_image_file_name {
                     let paths = [
@@ -6267,7 +6156,6 @@ impl<'a> MediaBrowser<'a> {
 
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
         grid_entry_info.image_i = None;
-        grid_entry_info.metadata = None;
     }
 
     fn grid_cell_image_submenu(&mut self, ui: &mut egui::Ui) {
