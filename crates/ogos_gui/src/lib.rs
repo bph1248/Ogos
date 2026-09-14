@@ -7,9 +7,10 @@ use ogos_err::*;
 use ogos_video as video;
 
 use bytemuck::*;
+use concat_string::*;
+use const_field_count::*;
 #[cfg(feature = "hotpath")]
 use const_format::*;
-use concat_string::*;
 use crossbeam::sync::*;
 use crossbeam::channel as mpmc;
 use discord_rich_presence::*;
@@ -26,9 +27,11 @@ use eframe::{
 use fast_image_resize as fir;
 use indexmap::*;
 use log::*;
+use parking_lot::*;
 use raw_window_handle::*;
 use serde::*;
 use std::{
+    array,
     cell::*,
     collections::*,
     f64::consts::PI,
@@ -41,7 +44,7 @@ use std::{
     path::*,
     process::*,
     rc::*,
-    sync::{atomic::*, *},
+    sync::{atomic::*, Arc},
     thread,
     time::*
 };
@@ -104,8 +107,7 @@ thread_local! {
     });
 }
 
-type CacheReady = Option<WaitGroup>;
-type ImageResult = Result<ImageInfo, (Stage, usize)>;
+type ImageBufResult = Result<ImageBufInfo, (Stage, usize)>;
 type Residence = Range<usize>;
 type ShouldStream = bool;
 type WrittenSize = usize;
@@ -224,19 +226,6 @@ struct CacheEntryInfo {
 }
 
 #[derive(Clone)]
-struct CacheReadies {
-    grid: CacheReady,
-    details: CacheReady
-}
-impl CacheReadies {
-    const NONE: Self = Self { grid: None, details: None };
-
-    fn new() -> Self {
-        Self { grid: Some(WaitGroup::new()), details: Some(WaitGroup::new()) }
-    }
-}
-
-#[derive(Clone)]
 struct DirEntryInfo {
     path: PathBuf,
     stem: String,
@@ -351,10 +340,8 @@ impl PartialEq<egui::Vec2> for Extent2dF {
 struct FerryImageInfo {
     image_file_name: Arc<str>,
     grid_entry_i: usize,
-    gen_id_check: Option<GenerationIdCheck>,
-    signal_cache_readies: CacheReadies,
-    wait_cache_readies: CacheReadies,
-    signal_tex_ready: Option<PollReady>
+    op_syncs: ImageOpSyncs,
+    tex_ready: Option<PollGroup>
 }
 
 struct FerryImagesInfo<'a> {
@@ -364,8 +351,8 @@ struct FerryImagesInfo<'a> {
     base_image_kind: BaseImageKind,
     grid_cell_extent: Extent2dF,
     details_cell_extent: Extent2dF,
-    grid_ship: mpmc::Sender<ImageResult>,
-    details_ship: mpmc::Sender<ImageResult>,
+    grid_ship: mpmc::Sender<ImageBufResult>,
+    details_ship: mpmc::Sender<ImageBufResult>,
     ferry_image_infos: Vec<FerryImageInfo>,
     error_sx: mpmc::Sender<String>
 }
@@ -375,30 +362,33 @@ struct FerryImageInfoManga {
     image_kind: ImageKind,
     view_i: usize,
     scale: Option<ScaleImageManga>,
-    gen_id_check: GenerationIdCheck,
-    signal_tex_ready: Option<PollReady>
+    cancel: GenerationIdCheck,
+    tex_ready: Option<PollGroup>
 }
 
 struct FerryImagesInfoManga<'a> {
     ctx: &'a egui::Context,
     thread_pool: &'a Arc<ThreadPool>,
     archive_path: Arc<PathBuf>,
-    ship: mpmc::Sender<ImageResult>,
+    ship: mpmc::Sender<ImageBufResult>,
     ferry_image_infos: Vec<FerryImageInfoManga>,
     error_sx: mpmc::Sender<String>
 }
 
 struct FerryBaseImageInfo<'a> {
     ctx: egui::Context,
-    src_path: &'a Path,
-    dst_path: &'a Path,
+    base_path: &'a Path,
+    scaled_path: &'a Path,
     cell_extent: Extent2dF,
     stage: Stage,
     grid_entry_i: usize,
-    ship: mpmc::Sender<ImageResult>,
-    gen_id_check: &'a Option<GenerationIdCheck>,
-    signal_cache_ready: CacheReady,
-    signal_tex_ready: Option<PollReady>,
+    ship: mpmc::Sender<ImageBufResult>,
+    base_lock: Arc<Mutex<()>>,
+    base_ready: Option<WaitGroup>,
+    scaled_lock: Arc<Mutex<()>>,
+    scaled_ready: Arc<RwLock<Option<WaitGroup>>>,
+    cancel: &'a GenerationIdCheck,
+    tex_ready: Option<PollGroup>,
     error_sx: mpmc::Sender<String>
 }
 
@@ -409,39 +399,49 @@ struct FerryImageMangaInfo {
     image_kind: ImageKind,
     view_i: usize,
     scale: Option<ScaleImageManga>,
-    ship: mpmc::Sender<ImageResult>,
-    gen_id_check: GenerationIdCheck,
-    signal_tex_ready: Option<PollReady>
+    ship: mpmc::Sender<ImageBufResult>,
+    cancel: GenerationIdCheck,
+    tex_ready: Option<PollGroup>
 }
 
-struct FerryCachedImageInfo<'a> {
+struct FerryScaledImageInfo<'a> {
     ctx: egui::Context,
     path: &'a Path,
     stage: Stage,
     grid_entry_i: usize,
-    ship: mpmc::Sender<ImageResult>,
-    gen_id_check: &'a Option<GenerationIdCheck>,
-    wait_cache_ready: CacheReady,
-    signal_tex_ready: Option<PollReady>
+    ship: mpmc::Sender<ImageBufResult>,
+    scaled_lock: Arc<Mutex<()>>,
+    scaled_ready: Option<WaitGroup>,
+    cancel: &'a GenerationIdCheck,
+    tex_ready: Option<PollGroup>
+}
+
+#[derive(Clone, Default)]
+struct GenerationId(Arc<AtomicUsize>);
+impl GenerationId {
+    fn incr_with_check(&self) -> GenerationIdCheck {
+        let id = self.clone();
+        let expected = id.fetch_add(1, Ordering::Relaxed) + 1;
+
+        GenerationIdCheck { id, expected }
+    }
+
+    fn incr(&self) {
+        self.fetch_add(1, Ordering::Relaxed);
+    }
+}
+impl Deref for GenerationId {
+    type Target = Arc<AtomicUsize>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[derive(Clone)]
 struct GenerationIdCheck {
     id: GenerationId,
     expected: usize
-}
-impl GenerationIdCheck {
-    fn check(&self, signal_ready: Option<&PollReady>) -> ResVar<()> {
-        if self.id.load(Ordering::Relaxed) != self.expected {
-            if let Some(signal_ready) = signal_ready {
-                signal_ready.mark_done();
-            }
-
-            return Err(ErrVar::Cancel)
-        }
-
-        Ok(())
-    }
 }
 
 struct GridEntryInfo {
@@ -459,85 +459,147 @@ struct GridViewCellCounts {
     max: usize
 }
 
+#[derive(FieldCount)]
 struct ImageDirs {
     base: PathBuf,
     grid: PathBuf,
     details: PathBuf
 }
-
-struct ImageInfo {
-    image: image::RgbaImage,
-    stage: Stage,
-    index: usize,
-    gen_id_check: Option<GenerationIdCheck>,
-    signal_tex_ready: Option<PollReady>
-}
-
-struct IrisInfo {
-    wgpu: egui_wgpu::RenderState,
-    tex: wgpu::Texture,
-    tex_id: egui::TextureId,
-    index: usize,
-    gen_id_check: Option<GenerationIdCheck>,
-    dst_extent: Extent2dF,
-    scaler: Arc<Scaler>,
-    ship: mpmc::Sender<ScaledTexManga>,
-    to_thanatos: mpmc::Sender<Soul>
-}
-
-#[derive(Clone, Default)]
-struct GenerationId(Arc<AtomicUsize>);
-impl GenerationId {
-    fn get_next_check(&self) -> GenerationIdCheck {
-        let id = self.clone();
-        let expected = id.fetch_add(1, Ordering::Relaxed) + 1;
-
-        GenerationIdCheck { id, expected }
-    }
-}
-impl Deref for GenerationId {
-    type Target = Arc<AtomicUsize>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl ImageDirs {
+    fn make_paths(&self, file_name: &Arc<str>) -> [PathBuf; ImageDirs::field_count()] {
+        [
+            self.base.join(file_name.as_ref()),
+            self.grid.join(file_name.as_ref()).with_added_extension("webp"),
+            self.details.join(file_name.as_ref()).with_added_extension("webp")
+        ]
     }
 }
 
 #[derive(Default)]
-struct ImageStates {
-    grid: ImageState,
-    details: ImageState,
-    ref_count: usize,
-    gen_id: GenerationId
+struct ImageInfo {
+    states: ImageStates,
+    pipelines: ImagePipelines,
+    syncs: ImageSyncs,
+    ref_count: usize
 }
-impl ImageStates {
-    fn clone_cache_readies_on_should_scale(&mut self) -> CacheReadies {
-        CacheReadies {
-            grid: self.grid.clone_cache_ready_on_should_scale(),
-            details: self.details.clone_cache_ready_on_should_scale()
+impl ImageInfo {
+    fn get_ferry_op_syncs_with_incr(&self) -> ImageOpSyncs {
+        ImageOpSyncs {
+            grid: match self.states.grid {
+                ImageState::ShouldScale => {
+                    self.pipelines.load_grid.incr();
+                    let cancel = self.pipelines.scale_grid.incr_with_check();
+                    *self.syncs.grid.file_ready.write() = Some(WaitGroup::new());
+
+                    ImageOpSync::Scale {
+                        base_lock: self.syncs.base.file_lock.clone(),
+                        base_ready: self.syncs.base.file_ready.read().clone(),
+                        scaled_lock: self.syncs.grid.file_lock.clone(),
+                        scaled_ready: self.syncs.grid.file_ready.clone(),
+                        cancel
+                    }
+                },
+                _ => ImageOpSync::Load {
+                    scaled_lock: self.syncs.grid.file_lock.clone(),
+                    scaled_ready: self.syncs.grid.file_ready.read().clone(),
+                    cancel: self.pipelines.load_grid.incr_with_check()
+                }
+            },
+            details: match self.states.details {
+                ImageState::ShouldScale => {
+                    self.pipelines.load_details.incr();
+                    let cancel = self.pipelines.scale_details.incr_with_check();
+                    *self.syncs.details.file_ready.write() = Some(WaitGroup::new());
+
+                    ImageOpSync::Scale {
+                        base_lock: self.syncs.base.file_lock.clone(),
+                        base_ready: self.syncs.base.file_ready.read().clone(),
+                        scaled_lock: self.syncs.details.file_lock.clone(),
+                        scaled_ready: self.syncs.details.file_ready.clone(),
+                        cancel
+                    }
+                },
+                _ => ImageOpSync::Load {
+                    scaled_lock: self.syncs.details.file_lock.clone(),
+                    scaled_ready: self.syncs.details.file_ready.read().clone(),
+                    cancel: self.pipelines.load_details.incr_with_check()
+                }
+            }
         }
     }
 
-    fn take_cache_readies(&mut self) -> CacheReadies {
-        CacheReadies {
-            grid: self.grid.take_cache_ready(),
-            details: self.details.take_cache_ready()
-        }
-    }
+    fn get_pick_op_syncs_with_incr(&self) -> ImageOpSyncs {
+        self.pipelines.load_grid.incr();
+        self.pipelines.load_details.incr();
 
-    fn take_cache_readies_on_should_not_scale(&mut self) -> CacheReadies {
-        CacheReadies {
-            grid: self.grid.take_cache_ready_on_should_not_scale(),
-            details: self.details.take_cache_ready_on_should_not_scale()
+        ImageOpSyncs {
+            grid: ImageOpSync::Scale {
+                base_lock: self.syncs.base.file_lock.clone(),
+                base_ready: None,
+                scaled_lock: self.syncs.grid.file_lock.clone(),
+                scaled_ready: self.syncs.grid.file_ready.clone(),
+                cancel: self.pipelines.scale_grid.incr_with_check()
+            },
+            details: ImageOpSync::Scale {
+                base_lock: self.syncs.base.file_lock.clone(),
+                base_ready: None,
+                scaled_lock: self.syncs.details.file_lock.clone(),
+                scaled_ready: self.syncs.details.file_ready.clone(),
+                cancel: self.pipelines.scale_details.incr_with_check()
+            }
         }
     }
 
     fn should_scale(&self) -> ShouldScale {
         ShouldScale {
-            grid: matches!(self.grid, ImageState::ShouldScale { .. }),
-            details: matches!(self.details, ImageState::ShouldScale { .. })
+            grid: matches!(self.states.grid, ImageState::ShouldScale),
+            details: matches!(self.states.details, ImageState::ShouldScale)
         }
     }
+}
+
+struct ImageBufInfo {
+    image: image::RgbaImage,
+    stage: Stage,
+    index: usize,
+    cancel: GenerationIdCheck,
+    tex_ready: Option<PollGroup>
+}
+
+struct ImageOpSyncs {
+    grid: ImageOpSync,
+    details: ImageOpSync
+}
+
+#[derive(Default)]
+struct ImagePipelines {
+    copy: GenerationId,
+    remove: GenerationId,
+    scale_grid: GenerationId,
+    scale_details: GenerationId,
+    load_grid: GenerationId,
+    load_details: GenerationId
+}
+impl ImagePipelines {
+    fn incr_all_for_remove(&self) -> GenerationIdCheck {
+        self.copy.incr();
+        self.incr_ferry();
+
+        self.remove.incr_with_check()
+    }
+
+    fn incr_ferry(&self) {
+        self.load_grid.incr();
+        self.load_details.incr();
+        self.scale_grid.incr();
+        self.scale_details.incr();
+    }
+}
+
+#[derive(Default, FieldCount)]
+struct ImageStates {
+    grid: ImageState,
+    details: ImageState
 }
 impl IntoIterator for ImageStates {
     type Item = ImageState;
@@ -561,14 +623,113 @@ impl Iterator for ImageStatesIntoIter {
     type Item = ImageState;
 
     fn next(&mut self) -> Option<Self::Item> {
+        const END: usize = ImageStates::field_count();
+
+        let ret = match self.index {
+            0 => self.grid.take(),
+            1 => self.details.take(),
+            _end @ END.. => return None
+        };
+
         self.index += 1;
 
-        match self.index {
-            1 => self.grid.take(),
-            2 => self.details.take(),
-            _ => None
+        ret
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = ImageStates::field_count() - self.index;
+
+        (rem, Some(rem))
+    }
+}
+
+#[derive(Clone, Default)]
+struct ImageSync {
+    file_lock: Arc<Mutex<()>>,
+    file_ready: Arc<RwLock<Option<WaitGroup>>>
+}
+impl ImageSync {
+    fn new() -> Self {
+        Self {
+            file_lock: Arc::new(Mutex::new(())),
+            file_ready: Arc::new(RwLock::new(Some(WaitGroup::new())))
         }
     }
+}
+
+#[derive(Default, FieldCount)]
+struct ImageSyncs {
+    base: ImageSync,
+    grid: ImageSync,
+    details: ImageSync
+}
+impl ImageSyncs {
+    fn new() -> Self {
+        Self {
+            base: ImageSync::new(),
+            grid: ImageSync::new(),
+            details: ImageSync::new()
+        }
+    }
+
+    fn iter(&self) -> ImageSyncsIter<'_> {
+        ImageSyncsIter {
+            index: 0,
+            syncs: self
+        }
+    }
+
+    fn signal_all(&self) {
+        self.base.file_ready.write().signal();
+        self.grid.file_ready.write().signal();
+        self.details.file_ready.write().signal();
+    }
+
+    fn signal_ferry(&self) {
+        self.grid.file_ready.write().signal();
+        self.details.file_ready.write().signal();
+    }
+}
+
+struct ImageSyncsIter<'a> {
+    index: usize,
+    syncs: &'a ImageSyncs
+}
+impl<'a> Iterator for ImageSyncsIter<'a> {
+    type Item = &'a ImageSync;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        const END: usize = ImageSyncs::field_count();
+
+        let ret = match self.index {
+            0 => Some(&self.syncs.base),
+            1 => Some(&self.syncs.grid),
+            2 => Some(&self.syncs.details),
+            _end @ END.. => return None
+        };
+
+        self.index += 1;
+
+        ret
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = ImageSyncs::field_count() - self.index;
+
+        (rem, Some(rem))
+    }
+}
+
+struct IrisInfo {
+    wgpu: egui_wgpu::RenderState,
+    tex: wgpu::Texture,
+    tex_id: egui::TextureId,
+    index: usize,
+    cancel: GenerationIdCheck,
+    dst_extent: Extent2dF,
+    scaler: Arc<Scaler>,
+    ship: mpmc::Sender<ScaledTexManga>,
+    to_thanatos: mpmc::Sender<Soul>
 }
 
 struct LateInit<T> {
@@ -628,7 +789,7 @@ struct Manga {
     residence: Range<usize>,
     visible_view: Range<usize>,
     stream: Stream,
-    poll_ready: Option<PollReady>,
+    poll_ready: Option<PollGroup>,
     to_thanatos: LateInit<mpmc::Sender<Soul>>
 }
 impl Manga {
@@ -656,7 +817,7 @@ impl Manga {
         self.stop_kinesis = true;
 
         for page_info in self.view {
-            page_info.gen_id.fetch_add(1, Ordering::Relaxed);
+            page_info.gen_id.incr();
 
             if let ImageStateManga::Ready { tex_id, .. } = page_info.image_state {
                 self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
@@ -770,10 +931,10 @@ struct ViewPageInfo {
 struct PartialTex {
     tex: wgpu::Texture,
     tex_id: egui::TextureId,
-    captive: Option<(image::RgbaImage, Option<PollReady>)>,
+    captive: Option<(image::RgbaImage, Option<PollGroup>)>,
     stage: Stage,
     index: usize,
-    gen_id_check: Option<GenerationIdCheck>,
+    cancel: GenerationIdCheck,
     offset: usize,
     row_size: usize,
     chunk_row_count: usize
@@ -791,25 +952,25 @@ struct Pivot {
     page_inset_pc: f32
 }
 
-pub struct PollReady {
+pub struct PollGroup {
     count: Arc<AtomicUsize>,
 }
-impl PollReady {
+impl PollGroup {
     fn new() -> Self {
         Self {
             count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    fn mark_done(&self) {
-        self.count.fetch_sub(1, Ordering::Relaxed);
-    }
-
     fn is_ready(&self) -> bool {
         self.count.load(Ordering::Relaxed) == 0
     }
+
+    fn signal(&self) {
+        self.count.fetch_sub(1, Ordering::Relaxed);
+    }
 }
-impl Clone for PollReady {
+impl Clone for PollGroup {
     fn clone(&self) -> Self {
         self.count.fetch_add(1, Ordering::Relaxed);
 
@@ -840,6 +1001,12 @@ struct PushConstants {
     dst_tex_extent: [f32; 2]
 }
 
+struct RemoveImageFileInfo {
+    file_name: Arc<str>,
+    file_locks: [Arc<Mutex<()>>; ImageSyncs::field_count()],
+    cancel: GenerationIdCheck
+}
+
 struct ResetResidence {
     row_cell_count: usize,
     visible_cell_count: usize
@@ -853,7 +1020,7 @@ struct ScaleImageManga {
 struct ScaledTexManga {
     tex_id: egui::TextureId,
     index: usize,
-    gen_id_check: Option<GenerationIdCheck>,
+    cancel: GenerationIdCheck,
     extent: Extent2dF
 }
 
@@ -1341,7 +1508,7 @@ struct WorkerThreadState {
 
 struct WriteTex {
     tex: wgpu::Texture,
-    captive: Option<(image::RgbaImage, Option<PollReady>)>,
+    captive: Option<(image::RgbaImage, Option<PollGroup>)>,
     offset: usize,
     row_count: usize,
     last_write: bool
@@ -1375,8 +1542,8 @@ impl AnimationKind {
 
 #[derive(Clone)]
 enum BaseImageKind {
-    Pick { path: PathBuf },
-    Startup
+    Picked { path: PathBuf },
+    Cached
 }
 
 enum ButtonState {
@@ -1394,6 +1561,21 @@ enum CursorVisibility {
     #[default]
     Visible,
     Hidden { anchor_pos: egui::Pos2 }
+}
+
+enum ImageOpSync {
+    Scale {
+        base_lock: Arc<Mutex<()>>,
+        base_ready: Option<WaitGroup>,
+        scaled_lock: Arc<Mutex<()>>,
+        scaled_ready: Arc<RwLock<Option<WaitGroup>>>,
+        cancel: GenerationIdCheck
+    },
+    Load {
+        scaled_lock: Arc<Mutex<()>>,
+        scaled_ready: Option<WaitGroup>,
+        cancel: GenerationIdCheck
+    }
 }
 
 #[derive(Copy, Clone, Deserialize, Serialize)]
@@ -1458,48 +1640,20 @@ enum ImageKind {
     Webp
 }
 
+#[derive(Default)]
 enum ImageState {
-    None { cache_ready: CacheReady },
-    ShouldScale { cache_ready: CacheReady },
-    Ready { tex_id: egui::TextureId, extent: Extent2dF, cache_ready: CacheReady },
+    #[default]
+    None,
+    ShouldScale,
+    Ready { tex_id: egui::TextureId, extent: Extent2dF },
     Failed
-}
-impl ImageState {
-    fn take_cache_ready(&mut self) -> CacheReady {
-        match self {
-            Self::None { cache_ready } |
-            Self::ShouldScale { cache_ready } |
-            Self::Ready { cache_ready, .. } =>
-                mem::take(cache_ready),
-            _ => None
-        }
-    }
-
-    fn clone_cache_ready_on_should_scale(&self) -> CacheReady {
-        match self {
-            Self::ShouldScale { cache_ready } => cache_ready.clone(),
-            _ => None
-        }
-    }
-
-    fn take_cache_ready_on_should_not_scale(&mut self) -> CacheReady {
-        match self {
-            Self::ShouldScale { .. } => None,
-            _ => self.take_cache_ready()
-        }
-    }
-}
-impl Default for ImageState {
-    fn default() -> Self {
-        Self::None { cache_ready: None }
-    }
 }
 impl From<ImageStateManga> for ImageState {
     fn from(value: ImageStateManga) -> Self {
         match value {
-            ImageStateManga::Ready { tex_id, extent, .. } =>
-                Self::Ready { tex_id, extent, cache_ready: None },
-            _ => Self::default()
+            ImageStateManga::Ready { tex_id, extent } =>
+                Self::Ready { tex_id, extent },
+            _ => default!()
         }
     }
 }
@@ -1590,6 +1744,48 @@ enum Watching {
     Words
 }
 
+trait GenerationIdCheckExt {
+    fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()>;
+}
+impl GenerationIdCheckExt for GenerationIdCheck {
+    fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()> {
+        if self.id.load(Ordering::Relaxed) != self.expected {
+            if let Some(ready) = signal_ready {
+                ready.signal();
+            }
+
+            return Err(ErrVar::Cancel)
+        }
+
+        Ok(())
+    }
+}
+impl GenerationIdCheckExt for Option<GenerationIdCheck> {
+    fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()> {
+        if let Some(cancel) = self {
+            return cancel.check(signal_ready)
+        }
+
+        Ok(())
+    }
+}
+
+trait WaitGroupExt {
+    fn signal(&mut self);
+    fn wait(self);
+}
+impl WaitGroupExt for Option<WaitGroup> {
+    fn signal(&mut self) {
+        self.take();
+    }
+
+    fn wait(self) {
+        if let Some(wait_group) = self {
+            wait_group.wait();
+        }
+    }
+}
+
 fn add_enum_radios<T>(ui: &mut egui::Ui, target: &mut T) where
     T: IntoEnumIterator + PartialEq, &'static str: for<'a> From<&'a T>
 {
@@ -1619,7 +1815,7 @@ fn add_dim_edit(ui: &mut egui::Ui, enabled: bool, text: &mut TextRw, dim: f32) -
     ui.add_enabled(enabled, text_edit)
 }
 
-fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, text: &str, poll_ready: &PollReady, animation: Option<&mut AnimationInfo>) -> egui::Response {
+fn try_add_image(ui: &mut egui::Ui, image_state: &mut ImageState, text: &str, poll_ready: &PollGroup, animation: Option<&mut AnimationInfo>) -> egui::Response {
     match image_state {
         ImageState::Ready { tex_id, extent, .. } if poll_ready.is_ready() => {
             if let Some(animation) = animation {
@@ -1947,8 +2143,8 @@ fn create_blackman_render_pipelines(device: &wgpu::Device, bind_group_layout: &w
     (render_pipeline0, render_pipeline1)
 }
 
-fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<ImageInfo>, ship: mpmc::Sender<PartialTex>, chunk_size: usize) {
-    for ImageInfo { image, stage, index: view_i, gen_id_check, signal_tex_ready, .. } in port.iter() {
+fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Receiver<ImageBufInfo>, ship: mpmc::Sender<PartialTex>, chunk_size: usize) {
+    for ImageBufInfo { image, stage, index: view_i, cancel, tex_ready, .. } in port.iter() {
         hotpath::measure_block!(formatcp!("{}::demeter", module_path!()), {
             let image_size = image.as_raw().len();
             let row_size = 4 * image.width() as usize;
@@ -1958,11 +2154,11 @@ fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Receive
                 let offset = image.height() as usize;
                 let (tex, tex_id) = alloc_write_texture(&wgpu, &image);
 
-                ship.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, gen_id_check, offset, row_size, chunk_row_count }).unwrap();
+                ship.send(PartialTex { tex, tex_id, captive: Some((image, tex_ready)), stage, index: view_i, cancel, offset, row_size, chunk_row_count }).unwrap();
             } else {
                 let (tex, tex_id) = alloc_clear_texture(&wgpu, &image);
 
-                ship.send(PartialTex { tex, tex_id, captive: Some((image, signal_tex_ready)), stage, index: view_i, gen_id_check, offset: 0, row_size, chunk_row_count }).unwrap();
+                ship.send(PartialTex { tex, tex_id, captive: Some((image, tex_ready)), stage, index: view_i, cancel, offset: 0, row_size, chunk_row_count }).unwrap();
             }
         });
 
@@ -1973,7 +2169,7 @@ fn demeter(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Receive
 fn iris_sampler(info: IrisInfo, filter_mode: wgpu::FilterMode) {
     use wgpu::*;
 
-    let IrisInfo { wgpu, tex: src_tex, tex_id, index, gen_id_check, dst_extent, scaler, ship, to_thanatos } = info;
+    let IrisInfo { wgpu, tex: src_tex, tex_id, index, cancel, dst_extent, scaler, ship, to_thanatos } = info;
     let egui_wgpu::RenderState { device, queue, .. } = &wgpu;
 
     let dst_tex_desc = wgpu::TextureDescriptor {
@@ -2058,7 +2254,7 @@ fn iris_sampler(info: IrisInfo, filter_mode: wgpu::FilterMode) {
     ship.send(ScaledTexManga {
         tex_id: dst_tex_id,
         index,
-        gen_id_check,
+        cancel,
         extent: dst_extent
     })
     .unwrap();
@@ -2069,7 +2265,7 @@ fn iris_sampler(info: IrisInfo, filter_mode: wgpu::FilterMode) {
 fn iris_blackman(info: IrisInfo) {
     use wgpu::*;
 
-    let IrisInfo { wgpu, tex: src_tex, tex_id, index, gen_id_check, dst_extent, scaler, ship, to_thanatos } = info;
+    let IrisInfo { wgpu, tex: src_tex, tex_id, index, cancel, dst_extent, scaler, ship, to_thanatos } = info;
     let egui_wgpu::RenderState { device, queue, .. } = &wgpu;
 
     let dst_tex0_desc = wgpu::TextureDescriptor {
@@ -2217,7 +2413,7 @@ fn iris_blackman(info: IrisInfo) {
     ship.send(ScaledTexManga {
         tex_id: dst_tex_id,
         index,
-        gen_id_check,
+        cancel,
         extent: dst_extent
     })
     .unwrap();
@@ -2234,12 +2430,12 @@ fn hephaestus(ctx: egui::Context, wgpu: egui_wgpu::RenderState, port: mpmc::Rece
                 captive_ = captive;
             }
 
-            if let Some((image, signal_tex_ready)) = captive_.as_ref() {
+            if let Some((image, tex_ready)) = captive_.as_ref() {
                 write_texture(&wgpu, &tex, image, offset, row_count);
 
                 if last_write {
-                    if let Some(signal_tex_ready) = signal_tex_ready.as_ref() {
-                        signal_tex_ready.mark_done()
+                    if let Some(tex_ready) = tex_ready.as_ref() {
+                        tex_ready.signal()
                     }
 
                     captive_ = None;
@@ -2306,7 +2502,7 @@ fn load_rgba_image(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Ve
 }
 
 #[hotpath::measure]
-fn load_rgba_image_cached(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
+fn load_rgba_image_scaled(path: &Path) -> ResVar<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
     let mut file = fs::File::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
@@ -2400,7 +2596,7 @@ fn load_rgba_image_manga(archive_path: Arc<PathBuf>, archive_i: usize, image_kin
 
 #[cfg(feature = "resize")]
 #[hotpath::measure]
-fn resize_image_common(image: image::RgbaImage, dst_extent: Extent2dF, _filter: fir::FilterType) -> ResVar<image::RgbaImage> {
+fn scale_image_common(image: image::RgbaImage, dst_extent: Extent2dF, _filter: fir::FilterType) -> ResVar<image::RgbaImage> {
     use rgb::FromSlice;
 
     let mut src_linear = image::Rgba32FImage::new(
@@ -2444,7 +2640,7 @@ fn resize_image_common(image: image::RgbaImage, dst_extent: Extent2dF, _filter: 
 
 #[cfg(not(feature = "resize"))]
 #[hotpath::measure]
-fn resize_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::FilterType) -> ResVar<image::RgbaImage> {
+fn scale_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::FilterType) -> ResVar<image::RgbaImage> {
     WORKER_THREAD_STATE.with_borrow_mut(|ts| {
         let Extent2dU { width: dst_width, height: dst_height } = extent.into();
 
@@ -2495,80 +2691,121 @@ fn resize_image_common(image: image::RgbaImage, extent: Extent2dF, filter: fir::
 }
 
 fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
-    let FerryBaseImageInfo { ctx, src_path, dst_path, cell_extent, stage, grid_entry_i, ship, gen_id_check, signal_cache_ready, signal_tex_ready, error_sx } = info;
+    let FerryBaseImageInfo {
+        ctx,
+        base_path,
+        scaled_path,
+        cell_extent,
+        stage,
+        grid_entry_i,
+        ship,
+        base_lock,
+        base_ready,
+        scaled_lock,
+        scaled_ready,
+        cancel,
+        tex_ready,
+        error_sx
+    } = info;
 
-    let inner = || -> Res1<image::RgbaImage> {
-        if let Some(gen_id_check_) = gen_id_check {
-            gen_id_check_.check(signal_tex_ready.as_ref())?;
-        }
-        let src_image = load_rgba_image(src_path)?;
+    let scale_image = || -> Res1<image::RgbaImage> {
+        base_ready.wait();
 
-        let aspect_ratio_v = Extent2dF::from(src_image.dimensions()).aspect_ratio_v();
-        let (dst_width, dst_height) = match Orientation::from(aspect_ratio_v) {
-            Orientation::Tall => (cell_extent.height.div(aspect_ratio_v).round(), cell_extent.height),
-            Orientation::Wide => (cell_extent.width, cell_extent.width.mul(aspect_ratio_v).round())
+        let base_image = {
+            let _base_guard = base_lock.lock();
+            cancel.check(tex_ready.as_ref())?;
+
+            load_rgba_image(base_path)?
         };
 
-        if let Some(gen_id_check_) = gen_id_check {
-            gen_id_check_.check(signal_tex_ready.as_ref())?;
-        }
-        let dst_image = resize_image_common(src_image, [dst_width, dst_height].into(), fir::FilterType::Custom(blackman_filter_fir()))?;
+        let aspect_ratio_v = base_image.dimensions()
+            .into_::<Extent2dF>()
+            .aspect_ratio_v();
+        let orientation = aspect_ratio_v.into_::<Orientation>();
+        let extent = match orientation {
+            Orientation::Tall => Extent2dF {
+                width: cell_extent.height.div(aspect_ratio_v).round(),
+                height: cell_extent.height
+            },
+            Orientation::Wide => Extent2dF {
+                width: cell_extent.width,
+                height: cell_extent.width.mul(aspect_ratio_v).round()
+            }
+        };
 
-        Ok(dst_image)
+        cancel.check(tex_ready.as_ref())?;
+        let scaled_image = scale_image_common(base_image, extent, fir::FilterType::Custom(blackman_filter_fir()))?;
+
+        Ok(scaled_image)
     };
 
-    match inner() {
+    let encode_image = |image: image::RgbaImage| -> Res<()> {
+        let image_file = fs::File::create(scaled_path)?;
+        let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
+        let (width, height) = image.dimensions();
+
+        let _scaled_guard = scaled_lock.lock();
+        if cancel.check(None).is_ok() {
+            encoder.encode(image.as_raw(), width, height, image::ExtendedColorType::Rgba8)?;
+        }
+
+        Ok(())
+    };
+
+    let res = match scale_image() {
         Ok(image) => {
             let image_ = image.clone();
-
-            if let Some(gen_id_check_) = gen_id_check && gen_id_check_.check(signal_tex_ready.as_ref()).is_err() {
-                return Ok(())
-            }
-            if ship.send(Ok(ImageInfo { image: image_, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready })).is_ok() {
+            if ship.send(Ok(ImageBufInfo { image: image_, stage, index: grid_entry_i, cancel: cancel.clone(), tex_ready })).is_ok() {
                 ctx.request_repaint();
             }
 
-            let dst_path = dst_path.to_path_buf();
-            (|| -> Res<()> {
-                let image_file = fs::File::create(&dst_path)?;
-                let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
-                let (width, height) = image.dimensions();
-                encoder.encode(image.as_raw(), width, height, image::ExtendedColorType::Rgba8)?;
-
-                drop(signal_cache_ready);
-
-                Ok(())
-            })()
-            .unwrap_or_else(|err| {
-                let msg = format!("{}: failed to encode scaled image: {}: {}", module_path!(), dst_path.display(), err);
+            encode_image(image).unwrap_or_else(|err| {
+                let msg = format!("{}: failed to encode image: {}: {}", module_path!(), scaled_path.display(), err);
                 send_log_err_msg(&error_sx, msg);
             });
+
+            Ok(())
         },
         Err(err) => {
             match err.var.as_ref() {
-                ErrVar::Cancel => return Ok(()),
+                ErrVar::Cancel => Ok(()),
                 _ => {
                     _ = ship.send(Err((stage, grid_entry_i)));
 
-                    return Err(err)
+                    Err(err)
                 }
             }
         }
+    };
+
+    let mut scaled_ready_guard = scaled_ready.write();
+    if cancel.check(None).is_ok() {
+        scaled_ready_guard.signal();
     }
 
-    Ok(())
+    res
 }
 
 fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
-    let FerryImageMangaInfo { ctx, archive_path, archive_i, image_kind, view_i, scale, ship, gen_id_check, signal_tex_ready } = info;
+    let FerryImageMangaInfo {
+        ctx,
+        archive_path,
+        archive_i,
+        image_kind,
+        view_i,
+        scale,
+        ship,
+        cancel,
+        tex_ready
+    } = info;
 
     let inner = || -> Res1<image::RgbaImage> {
-        gen_id_check.check(signal_tex_ready.as_ref())?;
+        cancel.check(tex_ready.as_ref())?;
         let src_image = load_rgba_image_manga(archive_path, archive_i, image_kind)?;
 
         let dst_image = if let Some(ScaleImageManga { extent, filter }) = scale {
-            gen_id_check.check(signal_tex_ready.as_ref())?;
-            resize_image_common(src_image, extent, filter)?
+            cancel.check(tex_ready.as_ref())?;
+            scale_image_common(src_image, extent, filter)?
         } else {
             src_image
         };
@@ -2577,7 +2814,7 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
     };
 
     match inner() {
-        Ok(image) => if ship.send(Ok(ImageInfo { image, stage: Stage::Manga, index: view_i, gen_id_check: Some(gen_id_check), signal_tex_ready })).is_ok() {
+        Ok(image) => if ship.send(Ok(ImageBufInfo { image, stage: Stage::Manga, index: view_i, cancel, tex_ready })).is_ok() {
             ctx.request_repaint();
         },
         Err(err) => {
@@ -2595,22 +2832,34 @@ fn ferry_image_manga(info: FerryImageMangaInfo) -> Res1<()> {
     Ok(())
 }
 
-fn ferry_cached_image(info: FerryCachedImageInfo) -> Res1<()> {
-    let FerryCachedImageInfo { ctx, path, stage, grid_entry_i, ship, gen_id_check, wait_cache_ready, signal_tex_ready } = info;
+fn ferry_scaled_image(info: FerryScaledImageInfo) -> Res1<()> {
+    let FerryScaledImageInfo {
+        ctx,
+        path,
+        stage,
+        grid_entry_i,
+        ship,
+        scaled_lock,
+        scaled_ready,
+        cancel,
+        tex_ready
+    } = info;
 
     let inner = || -> ResVar<image::RgbaImage> {
-        if let Some(wait_cache_ready) = wait_cache_ready {
-            wait_cache_ready.wait();
-        }
+        scaled_ready.wait();
 
-        if let Some(gen_id_check) = gen_id_check { gen_id_check.check(signal_tex_ready.as_ref())? }
-        let image = load_rgba_image_cached(path)?;
+        let image = {
+            let _scaled_guard = scaled_lock.lock();
+            cancel.check(tex_ready.as_ref())?;
+
+            load_rgba_image_scaled(path)?
+        };
 
         Ok(image)
     };
 
     match inner() {
-        Ok(image) => if ship.send(Ok(ImageInfo { image, stage, index: grid_entry_i, gen_id_check: gen_id_check.clone(), signal_tex_ready })).is_ok() {
+        Ok(image) => if ship.send(Ok(ImageBufInfo { image, stage, index: grid_entry_i, cancel: cancel.clone(), tex_ready })).is_ok() {
             ctx.request_repaint();
         },
         Err(err) => {
@@ -2651,10 +2900,8 @@ fn ferry_images(info: FerryImagesInfo) {
         let FerryImageInfo {
             image_file_name,
             grid_entry_i,
-            gen_id_check,
-            signal_cache_readies,
-            wait_cache_readies,
-            signal_tex_ready
+            op_syncs,
+            tex_ready
         } = info;
 
         let ctx = ctx.clone();
@@ -2667,82 +2914,87 @@ fn ferry_images(info: FerryImagesInfo) {
         thread_pool.enqueue_high(move || {
             (|| -> Res<()> {
                 let base_image_path = match base_image_kind {
-                    BaseImageKind::Pick { path } => path,
-                    BaseImageKind::Startup => image_dirs.base.join(image_file_name.as_ref())
+                    BaseImageKind::Picked { path } => path,
+                    BaseImageKind::Cached => image_dirs.base.join(image_file_name.as_ref())
                 };
                 let grid_image_path = image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp");
                 let details_image_path = image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp");
 
-                match signal_cache_readies.grid.is_some() {
-                    true => { // Scale grid
+                match op_syncs.grid {
+                    ImageOpSync::Scale { base_lock, base_ready, scaled_lock, scaled_ready, cancel }  => {
                         let ferry_base_image_info = FerryBaseImageInfo {
                             ctx: ctx.clone(),
-                            src_path: &base_image_path,
-                            dst_path: &grid_image_path,
+                            base_path: &base_image_path,
+                            scaled_path: &grid_image_path,
                             cell_extent: grid_cell_extent,
                             stage: Stage::Grid,
                             grid_entry_i,
                             ship: grid_ship,
-                            gen_id_check: &gen_id_check,
-                            signal_cache_ready: signal_cache_readies.grid,
-                            signal_tex_ready,
+                            base_lock,
+                            base_ready,
+                            scaled_lock,
+                            scaled_ready,
+                            cancel: &cancel,
+                            tex_ready,
                             error_sx: error_sx_1.clone()
                         };
                         ferry_base_image(ferry_base_image_info)?
                     },
-                    false => {
-                        drop(signal_cache_readies.grid);
-
-                        let ferry_cached_image_info = FerryCachedImageInfo {
+                    ImageOpSync::Load { scaled_lock, scaled_ready, cancel } => {
+                        let ferry_scaled_image_info = FerryScaledImageInfo {
                             ctx: ctx.clone(),
                             path: &grid_image_path,
                             stage: Stage::Grid,
                             grid_entry_i,
                             ship: grid_ship,
-                            gen_id_check: &gen_id_check,
-                            wait_cache_ready: wait_cache_readies.grid,
-                            signal_tex_ready
+                            scaled_lock,
+                            scaled_ready,
+                            cancel: &cancel,
+                            tex_ready
                         };
-                        ferry_cached_image(ferry_cached_image_info)?;
+                        ferry_scaled_image(ferry_scaled_image_info)?;
                     }
                 }
-                match signal_cache_readies.details.is_some() {
-                    true => { // Scale details
+
+                match op_syncs.details {
+                    ImageOpSync::Scale { base_lock, base_ready, scaled_lock, scaled_ready, cancel }  => {
                         let error_sx_2 = error_sx_1.clone();
                         let error_sx_3 = error_sx_1.clone();
                         thread_pool_1.enqueue_low(move || {
                             let ferry_base_image_info = FerryBaseImageInfo {
                                 ctx,
-                                src_path: &base_image_path,
-                                dst_path: &details_image_path,
+                                base_path: &base_image_path,
+                                scaled_path: &details_image_path,
                                 cell_extent: details_cell_extent,
                                 stage: Stage::Details,
                                 grid_entry_i,
                                 ship: details_ship,
-                                gen_id_check: &gen_id_check,
-                                signal_cache_ready: signal_cache_readies.details,
-                                signal_tex_ready: None,
+                                base_lock,
+                                base_ready,
+                                scaled_lock,
+                                scaled_ready,
+                                cancel: &cancel,
+                                tex_ready: None,
                                 error_sx: error_sx_2
                             };
                             ferry_base_image(ferry_base_image_info).unwrap_or_else(|err| handle_err(error_sx_3, err));
                         });
                     },
-                    false => {
-                        drop(signal_cache_readies.details);
-
+                    ImageOpSync::Load { scaled_lock, scaled_ready, cancel } => {
                         let error_sx = error_sx_1.clone();
                         thread_pool_1.enqueue_low(move || {
-                            let ferry_cached_image_info = FerryCachedImageInfo {
+                            let ferry_scaled_image_info = FerryScaledImageInfo {
                                 ctx,
                                 path: &details_image_path,
                                 stage: Stage::Details,
                                 grid_entry_i,
                                 ship: details_ship,
-                                gen_id_check: &gen_id_check,
-                                wait_cache_ready: wait_cache_readies.details,
-                                signal_tex_ready: None
+                                scaled_lock,
+                                scaled_ready,
+                                cancel: &cancel,
+                                tex_ready: None
                             };
-                            ferry_cached_image(ferry_cached_image_info).unwrap_or_else(|err| handle_err(error_sx, err));
+                            ferry_scaled_image(ferry_scaled_image_info).unwrap_or_else(|err| handle_err(error_sx, err));
                         });
                     }
                 }
@@ -2780,8 +3032,8 @@ fn ferry_images_manga(info: FerryImagesInfoManga) {
                     view_i: info.view_i,
                     scale: info.scale,
                     ship,
-                    gen_id_check: info.gen_id_check,
-                    signal_tex_ready: info.signal_tex_ready
+                    cancel: info.cancel,
+                    tex_ready: info.tex_ready
                 };
                 ferry_image_manga(ferry_image_manga_info)?;
 
@@ -2846,13 +3098,13 @@ fn get_font_id(ui: &mut egui::Ui, text_style: egui::TextStyle) -> egui::FontId {
     text_style.resolve(ui.style())
 }
 
-fn get_image_states_mut(images: &mut IndexMap<Arc<str>, ImageStates>, image_i: Option<usize>) -> Option<&mut ImageStates> {
+fn get_image_info_mut(images: &mut IndexMap<Arc<str>, ImageInfo>, image_i: Option<usize>) -> Option<&mut ImageInfo> {
     let (_, image_states) = image_i.and_then(|image_i| images.get_index_mut(image_i)).unzip();
 
     image_states
 }
 
-fn get_image_states_from_grid_entry_mut<'a>(images: &'a mut IndexMap<Arc<str>, ImageStates>, grid_entries: &[GridEntryInfo], grid_entry_i: usize) -> Option<&'a mut ImageStates> {
+fn get_image_info_from_grid_entry_mut<'a>(images: &'a mut IndexMap<Arc<str>, ImageInfo>, grid_entries: &[GridEntryInfo], grid_entry_i: usize) -> Option<&'a mut ImageInfo> {
     let (_, image_states) = grid_entries.get(grid_entry_i)
         .and_then(|grid_entry_info| grid_entry_info.image_i)
         .and_then(|image_i| images.get_index_mut(image_i))
@@ -2871,7 +3123,7 @@ fn get_text_color(ui: &mut egui::Ui) -> egui::Color32 {
     ui.visuals().text_color()
 }
 
-fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, images: &mut IndexMap<Arc<str>, ImageStates>, missing_base_images: &mut Vec<Arc<str>>) {
+fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, images: &mut IndexMap<Arc<str>, ImageInfo>, missing_base_images: &mut Vec<Arc<str>>) {
     let grid_entry_info_iter = cache.library.iter()
         .map(|dir| dir.read_dir())
         .filter_map(|read_dir| match read_dir {
@@ -2894,7 +3146,7 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
                 let stem = Rc::from(path.get_file_stem()?);
                 let file_kind = path.get_file_kind()?;
 
-                let try_get_image_i = |images: &mut IndexMap<Arc<str>, ImageStates>| {
+                let try_get_image_i = |images: &mut IndexMap<Arc<str>, ImageInfo>| {
                     for ext in IMAGE_EXTS {
                         let attempt = concat_string!(stem, ".", ext);
 
@@ -2914,16 +3166,15 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
                         let image_i = cache_entry_info.image_i
                             .and_then(|cache_image_i| cache.images.get_index(cache_image_i))
                             .and_then(|image_file_name| images.get_full_mut(image_file_name.as_ref())
-                                .tap_none(|| missing_base_images.push(image_file_name.clone()))
-                            )
-                            .map(|(image_i, _, image_states)| {
+                                .tap_none(|| missing_base_images.push(image_file_name.clone())))
+                            .map(|(image_i, _, image_info)| {
                                 if cache_entry_info.should_scale.grid {
-                                    image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
+                                    image_info.states.grid = ImageState::ShouldScale;
                                 }
                                 if cache_entry_info.should_scale.details {
-                                    image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
+                                    image_info.states.details = ImageState::ShouldScale;
                                 }
-                                image_states.ref_count += 1;
+                                image_info.ref_count += 1;
 
                                 image_i
                             });
@@ -2938,9 +3189,9 @@ fn init_grid_entries(grid_entries: &mut Vec<GridEntryInfo>, cache: &mut Cache, i
                         let bookmark = None;
                         let preset = None;
 
-                        if let Some(image_states) = get_image_states_mut(images, image_i) {
-                            image_states.grid = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
-                            image_states.details = ImageState::ShouldScale { cache_ready: Some(WaitGroup::new()) };
+                        if let Some(image_info) = get_image_info_mut(images, image_i) {
+                            image_info.states.grid = ImageState::ShouldScale;
+                            image_info.states.details = ImageState::ShouldScale;
                         }
 
                         GridEntryInfo { path, stem, sort_name, file_kind, image_i, bookmark, preset }
@@ -3170,7 +3421,7 @@ struct MediaBrowser<'a> {
     viewport_focused: bool,
     reactive_mode: ReactiveMode,
     image_dirs: &'static ImageDirs,
-    images: IndexMap<Arc<str>, ImageStates>,
+    images: IndexMap<Arc<str>, ImageInfo>,
     cache_path: PathBuf,
     cache: Cache,
     selected_library_entries: HashSet<usize>,
@@ -3234,16 +3485,16 @@ struct MediaBrowser<'a> {
     scaler: Arc<Scaler>,
     iris_ship: mpmc::Sender<ScaledTexManga>,
     from_iris: mpmc::Receiver<ScaledTexManga>,
-    charon_ship: mpmc::Sender<ImageResult>,
-    from_charon: mpmc::Receiver<ImageResult>,
+    charon_ship: mpmc::Sender<ImageBufResult>,
+    from_charon: mpmc::Receiver<ImageBufResult>,
     to_hephaestus: mpmc::Sender<WriteTex>,
-    to_demeter: mpmc::Sender<ImageInfo>,
+    to_demeter: mpmc::Sender<ImageBufInfo>,
     from_demeter: mpmc::Receiver<PartialTex>,
     to_thanatos: mpmc::Sender<Soul>,
     partial_tex_stash: VecDeque<PartialTex>,
-    to_demeter_stash: VecDeque<ImageInfo>,
+    to_demeter_stash: VecDeque<ImageBufInfo>,
     chunk_size: usize,
-    poll_ready: PollReady,
+    poll_ready: PollGroup,
     manga: Manga,
     open_error_win: bool,
     error_sx: mpmc::Sender<String>,
@@ -3416,7 +3667,7 @@ impl<'a> eframe::App for MediaBrowser<'a> {
             ];
 
             for path in paths {
-                fs::remove_file(path.as_path()).unwrap_or_else(|err| error!("{}: failed to remove cached image: {}: {}", module_path!(), path.display(), err));
+                fs::remove_file(&path).unwrap_or_else(|err| error!("{}: failed to remove image: {}: {}", module_path!(), path.display(), err));
             }
         }
 
@@ -3460,11 +3711,11 @@ impl<'a> eframe::App for MediaBrowser<'a> {
                 should_scale
             ) = match info.image_i {
                 Some(image_i) => {
-                    let (image_file_name, image_states) = self.images.get_index(image_i).unwrap();
+                    let (image_file_name, image_info) = self.images.get_index(image_i).unwrap();
 
                     (
                         Some(self.cache.images.insert_full(image_file_name.clone()).0),
-                        image_states.should_scale()
+                        image_info.should_scale()
                     )
                 },
                 None => (
@@ -3610,13 +3861,13 @@ impl<'a> MediaBrowser<'a> {
                     let file_kind = path.get_file_kind()?;
 
                     match file_kind {
-                        FileKind::Image => Ok(Some((Arc::from(file_name), ImageStates::default()))),
+                        FileKind::Image => Ok(Some((Arc::from(file_name), ImageInfo::default()))),
                         _ => Ok(None)
                     }
                 })
                 .transpose()
             })
-            .collect::<Res<IndexMap::<Arc<str>, ImageStates>>>()?;
+            .collect::<Res<IndexMap::<Arc<str>, ImageInfo>>>()?;
 
         let mut grid_entries = Vec::new();
         init_grid_entries(&mut grid_entries, &mut cache, &mut images, &mut missing_base_images);
@@ -3644,26 +3895,25 @@ impl<'a> MediaBrowser<'a> {
                 }
 
                 if let Some(image_i) = grid_entry_info.image_i && grid_view_i < residence.end {
-                    let (image_file_name, image_states) = images.get_index_mut(image_i).unwrap();
+                    let (image_file_name, image_info) = images.get_index_mut(image_i).unwrap();
 
                     return Some(FerryImageInfo {
                         image_file_name: image_file_name.clone(),
                         grid_entry_i,
-                        gen_id_check: Some(image_states.gen_id.get_next_check()),
-                        signal_cache_readies: image_states.clone_cache_readies_on_should_scale(),
-                        wait_cache_readies: CacheReadies::NONE,
-                        signal_tex_ready: None
+                        op_syncs: image_info.get_ferry_op_syncs_with_incr(),
+                        tex_ready: None
                     })
                 }
 
                 None
             })
             .collect::<Vec<_>>();
+
         let ferry_images_info = FerryImagesInfo {
             ctx,
             thread_pool: &thread_pool,
             image_dirs,
-            base_image_kind: BaseImageKind::Startup,
+            base_image_kind: BaseImageKind::Cached,
             grid_cell_extent: grid_cell_size.into(),
             details_cell_extent: details_cell_size.into(),
             grid_ship: resident_grid_sx.clone(),
@@ -3677,23 +3927,23 @@ impl<'a> MediaBrowser<'a> {
         for res in resident_grid_rx.iter() {
             match res {
                 Ok(image_info) => {
-                    let ImageInfo { image, index, .. } = image_info;
+                    let ImageBufInfo { image, index, .. } = image_info;
 
                     let (tex, tex_id) = alloc_write_texture(wgpu, &image);
                     to_thanatos.send(Soul::RgbaImage(image)).unwrap();
 
-                    let image_states = get_image_states_from_grid_entry_mut(&mut images, &grid_entries, index).unwrap();
-                    image_states.grid = ImageState::Ready { tex_id, extent: tex.as_(), cache_ready: None };
+                    let image_info = get_image_info_from_grid_entry_mut(&mut images, &grid_entries, index).unwrap();
+                    image_info.states.grid = ImageState::Ready { tex_id, extent: tex.as_() };
                 },
                 Err((_, index)) => {
-                    let image_states = get_image_states_from_grid_entry_mut(&mut images, &grid_entries, index).unwrap();
-                    image_states.grid = ImageState::Failed;
+                    let image_info = get_image_info_from_grid_entry_mut(&mut images, &grid_entries, index).unwrap();
+                    image_info.states.grid = ImageState::Failed;
                 }
             }
         }
 
-        let submission_index = wgpu.queue.submit(None);
-        wgpu.device.poll(wgpu::PollType::Wait { submission_index: Some(submission_index), timeout: None })?;
+        let submission_i = wgpu.queue.submit(None);
+        wgpu.device.poll(wgpu::PollType::Wait { submission_index: Some(submission_i), timeout: None })?;
 
         Ok(Self {
             wgpu: wgpu.clone(),
@@ -3780,7 +4030,7 @@ impl<'a> MediaBrowser<'a> {
             partial_tex_stash: default!(),
             to_demeter_stash: default!(),
             chunk_size,
-            poll_ready: PollReady::new(),
+            poll_ready: PollGroup::new(),
             manga,
             open_error_win: default!(),
             error_sx,
@@ -3791,17 +4041,17 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn assess_partial_tex_ready(&mut self, partial_tex: PartialTex) {
-        let PartialTex { tex, tex_id, captive, stage, index, gen_id_check, .. } = partial_tex;
+        let PartialTex { tex, tex_id, captive, stage, index, cancel, .. } = partial_tex;
         let extent = tex.as_();
 
-        if let Some((image, signal_tex_ready)) = captive {
-            if let Some(signal_tex_ready) = signal_tex_ready {
-                signal_tex_ready.mark_done();
+        if let Some((image, tex_ready)) = captive {
+            if let Some(tex_ready) = tex_ready {
+                tex_ready.signal();
             }
             self.to_thanatos.send(Soul::RgbaImage(image)).unwrap();
         }
 
-        if let Some(gen_id_check) = gen_id_check.as_ref() && gen_id_check.check(None).is_err() {
+        if cancel.check(None).is_err() {
             self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
 
             return
@@ -3809,14 +4059,12 @@ impl<'a> MediaBrowser<'a> {
 
         match stage {
             Stage::Grid => {
-                let image_states = self.get_image_states_from_grid_entry_mut(index).unwrap();
-                let cache_ready = image_states.grid.take_cache_ready();
-                image_states.grid = ImageState::Ready { tex_id, extent, cache_ready };
+                let image_info = self.get_image_info_from_grid_entry_mut(index).unwrap();
+                image_info.states.grid = ImageState::Ready { tex_id, extent };
             },
             Stage::Details => {
-                let image_states = self.get_image_states_from_grid_entry_mut(index).unwrap();
-                let cache_ready = image_states.details.take_cache_ready();
-                image_states.details = ImageState::Ready { tex_id, extent, cache_ready };
+                let image_info = self.get_image_info_from_grid_entry_mut(index).unwrap();
+                image_info.states.details = ImageState::Ready { tex_id, extent };
             },
             Stage::Manga => {
                 let make_iris_info = || IrisInfo {
@@ -3824,7 +4072,7 @@ impl<'a> MediaBrowser<'a> {
                     tex,
                     tex_id,
                     index,
-                    gen_id_check,
+                    cancel,
                     dst_extent: self.manga.view[index].extent,
                     scaler: self.scaler.clone(),
                     ship: self.iris_ship.clone(),
@@ -3913,8 +4161,8 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
-    fn get_image_states_from_grid_entry_mut(&mut self, grid_entry_i: usize) -> Option<&mut ImageStates> {
-        get_image_states_from_grid_entry_mut(&mut self.images, &self.grid_entries, grid_entry_i)
+    fn get_image_info_from_grid_entry_mut(&mut self, grid_entry_i: usize) -> Option<&mut ImageInfo> {
+        get_image_info_from_grid_entry_mut(&mut self.images, &self.grid_entries, grid_entry_i)
     }
 
     fn get_pivot(&self) -> Pivot {
@@ -4016,7 +4264,7 @@ impl<'a> MediaBrowser<'a> {
         self.manga.archive.set(archive);
         self.manga.archive_path.set(archive_path);
         self.manga.should_restream = Some(self.central_rect);
-        self.manga.poll_ready = Some(PollReady::new());
+        self.manga.poll_ready = Some(PollGroup::new());
         ui.clear_animations();
         self.animation.target = false;
         self.manga.to_thanatos.set(self.to_thanatos.clone());
@@ -4066,25 +4314,19 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn reset_image_states_for_rescale(&mut self, ui: &mut egui::Ui) {
-        for image_states in self.images.values_mut() {
-            image_states.gen_id.fetch_add(1, Ordering::Relaxed);
-
+        for image_info in self.images.values_mut() {
             let new_image_states = match self.view_kind {
                 ViewKind::RescaleGrid => ImageStates {
-                    grid: ImageState::ShouldScale { cache_ready: image_states.grid.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
-                    details: ImageState::ShouldScale { cache_ready: image_states.details.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
-                    gen_id: mem::take(&mut image_states.gen_id),
-                    ..default!()
+                    grid: ImageState::ShouldScale,
+                    details: ImageState::ShouldScale
                 },
                 ViewKind::RescaleDetails => ImageStates {
-                    grid: mem::take(&mut image_states.grid),
-                    details: ImageState::ShouldScale { cache_ready: image_states.details.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
-                    gen_id: mem::take(&mut image_states.gen_id),
-                    ..default!()
+                    grid: mem::take(&mut image_info.states.grid),
+                    details: ImageState::ShouldScale
                 },
                 _ => return
             };
-            let old_image_states = mem::replace(image_states, new_image_states);
+            let old_image_states = mem::replace(&mut image_info.states, new_image_states);
 
             for image_state in old_image_states.into_iter() {
                 if let ImageState::Ready { tex_id, .. } = image_state {
@@ -4103,16 +4345,12 @@ impl<'a> MediaBrowser<'a> {
     }
 
     fn reset_image_states_for_restart(&mut self) {
-        for image_states in self.images.values_mut() {
-            image_states.gen_id.fetch_add(1, Ordering::Relaxed);
-
+        for image_info in self.images.values_mut() {
             let new_image_states = ImageStates {
-                grid: ImageState::ShouldScale { cache_ready: image_states.grid.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
-                details: ImageState::ShouldScale { cache_ready: image_states.details.take_cache_ready().or_else(|| Some(WaitGroup::new())) },
-                gen_id: mem::take(&mut image_states.gen_id),
-                ..default!()
+                grid: ImageState::ShouldScale,
+                details: ImageState::ShouldScale
             };
-            let old_image_states = mem::replace(image_states, new_image_states);
+            let old_image_states = mem::replace(&mut image_info.states, new_image_states);
 
             for image_state in old_image_states.into_iter() {
                 if let ImageState::Ready { tex_id, .. } = image_state {
@@ -4156,32 +4394,29 @@ impl<'a> MediaBrowser<'a> {
         sort_grid_view(&mut self.grid_view, &self.grid_entries);
     }
 
-    fn stream(&mut self, ctx: &egui::Context) {
+    fn stream(&mut self, ui: &mut egui::Ui) {
         for grid_entry_i in self.stream.drop.iter() {
             let grid_entry_info = &self.grid_entries[*grid_entry_i];
 
             if let Some(image_i) = grid_entry_info.image_i {
-                let (_, image_states) = self.images.get_index_mut(image_i).unwrap();
+                let (_, image_info) = self.images.get_index_mut(image_i).unwrap();
+                image_info.ref_count -= 1;
 
-                image_states.ref_count = image_states.ref_count.saturating_sub(1);
-                if image_states.ref_count == 0 {
-                    image_states.gen_id.fetch_add(1, Ordering::Relaxed);
+                if image_info.ref_count == 0 {
+                    image_info.pipelines.incr_ferry();
+                    image_info.syncs.signal_ferry();
 
-                    let new_grid_image_state = match image_states.grid {
-                        ImageState::Ready { .. } => ImageState::None { cache_ready: image_states.grid.take_cache_ready() },
-                        _ => mem::take(&mut image_states.grid)
-                    };
-                    let new_details_image_state = match image_states.details {
-                        ImageState::Ready { .. } => ImageState::None { cache_ready: image_states.details.take_cache_ready() },
-                        _ => mem::take(&mut image_states.details)
-                    };
                     let new_image_states = ImageStates {
-                        grid: new_grid_image_state,
-                        details: new_details_image_state,
-                        gen_id: mem::take(&mut image_states.gen_id),
-                        ..default!()
+                        grid: match image_info.states.grid {
+                            ImageState::Ready { .. } => ImageState::None,
+                            _ => mem::take(&mut image_info.states.grid)
+                        },
+                        details: match image_info.states.details {
+                            ImageState::Ready { .. } => ImageState::None,
+                            _ => mem::take(&mut image_info.states.details)
+                        }
                     };
-                    let old_image_states = mem::replace(image_states, new_image_states);
+                    let old_image_states = mem::replace(&mut image_info.states, new_image_states);
 
                     for image_state in old_image_states.into_iter() {
                         if let ImageState::Ready { tex_id, .. } = image_state {
@@ -4192,21 +4427,19 @@ impl<'a> MediaBrowser<'a> {
             }
         }
 
-        let mut make_ferry_images_info = |load: &HashSet<usize>, signal_tex_ready: bool| -> FerryImagesInfo {
+        let mut make_ferry_images_info = |load: &HashSet<usize>, tex_ready: bool| -> FerryImagesInfo {
             let ferry_image_infos = load.iter().copied()
                 .filter_map(|grid_entry_i| {
                     let grid_entry_info = &mut self.grid_entries[grid_entry_i];
 
                     if let Some(image_i) = grid_entry_info.image_i {
-                        let (image_file_name, image_states) = self.images.get_index_mut(image_i).unwrap();
+                        let (image_file_name, image_info) = self.images.get_index_mut(image_i).unwrap();
 
                         return Some(FerryImageInfo {
                             image_file_name: image_file_name.clone(),
                             grid_entry_i,
-                            gen_id_check: Some(image_states.gen_id.get_next_check()),
-                            signal_cache_readies: image_states.clone_cache_readies_on_should_scale(),
-                            wait_cache_readies: image_states.take_cache_readies_on_should_not_scale(),
-                            signal_tex_ready: signal_tex_ready.then(|| self.poll_ready.clone())
+                            op_syncs: image_info.get_ferry_op_syncs_with_incr(),
+                            tex_ready: tex_ready.then(|| self.poll_ready.clone())
                         })
                     }
 
@@ -4215,10 +4448,10 @@ impl<'a> MediaBrowser<'a> {
                 .collect::<Vec<_>>();
 
             FerryImagesInfo {
-                ctx,
+                ctx: ui,
                 thread_pool: &self.thread_pool,
                 image_dirs: self.image_dirs,
-                base_image_kind: BaseImageKind::Startup,
+                base_image_kind: BaseImageKind::Cached,
                 grid_cell_extent: self.grid_cell_size.into(),
                 details_cell_extent: self.details_cell_size.into(),
                 grid_ship: self.charon_ship.clone(),
@@ -4232,12 +4465,12 @@ impl<'a> MediaBrowser<'a> {
         ferry_images(make_ferry_images_info(&self.stream.load_after, false));
     }
 
-    fn stream_manga(&mut self, ctx: &egui::Context, should_scale: bool) {
+    fn stream_manga(&mut self, ui: &mut egui::Ui, should_scale: bool) {
         if !self.manga.stream.drop.is_empty() {
             for view_i in self.manga.stream.drop.iter() {
                 let page_info = &mut self.manga.view[*view_i];
 
-                page_info.gen_id.fetch_add(1, Ordering::Relaxed);
+                page_info.gen_id.incr();
                 let old_image_state = mem::take(&mut page_info.image_state);
 
                 if let ImageState::Ready { tex_id, .. } = old_image_state.into() {
@@ -4246,7 +4479,7 @@ impl<'a> MediaBrowser<'a> {
             }
         }
 
-        let make_ferry_images_info = |load: &HashSet<usize>, signal_tex_ready: bool| -> FerryImagesInfoManga {
+        let make_ferry_images_info = |load: &HashSet<usize>, tex_ready: bool| -> FerryImagesInfoManga {
             let ferry_image_infos = load.iter().copied()
                 .map(|view_i| {
                     let ViewPageInfo { archive_i, image_kind, extent, ref gen_id, .. } = self.manga.view[view_i];
@@ -4262,14 +4495,14 @@ impl<'a> MediaBrowser<'a> {
                         image_kind,
                         view_i,
                         scale,
-                        gen_id_check: gen_id.get_next_check(),
-                        signal_tex_ready: signal_tex_ready.and(self.manga.poll_ready.as_ref()).cloned()
+                        cancel: gen_id.incr_with_check(),
+                        tex_ready: tex_ready.and(self.manga.poll_ready.as_ref()).cloned()
                     }
                 })
                 .collect::<Vec<_>>();
 
             FerryImagesInfoManga {
-                ctx,
+                ctx: ui,
                 thread_pool: &self.thread_pool,
                 archive_path: self.manga.archive_path.clone(),
                 ship: self.charon_ship.clone(),
@@ -4285,9 +4518,9 @@ impl<'a> MediaBrowser<'a> {
     #[hotpath::measure]
     fn stream_textures_stepped(&mut self) {
         while let Ok(scaled_tex) = self.from_iris.try_recv() {
-            let ScaledTexManga { tex_id, index, gen_id_check, extent } = scaled_tex;
+            let ScaledTexManga { tex_id, index, cancel, extent } = scaled_tex;
 
-            if let Some(gen_id_check) = gen_id_check && gen_id_check.check(None).is_ok() {
+            if cancel.check(None).is_ok() {
                 self.manga.view[index].image_state = ImageStateManga::Ready { tex_id, extent };
             } else {
                 self.to_thanatos.send(Soul::TexId(tex_id)).unwrap();
@@ -4322,30 +4555,30 @@ impl<'a> MediaBrowser<'a> {
 
         while let Ok(res) = self.from_charon.try_recv() {
             match res {
-                Ok(image_info) => {
-                    let image_size = image_info.image.as_raw().len();
+                Ok(image_buf_info) => {
+                    let image_size = image_buf_info.image.as_raw().len();
                     if image_size <= sentinel {
                         // Writable now
-                        self.to_demeter.send(image_info).unwrap();
+                        self.to_demeter.send(image_buf_info).unwrap();
                         sentinel -= image_size;
 
                         continue
                     }
                     if image_size > self.chunk_size {
                         // Clearable now
-                        self.to_demeter.send(image_info).unwrap();
+                        self.to_demeter.send(image_buf_info).unwrap();
 
                         continue
                     }
 
                     // Writable next time
-                    self.to_demeter_stash.push_back(image_info);
+                    self.to_demeter_stash.push_back(image_buf_info);
 
                     break
                 },
                 Err((stage, index)) => match stage {
-                    Stage::Grid => self.get_image_states_from_grid_entry_mut(index).unwrap().grid = ImageState::Failed,
-                    Stage::Details => self.get_image_states_from_grid_entry_mut(index).unwrap().details = ImageState::Failed,
+                    Stage::Grid => self.get_image_info_from_grid_entry_mut(index).unwrap().states.grid = ImageState::Failed,
+                    Stage::Details => self.get_image_info_from_grid_entry_mut(index).unwrap().states.details = ImageState::Failed,
                     Stage::Manga => self.manga.view[index].image_state = ImageStateManga::Failed
                 }
             }
@@ -4509,9 +4742,7 @@ impl<'a> MediaBrowser<'a> {
 
         egui::Popup::context_menu(&background_resp)
             .close_behavior(close_behaviour)
-            .show(|ui| {
-                self.common_grid_submenus(ui);
-            });
+            .show(|ui| self.common_grid_submenus(ui));
     }
 
     fn central_panel_details(&mut self, ui: &mut egui::Ui) {
@@ -5216,7 +5447,7 @@ impl<'a> MediaBrowser<'a> {
                     .num_columns(3)
                     .show(ui, |ui| {
                         if !matches!(self.view_kind, ViewKind::Manga) {
-                            ui.label("Image cell:");
+                            ui.label("Image:");
 
                             self.try_add_cell_extent_edit(ui);
 
@@ -5897,11 +6128,11 @@ impl<'a> MediaBrowser<'a> {
     fn grid_cell(&mut self, ui: &mut egui::Ui) {
         self.grid_entry_i = self.grid_view[self.grid_view_i];
         let grid_entry_info = &self.grid_entries[self.grid_entry_i];
-        let image_states = get_image_states_mut(&mut self.images, grid_entry_info.image_i);
+        let image_info = get_image_info_mut(&mut self.images, grid_entry_info.image_i);
 
-        let cell_resp = match image_states {
-            Some(ImageStates { grid: grid_state, .. }) =>
-                try_add_image(ui, grid_state, &grid_entry_info.stem, &self.poll_ready, Some(&mut self.animation)),
+        let cell_resp = match image_info {
+            Some(ImageInfo { states, .. }) =>
+                try_add_image(ui, &mut states.grid, &grid_entry_info.stem, &self.poll_ready, Some(&mut self.animation)),
             None => alloc_paint_text_centered_margin(ui, &grid_entry_info.stem)
         };
 
@@ -6017,85 +6248,98 @@ impl<'a> MediaBrowser<'a> {
         self.grid_cell_context_menu_open |= single.or(multi).is_some();
     }
 
-    fn pick_image(&mut self, ctx: &egui::Context, path: PathBuf) -> Res<()> {
+    fn pick_image(&mut self, ui: &mut egui::Ui, path: PathBuf) -> Res<()> {
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
         let grid_entry_stem = grid_entry_info.stem.as_ref();
         let pick_image_ext = path.get_file_ext()?;
 
-        let (new_image_file_name,
-            prev_image_file_name
-        ) = match grid_entry_info.image_i {
-            Some(image_i) => { // Entry references an existing image
-                let (prev_image_file_name, image_states) = self.images.get_index_mut(image_i).unwrap();
+        let make_image_file_name = || -> Arc<str> {
+            let image_file_name = concat_string!(grid_entry_stem, ".", pick_image_ext);
+            let image_file_name: Arc<str> = Arc::from(image_file_name.as_str());
 
-                match &mut image_states.ref_count {
-                    ref_count @ 2.. => { // Multiple entries reference the image
-                        let mut s = String::new();
-                        for i in *ref_count.. {
-                            write!(s, "{} ({}).{}", grid_entry_stem, i, pick_image_ext).unwrap();
-                            let check_path = self.image_dirs.base.join(&s);
+            image_file_name
+        };
 
-                            if !check_path.try_exists()? {
-                                break
-                            }
-                        }
-                        let new_image_file_name: Arc<str> = Arc::from(s.as_str());
+        let (new_image_file_name, remove_image_file_info) = match grid_entry_info.image_i {
+            Some(image_i) => {
+                let (old_image_file_name, old_image_info) = self.images.get_index_mut(image_i).unwrap();
+                let exts_match = Path::new(old_image_file_name.as_ref()).get_file_ext()? == pick_image_ext;
 
+                match &mut old_image_info.ref_count {
+                    ref_count @ 2.. => { // Image is referenced by this entry + other(s)
                         *ref_count -= 1;
 
-                        (new_image_file_name, None)
-                    },
-                    _ => { // Only this entry references the image
-                        let new_image_file_name = concat_string!(grid_entry_stem, ".", pick_image_ext);
-                        let remove_prev_image = new_image_file_name.as_str() != prev_image_file_name.as_ref();
+                        if exts_match { // Make unqiue name - can't use existing as it's in use
+                            let mut unique_image_file_name = String::new();
+                            for i in *ref_count.. {
+                                write!(unique_image_file_name, "{} ({}).{}", grid_entry_stem, i, pick_image_ext).unwrap();
 
-                        match remove_prev_image {
-                            true => {
-                                let new_image_file_name: Arc<str> = Arc::from(new_image_file_name.as_str());
+                                let check_path = self.image_dirs.base.join(&unique_image_file_name);
+                                if !check_path.try_exists()? {
+                                    break
+                                }
 
-                                (new_image_file_name, Some(prev_image_file_name.clone()))
-                            },
-                            false => {
-                                let same_image_file_name = prev_image_file_name.clone();
-
-                                (same_image_file_name, None)
+                                unique_image_file_name.clear();
                             }
+
+                            (Arc::from(unique_image_file_name.as_str()), None)
+                        } else {
+                            (make_image_file_name(), None)
+                        }
+                    },
+                    ref_count @ 1 =>  { // Image is referenced by this entry only
+                        *ref_count -= 1;
+
+                        if exts_match { // Reuse prev name
+                            (old_image_file_name.clone(), None)
+                        } else {
+                            let remove_image_file_info = RemoveImageFileInfo {
+                                file_name: old_image_file_name.clone(),
+                                file_locks: {
+                                    let mut syncs_iter = old_image_info.syncs.iter();
+
+                                    array::from_fn(|_| {
+                                        let sync = syncs_iter.next().unwrap();
+
+                                        sync.file_lock.clone()
+                                    })
+                                },
+                                cancel: old_image_info.pipelines.remove.incr_with_check()
+                            };
+
+                            (make_image_file_name(), Some(remove_image_file_info))
+                        }
+                    },
+                    _ => { // Image is tombstoned
+                        old_image_info.pipelines.remove.incr(); // File might be in the process of being removed - cancel before ensuing copy
+
+                        if exts_match {
+                            (old_image_file_name.clone(), None)
+                        } else {
+                            (make_image_file_name(), None)
                         }
                     }
                 }
             },
-            None => { // Entry doesn't reference an image
-                let new_image_file_name = concat_string!(grid_entry_stem, ".", pick_image_ext);
-                let new_image_file_name: Arc<str> = Arc::from(new_image_file_name.as_str());
-
-                (new_image_file_name, None)
-            }
+            None => (make_image_file_name(), None) // Entry doesn't reference an image - make new name
         };
 
-        let cache_readies = CacheReadies::new();
-        let (image_i, _) = self.images.insert_full(
-            new_image_file_name.clone(),
-            ImageStates {
-                grid: ImageState::None { cache_ready: cache_readies.grid.clone() },
-                details: ImageState::None { cache_ready: cache_readies.details.clone() },
-                ..default!()
-            }
-        );
-        grid_entry_info.image_i = Some(image_i);
-
+        let new_image_info = ImageInfo {
+            syncs: ImageSyncs::new(),
+            ref_count: 1,
+            ..default!()
+        };
         let ferry_image_info = FerryImageInfo {
             image_file_name: new_image_file_name.clone(),
             grid_entry_i: self.grid_entry_i,
-            gen_id_check: None,
-            signal_cache_readies: cache_readies,
-            wait_cache_readies: CacheReadies::NONE,
-            signal_tex_ready: None
+            op_syncs: new_image_info.get_pick_op_syncs_with_incr(),
+            tex_ready: None
         };
         let ferry_images_info = FerryImagesInfo {
-            ctx,
+            ctx: ui,
             thread_pool: &self.thread_pool,
             image_dirs: self.image_dirs,
-            base_image_kind: BaseImageKind::Pick { path: path.clone() },
+            base_image_kind: BaseImageKind::Picked { path: path.clone() },
             grid_cell_extent: self.grid_cell_size.into(),
             details_cell_extent: self.details_cell_size.into(),
             grid_ship: self.charon_ship.clone(),
@@ -6107,52 +6351,84 @@ impl<'a> MediaBrowser<'a> {
 
         let base_image_path = self.image_dirs.base.join(new_image_file_name.as_ref());
         let image_dirs = self.image_dirs;
+        let cancel_copy = new_image_info.pipelines.copy.incr_with_check();
+        let base_sync = new_image_info.syncs.base.clone();
+
+        let (image_i, _) = self.images.insert_full(
+            new_image_file_name.clone(),
+            new_image_info
+        );
+        grid_entry_info.image_i = Some(image_i);
+
+        if remove_image_file_info.is_some() {
+            self.stream.clear();
+            self.stream.drop.insert(self.grid_entry_i);
+            self.stream(ui);
+        }
+
         self.thread_pool.enqueue_high(move || {
-            (|| -> Res<_> {
-                fs::copy(&path, &base_image_path)?;
+            let base_file_guard = base_sync.file_lock.lock();
+            if cancel_copy.check(None).is_ok() {
+                fs::copy(&path, &base_image_path).map_err(|err| ErrVar::FailedCopyFile { inner: err, path })
+                    .consume_err(|err| error!("{}: {}", module_path!(), err));
+            }
+            drop(base_file_guard);
 
-                if let Some(prev_image_file_name) = prev_image_file_name {
-                    let paths = [
-                        image_dirs.base.join(prev_image_file_name.as_ref()),
-                        image_dirs.grid.join(prev_image_file_name.as_ref()).with_added_extension("webp"),
-                        image_dirs.details.join(prev_image_file_name.as_ref()).with_added_extension("webp")
-                    ];
-                    for path in paths {
-                        fs::remove_file(&path)?;
-                    }
+            let mut base_ready_guard = base_sync.file_ready.write();
+            if cancel_copy.check(None).is_ok() {
+                base_ready_guard.take();
+            }
+            drop(base_ready_guard);
+
+            if let Some(remove) = remove_image_file_info {
+                let paths = image_dirs.make_paths(&remove.file_name);
+
+                for (file_lock, path) in remove.file_locks.iter().zip(paths) {
+                    let _file_guard = file_lock.lock();
+                    if remove.cancel.check(None).is_err() { return }
+
+                    fs::remove_file(&path).map_err(|err| ErrVar::FailedRemoveFile { inner: err, path })
+                        .consume_err(|err| error!("{}: {}", module_path!(), err));
                 }
-
-                Ok(())
-            })()
-            .unwrap_or_else(|err| error!("{}: failure caching picked image: {}", module_path!(), err));
+            }
         });
 
         Ok(())
     }
 
-    fn delete_image(&mut self, ui: &mut egui::Ui, image_i: usize) {
-        self.stream.drop.clear();
-        self.stream.drop.insert(self.grid_entry_i);
-        self.stream(ui);
-
-        let (image_file_name, image_states) = self.images.get_index_mut(image_i).unwrap();
-
-        image_states.gen_id.fetch_add(1, Ordering::Relaxed);
-
-        _ = fs::remove_file(self.image_dirs.base.join(image_file_name.as_ref()));
-
-        let cache_readies = image_states.take_cache_readies();
-        if let Some(grid_cache_ready) = cache_readies.grid {
-            grid_cache_ready.wait();
-            _ = fs::remove_file(self.image_dirs.grid.join(image_file_name.as_ref()).with_added_extension("webp"));
-        }
-        if let Some(details_cache_ready) = cache_readies.details {
-            details_cache_ready.wait();
-            _ = fs::remove_file(self.image_dirs.details.join(image_file_name.as_ref()).with_added_extension("webp"));
-        }
-
+    fn remove_image(&mut self, ui: &mut egui::Ui, image_i: usize) {
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
         grid_entry_info.image_i = None;
+
+        let (image_file_name, image_info) = self.images.get_index_mut(image_i).unwrap();
+        image_info.ref_count -= 1;
+
+        if image_info.ref_count == 0 {
+            let cancel = image_info.pipelines.incr_all_for_remove();
+            image_info.syncs.signal_all();
+
+            let mut syncs_iter = image_info.syncs.iter();
+            let file_locks: [_; ImageSyncs::field_count()] = array::from_fn(|_| {
+                let sync = syncs_iter.next().unwrap();
+
+                sync.file_lock.clone()
+            });
+            let paths = self.image_dirs.make_paths(image_file_name);
+
+            self.stream.drop.clear();
+            self.stream.drop.insert(self.grid_entry_i);
+            self.stream(ui);
+
+            self.thread_pool.enqueue_high(move || {
+                for (file_lock, path) in file_locks.into_iter().zip(paths) {
+                    let _file_guard = file_lock.lock();
+                    if cancel.check(None).is_err() { return }
+
+                    fs::remove_file(&path).map_err(|err| ErrVar::FailedRemoveFile { inner: err, path })
+                        .consume_err(|err| error!("{}: {}", module_path!(), err));
+                }
+            });
+        }
     }
 
     fn grid_cell_image_submenu(&mut self, ui: &mut egui::Ui) {
@@ -6175,7 +6451,7 @@ impl<'a> MediaBrowser<'a> {
 
             let image_i = self.grid_entries[self.grid_entry_i].image_i;
             if ui.add_enabled(image_i.is_some(), egui::Button::new("Remove")).clicked() {
-                self.delete_image(ui, image_i.unwrap());
+                self.remove_image(ui, image_i.unwrap());
             }
         });
     }
@@ -6362,7 +6638,7 @@ impl<'a> MediaBrowser<'a> {
     fn details_view(&mut self, ui: &mut egui::Ui) {
         set_separator_stroke(ui, SEPARATOR_STROKE_DEFAULT_GRAY);
 
-        let image_states = get_image_states_from_grid_entry_mut(&mut self.images, &self.grid_entries, self.details_grid_entry_i);
+        let image_info = get_image_info_from_grid_entry_mut(&mut self.images, &self.grid_entries, self.details_grid_entry_i);
 
         // Subdivisions
         let middle_subd_width = 2.0 * FRAME_INNER_MARGIN + SEPARATOR_WIDTH;
@@ -6384,7 +6660,7 @@ impl<'a> MediaBrowser<'a> {
         );
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(image_rect), |ui| {
-            let details_state = image_states.map(|states| &mut states.details);
+            let details_state = image_info.map(|image_info| &mut image_info.states.details);
             let dir_name = self.grid_entries[self.details_grid_entry_i].stem.as_ref();
 
             match details_state {

@@ -609,6 +609,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
+name = "const_field_count"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca5467af9c993515b1dbc315ff28ba3146784f03210c955e5779b939a7fd858d"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "const_format"
 version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2903,6 +2913,7 @@ version = "0.13.0"
 dependencies = [
  "bytemuck",
  "concat-string",
+ "const_field_count",
  "const_format",
  "crossbeam",
  "discord-rich-presence",
@@ -2922,6 +2933,7 @@ dependencies = [
  "ogos_discord",
  "ogos_err",
  "ogos_video",
+ "parking_lot",
  "range-compare",
  "raw-window-handle",
  "resize",

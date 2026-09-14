@@ -11,6 +11,7 @@ crate-type = ["lib"]
 [dependencies]
 bytemuck = { workspace = true }
 concat-string = { workspace = true }
+const_field_count = { workspace = true }
 const_format = { workspace = true }
 crossbeam = { workspace = true }
 discord-rich-presence = { workspace = true }
@@ -30,6 +31,7 @@ ogos_core = { workspace = true }
 ogos_discord = { workspace = true }
 ogos_err = { workspace = true }
 ogos_video = { workspace = true }
+parking_lot = { workspace = true }
 range-compare = "0.1.1"
 raw-window-handle = "0.6.2"
 resize = { workspace = true }

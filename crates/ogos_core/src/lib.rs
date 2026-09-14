@@ -3,7 +3,7 @@ use once_cell::sync::*;
 use serde::*;
 use std::{
     borrow::*,
-    fmt::{self, *},
+    fmt::{self, Display, Formatter},
     ops::*,
     path::*,
     process::*
@@ -57,9 +57,29 @@ macro_rules! loan {
     };
 }
 #[macro_export]
+macro_rules! none {
+    () => {
+        None::none()
+    };
+}
+#[macro_export]
 macro_rules! now {
     () => {
         std::time::Instant::now()
+    };
+}
+#[macro_export]
+macro_rules! invoke {
+    (-> $res:ty, $($token:tt)*) => {
+        (|| -> $res {
+            $($token)*
+        })()
+    };
+
+    ($($token:tt)*) => {
+        (|| {
+            $($token)*
+        })()
     };
 }
 
@@ -85,7 +105,7 @@ impl Extent2d {
         }
     }
 }
-impl fmt::Display for Extent2d {
+impl Display for Extent2d {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}x{}", self.width, self.height)
     }
@@ -179,40 +199,40 @@ impl<T> Deref for Displayer<'_, T> {
         }
     }
 }
-impl fmt::Display for Displayer<'_, Command> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl Display for Displayer<'_, Command> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         fmt_command(self, f)
     }
 }
-impl fmt::Display for Displayer<'_, &mut Command> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl Display for Displayer<'_, &mut Command> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         fmt_command(self, f)
     }
 }
-impl fmt::Display for Displayer<'_, HWND> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl Display for Displayer<'_, HWND> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{:p}", self.0)
     }
 }
-impl<T> fmt::Display for Displayer<'_, Option<T>> where
-    T: fmt::Display
+impl<T> Display for Displayer<'_, Option<T>> where
+    T: Display
 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.as_ref() {
             Some(v) => write!(f, "{}", v),
             None => write!(f, "<None>")
         }
     }
 }
-impl fmt::Display for Displayer<'_, RECT> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl Display for Displayer<'_, RECT> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{{{}, {}, {}, {}}}{{{}, {}}}", self.left, self.top, self.right, self.bottom, self.width(), self.height())
     }
 }
-impl<T> fmt::Display for Displayer<'_, Vec<T>> where
-    T: fmt::Display
+impl<T> Display for Displayer<'_, Vec<T>> where
+    T: Display
 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut iter = self.iter();
 
         write!(f, "[")?;
@@ -227,8 +247,8 @@ impl<T> fmt::Display for Displayer<'_, Vec<T>> where
         Ok(())
     }
 }
-impl fmt::Display for Displayer<'_, ColorSpace> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl Display for Displayer<'_, ColorSpace> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.deref() {
             ColorSpace::RGB => write!(f, "RGB"),
             ColorSpace::RGBA => write!(f, "RGBA"),
@@ -248,7 +268,7 @@ impl fmt::Display for Displayer<'_, ColorSpace> {
         }
     }
 }
-fn fmt_command(cmd: &Command, f: &mut Formatter<'_>) -> Result {
+fn fmt_command(cmd: &Command, f: &mut Formatter<'_>) -> fmt::Result {
     let program = cmd.get_program().display();
 
     write!(f, "\"{}\"", program)?;
@@ -305,6 +325,10 @@ impl<F> Into_<F> for F {
     }
 }
 
+pub trait None {
+    fn none() -> Self;
+}
+
 pub trait RectExt {
     fn height(&self) -> i32;
     fn width(&self) -> i32;
@@ -316,5 +340,20 @@ impl RectExt for RECT {
 
     fn width(&self) -> i32 {
         self.right - self.left
+    }
+}
+
+pub trait ResultExt<T, E> {
+    fn consume_err<F>(self, op: F) where
+        F: FnOnce(E);
+}
+
+impl<T, E> ResultExt<T, E> for Result<T, E> {
+    fn consume_err<F>(self, op: F)
+        where F: FnOnce(E)
+    {
+        if let Err(err) = self {
+            op(err);
+        }
     }
 }
