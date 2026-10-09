@@ -3437,8 +3437,8 @@ struct MediaBrowser<'a> {
     grid_cell_size_text: TextRwExtent,
     grid_cell_space: egui::Vec2,
     grid_cell_strokes: Vec<egui::Rect>,
-    grid_cell_context_menu_open: bool,
-    grid_cell_tags_menu_selection: HashSet<Rc<str>>,
+    grid_cell_context_menu_open: Option<egui::Id>,
+    grid_cell_tags_menu_multi_selection: HashSet<Rc<str>>,
     grid_scroll_offset: f32,
     /// Indices into [`grid_entries`]
     grid_view: Vec<usize>,
@@ -3976,7 +3976,7 @@ impl<'a> MediaBrowser<'a> {
             grid_cell_space,
             grid_cell_strokes: default!(),
             grid_cell_context_menu_open: default!(),
-            grid_cell_tags_menu_selection: default!(),
+            grid_cell_tags_menu_multi_selection: default!(),
             grid_scroll_offset: default!(),
             grid_view,
             grid_view_i: default!(),
@@ -4161,6 +4161,19 @@ impl<'a> MediaBrowser<'a> {
         }
     }
 
+    fn clear_grid_entries_selection(&mut self) {
+        self.grid_cell_tags_menu_multi_selection.clear();
+
+        self.grid_entries_selection.clear();
+        self.grid_entries_selection_kind = None;
+    }
+
+    fn clear_grid_entries_selection_and_close_ui(&mut self, ui: &mut egui::Ui) {
+        self.clear_grid_entries_selection();
+
+        ui.close();
+    }
+
     fn get_image_info_from_grid_entry_mut(&mut self, grid_entry_i: usize) -> Option<&mut ImageInfo> {
         get_image_info_from_grid_entry_mut(&mut self.images, &self.grid_entries, grid_entry_i)
     }
@@ -4284,15 +4297,9 @@ impl<'a> MediaBrowser<'a> {
         self.stream.flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
         self.stream(ui);
 
-        self.reset_grid_entries_selection();
+        self.clear_grid_entries_selection();
 
         GridViewCellCounts { row: row_cell_count, max: self.grid_view.len() }
-    }
-
-    fn reset_grid_entries_selection(&mut self) {
-        self.grid_cell_tags_menu_selection.clear();
-        self.grid_entries_selection.clear();
-        self.grid_entries_selection_kind = None;
     }
 
     fn reset_grid_view(&mut self, ui: &mut egui::Ui) -> GridViewCellCounts {
@@ -4305,7 +4312,7 @@ impl<'a> MediaBrowser<'a> {
         self.stream.flatten_refresh(stream_builder, 0..visible_cell_count, &self.grid_view);
         self.stream(ui);
 
-        self.reset_grid_entries_selection();
+        self.clear_grid_entries_selection();
         self.grid_scroll_offset = 0.;
         self.animation.target = false;
         self.active_tag = None;
@@ -4732,7 +4739,7 @@ impl<'a> MediaBrowser<'a> {
         let background_resp = ui.scope_builder(background_builder, |ui| self.grid_view(ui)).response;
 
         if background_resp.clicked() || background_resp.secondary_clicked() {
-            self.reset_grid_entries_selection();
+            self.clear_grid_entries_selection();
         }
 
         let close_behaviour = match background_resp.clicked_elsewhere() {
@@ -5877,7 +5884,7 @@ impl<'a> MediaBrowser<'a> {
                             }
 
                             if tag_win_resp.clicked() {
-                                self.reset_grid_entries_selection();
+                                self.clear_grid_entries_selection();
                             }
                         }
                         None => if window_is_fullscreen_or_maximised { // Tag win closed
@@ -5974,7 +5981,7 @@ impl<'a> MediaBrowser<'a> {
                     self.stream.flatten_load(self.residence.clone(), 0..visible_cell_count, &self.grid_view);
                     self.stream(ui);
 
-                    self.reset_grid_entries_selection();
+                    self.clear_grid_entries_selection();
                     self.grid_scroll_offset = 0.;
                     self.active_tag = Some(tag.clone());
                     self.animation.target = false;
@@ -5989,7 +5996,7 @@ impl<'a> MediaBrowser<'a> {
 
     fn grid_view(&mut self, ui: &mut egui::Ui) {
         if requested_clear_selection(ui) && !egui::Popup::is_any_open(ui) {
-            self.reset_grid_entries_selection();
+            self.clear_grid_entries_selection();
         }
 
         if self.grid_view.is_empty() {
@@ -6094,10 +6101,10 @@ impl<'a> MediaBrowser<'a> {
                 false => {
                     self.grid_scroll_offset = new_grid_scroll_offset;
 
-                    if self.grid_cell_context_menu_open && let Some(SelectionKind::Single) = self.grid_entries_selection_kind {
-                        self.reset_grid_entries_selection();
+                    if self.grid_cell_context_menu_open.is_some() && let Some(SelectionKind::Single) = self.grid_entries_selection_kind {
+                        self.clear_grid_entries_selection();
 
-                        self.grid_cell_context_menu_open = false;
+                        self.grid_cell_context_menu_open = None;
                     }
 
                     egui::Popup::close_all(ui);
@@ -6167,7 +6174,7 @@ impl<'a> MediaBrowser<'a> {
                         )
                     }
 
-                    self.reset_grid_entries_selection();
+                    self.clear_grid_entries_selection();
                     self.view_kind = ViewKind::Details;
                 }
             }
@@ -6189,7 +6196,7 @@ impl<'a> MediaBrowser<'a> {
                 Some(SelectionKind::Multi) if self.grid_entries_selection.contains(&self.grid_entry_i) =>
                     (None, Some(egui::SetOpenCommand::Bool(true))),
                 Some(SelectionKind::Multi) => {
-                    self.grid_cell_tags_menu_selection.clear();
+                    self.grid_cell_tags_menu_multi_selection.clear();
                     self.grid_entries_selection.clear();
                     self.grid_entries_selection.insert(self.grid_entry_i);
                     self.grid_entries_selection_kind = Some(SelectionKind::Single);
@@ -6219,7 +6226,8 @@ impl<'a> MediaBrowser<'a> {
             false => egui::PopupCloseBehavior::IgnoreClicks
         };
 
-        let single = egui::Popup::new(ui.make_persistent_id("single"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
+        let single_id = ui.make_persistent_id("single");
+        let single_menu = egui::Popup::new(single_id, ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
             .kind(egui::PopupKind::Menu)
             .layout(egui::Layout::top_down_justified(egui::Align::Min))
             .style(egui::containers::menu::menu_style)
@@ -6228,24 +6236,42 @@ impl<'a> MediaBrowser<'a> {
             .close_behavior(close_behaviour)
             .show(|ui| {
                 self.grid_cell_image_submenu(ui);
-                self.grid_cell_sort_submenu(ui);
-                self.grid_cell_tag_submenus(ui);
+                self.grid_cell_sort_name_submenu(ui);
+                self.grid_cell_tags_submenus(ui);
 
                 ui.separator();
 
                 self.common_grid_submenus(ui);
             });
 
-        let multi = egui::Popup::new(ui.make_persistent_id("multi"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
+        let multi_id = ui.make_persistent_id("multi");
+        let multi_menu = egui::Popup::new(multi_id, ui.ctx().clone(), egui::PopupAnchor::PointerFixed, cell_resp.layer_id)
             .kind(egui::PopupKind::Menu)
             .layout(egui::Layout::top_down_justified(egui::Align::Min))
             .style(egui::containers::menu::menu_style)
             .gap(0.0)
             .open_memory(multi_open_memory)
             .close_behavior(close_behaviour)
-            .show(|ui| self.grid_cell_tag_submenus(ui));
+            .show(|ui| self.grid_cell_tags_submenus(ui));
 
-        self.grid_cell_context_menu_open |= single.or(multi).is_some();
+        match single_menu.or(multi_menu) {
+            Some(resp) => {
+                // Re-open menu on another cell
+                if let Some(id) = self.grid_cell_context_menu_open && id != resp.response.id {
+                    self.sort_name_edit.clear();
+                }
+
+                self.grid_cell_context_menu_open = Some(resp.response.id);
+            },
+            None => if let Some(id) = self.grid_cell_context_menu_open &&
+                (id == single_id || id == multi_id)
+            {
+                // Close menu
+                self.sort_name_edit.clear();
+
+                self.grid_cell_context_menu_open = None;
+            }
+        }
     }
 
     fn pick_image(&mut self, ui: &mut egui::Ui, path: PathBuf) -> Res<()> {
@@ -6370,7 +6396,7 @@ impl<'a> MediaBrowser<'a> {
             let base_file_guard = base_sync.file_lock.lock();
             if cancel_copy.check(None).is_ok() {
                 fs::copy(&path, &base_image_path).map_err(|err| ErrVar::FailedCopyFile { inner: err, path })
-                    .consume_err(|err| error!("{}: {}", module_path!(), err));
+                    .consume_or_else(|err| error!("{}: {}", module_path!(), err));
             }
             drop(base_file_guard);
 
@@ -6388,7 +6414,7 @@ impl<'a> MediaBrowser<'a> {
                     if remove.cancel.check(None).is_err() { return }
 
                     fs::remove_file(&path).map_err(|err| ErrVar::FailedRemoveFile { inner: err, path })
-                        .consume_err(|err| error!("{}: {}", module_path!(), err));
+                        .unwrap_or_else(|err| error!("{}: {}", module_path!(), err));
                 }
             }
         });
@@ -6425,7 +6451,7 @@ impl<'a> MediaBrowser<'a> {
                     if cancel.check(None).is_err() { return }
 
                     fs::remove_file(&path).map_err(|err| ErrVar::FailedRemoveFile { inner: err, path })
-                        .consume_err(|err| error!("{}: {}", module_path!(), err));
+                        .unwrap_or_else(|err| error!("{}: {}", module_path!(), err));
                 }
             });
         }
@@ -6436,30 +6462,33 @@ impl<'a> MediaBrowser<'a> {
             ui.set_min_width(SUBMENU_WIDTH_LRG);
 
             if ui.button("New").clicked() {
-                ui.close();
-
                 let pick_image_file = rfd::FileDialog::new()
                     .add_filter("images", IMAGE_EXTS)
                     .pick_file();
 
                 if let Some(path) = pick_image_file {
                     self.pick_image(ui, path).unwrap_or_else(|err| {
-                        error!("{}: failed to pick image: {}", module_path!(), err);
+                        let msg = format!("{}: failed to pick image: {}", module_path!(), err);
+                        send_log_err_msg(&self.error_sx, msg);
                     });
                 }
+
+                self.clear_grid_entries_selection_and_close_ui(ui);
             }
 
             let image_i = self.grid_entries[self.grid_entry_i].image_i;
             if ui.add_enabled(image_i.is_some(), egui::Button::new("Remove")).clicked() {
                 self.remove_image(ui, image_i.unwrap());
+
+                self.clear_grid_entries_selection_and_close_ui(ui);
             }
         });
     }
 
-    fn grid_cell_sort_submenu(&mut self, ui: &mut egui::Ui) {
+    fn grid_cell_sort_name_submenu(&mut self, ui: &mut egui::Ui) {
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
 
-        let mut sort_grid_view = false;
+        let mut should_sort_grid_view = false;
         ui.menu_button("Sort name", |ui| {
             let mut sort_name_edit = egui::TextEdit::singleline(&mut self.sort_name_edit)
                 .desired_width(SUBMENU_WIDTH_LRG)
@@ -6472,7 +6501,7 @@ impl<'a> MediaBrowser<'a> {
                     grid_entry_info.sort_name = Some(Rc::from(self.sort_name_edit.as_str()));
 
                     self.sort_name_edit.clear();
-                    sort_grid_view = true;
+                    should_sort_grid_view = true;
                 }
 
                 sort_name_edit_resp.request_focus();
@@ -6497,19 +6526,19 @@ impl<'a> MediaBrowser<'a> {
                     grid_entry_info.sort_name = None;
 
                     self.sort_name_edit.clear();
-                    sort_grid_view = true;
+                    should_sort_grid_view = true;
                 }
             }
         });
 
-        if sort_grid_view {
+        if should_sort_grid_view {
             self.sort_grid_view();
 
-            ui.close();
+            self.clear_grid_entries_selection_and_close_ui(ui);
         }
     }
 
-    fn grid_cell_tag_submenus(&mut self, ui: &mut egui::Ui) {
+    fn grid_cell_tags_submenus(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Tags", |ui| {
             // Add tag
             let new_tag_edit_resp = egui::TextEdit::singleline(&mut self.new_tag_edit)
@@ -6590,19 +6619,19 @@ impl<'a> MediaBrowser<'a> {
         ui.separator();
 
         for (tag, set) in self.tags.iter() { if !set.is_empty() {
-            let mut tag_checked = self.grid_cell_tags_menu_selection.contains(tag);
+            let mut tag_checked = self.grid_cell_tags_menu_multi_selection.contains(tag);
             let tag_checkbox_resp = ui.checkbox(&mut tag_checked, tag.as_ref());
 
             if tag_checkbox_resp.clicked() {
                 match tag_checked {
-                    true => self.grid_cell_tags_menu_selection.insert(tag.clone()),
-                    false => self.grid_cell_tags_menu_selection.remove(tag)
+                    true => self.grid_cell_tags_menu_multi_selection.insert(tag.clone()),
+                    false => self.grid_cell_tags_menu_multi_selection.remove(tag)
                 };
             }
         } }
 
         if add_button_resp.clicked() {
-            for tag in self.grid_cell_tags_menu_selection.drain() {
+            for tag in self.grid_cell_tags_menu_multi_selection.drain() {
                 let set = self.tags.get_mut(&tag).unwrap();
 
                 set.extend(self.grid_entries_selection.iter());
@@ -6610,7 +6639,7 @@ impl<'a> MediaBrowser<'a> {
         }
 
         if remove_button_resp.clicked() {
-            loan!(self.grid_cell_tags_menu_selection, mut checked_tags => {
+            loan!(self.grid_cell_tags_menu_multi_selection, mut checked_tags => {
                 for tag in checked_tags.drain() {
                     let set = self.tags.get_mut(&tag).unwrap();
 

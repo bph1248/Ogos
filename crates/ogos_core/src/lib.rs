@@ -344,12 +344,12 @@ impl RectExt for RECT {
 }
 
 pub trait ResultExt<T, E> {
-    fn consume_err<F>(self, op: F) where
+    fn consume_or_else<F>(self, op: F) where
         F: FnOnce(E);
 }
 
 impl<T, E> ResultExt<T, E> for Result<T, E> {
-    fn consume_err<F>(self, op: F)
+    fn consume_or_else<F>(self, op: F)
         where F: FnOnce(E)
     {
         if let Err(err) = self {
