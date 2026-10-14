@@ -637,11 +637,10 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
     let win_info = match ts.win_infos.get(&hwnd.as_usize()) {
         Some(win_info) => win_info,
         None => {
-            // Taskbar/hitbox
             if let Some(tb) = ts.tb.as_mut() {
                 // Progman
                 if hwnd == tb.progman_hwnd {
-                    tb.hitbox_hwnd.show_na(true)?;
+                    tb.hitbox_hwnd.show_na(true)?; // Desktop is empty - show the hitbox despite progman being fullscreen
 
                     return Ok(())
                 }
@@ -711,13 +710,12 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
         }
     };
 
-    // Hook location changes and set binds for current foreground
     if win_info.may_hook_loc_change {
         match win_info.tpids != ts.last_foreground_tpids {
-            true => {
+            true => { // Hook location change and set binds for new tpids
                 ts.last_foreground_tpids = win_info.tpids;
 
-                // Location changes
+                // Location change
                 if let Some(tb) = ts.tb.as_mut() {
                     tb.foreground_hwnd = hwnd;
 
@@ -737,20 +735,19 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
                     can_i_have_a_go(binds, win_info, ts.active_game.as_deref())?;
                 }
             },
-            false => {
-                // Just update current foreground
+            false => { // Just update current foreground
                 if let Some(tb) = ts.tb.as_mut() {
                     tb.foreground_hwnd = hwnd;
                 }
             }
         }
+    }
 
-        // Handle foreground extent now
-        if let Some(tb) = ts.tb.as_ref() {
-            match hwnd.is_fullscreen(tb.screen_extent)? {
-                true => tb.hitbox_hwnd.hide()?,
-                false => tb.hitbox_hwnd.show_na(true)?
-            }
+    // Handle foreground extent now, before any location change handler
+    if let Some(tb) = ts.tb.as_ref() {
+        match hwnd.is_fullscreen(tb.screen_extent)? {
+            true => tb.hitbox_hwnd.hide()?,
+            false => tb.hitbox_hwnd.show_na(true)?
         }
     }
 
