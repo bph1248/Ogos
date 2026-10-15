@@ -181,6 +181,7 @@ struct ThreadState<'a> {
 struct WinInfo {
     tpids: Tpids,
     exe: String,
+    may_alter_hitbox_visibility: bool,
     may_hook_loc_change: bool,
     has_maps: HasMaps
 }
@@ -682,6 +683,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
 
             // Everything else
             let exe = hwnd.get_exe()?;
+            let may_alter_hitbox_visibility = may_alter_hitbox_visibility(&exe);
             let has_maps = ts.binds.as_ref()
                 .map(|binds| binds.has_maps(exe.as_str()))
                 .unwrap_or_default();
@@ -689,6 +691,7 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
             let win_info = WinInfo {
                 exe,
                 tpids: hwnd.get_thread_proc_ids()?,
+                may_alter_hitbox_visibility,
                 may_hook_loc_change: hwnd.may_hook_location_change()?,
                 has_maps
             };
@@ -743,8 +746,10 @@ fn handle_win_event_hook_all_foreground(ts: &mut ThreadState, hwnd: HWND) -> Res
         }
     }
 
-    // Handle foreground extent now, before any location change handler
-    if let Some(tb) = ts.tb.as_ref() {
+    // Handle hitbox visibility now, before any location change handler
+    if win_info.may_alter_hitbox_visibility &&
+        let Some(tb) = ts.tb.as_ref()
+    {
         match hwnd.is_fullscreen(tb.screen_extent)? {
             true => tb.hitbox_hwnd.hide()?,
             false => tb.hitbox_hwnd.show_na(true)?
@@ -815,6 +820,10 @@ fn bind_maps(binds: &mut Binds, exe: &str) {
 
         binds.bound.push(map);
     }
+}
+
+fn may_alter_hitbox_visibility(exe: &str) -> bool {
+    !matches!(exe, "SnippingTool.exe")
 }
 
 fn move_hitbox_about_jump_list(tb: &Taskbar, jump_list_hwnd: HWND) -> Res1<()> { unsafe {
