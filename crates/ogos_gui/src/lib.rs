@@ -3274,7 +3274,7 @@ fn populate_grid_view(view: &mut Vec<usize>, entries: &[GridEntryInfo], set: &BT
 }
 
 fn replace_dir_entries(entries: &mut Vec<DirEntryInfo>, dir: &Path) {
-    (|| -> ResVar<()> {
+    invoke!(-> ResVar<_> {
         entries.clear();
 
         let read_dir = dir.read_dir()?;
@@ -3292,7 +3292,7 @@ fn replace_dir_entries(entries: &mut Vec<DirEntryInfo>, dir: &Path) {
         }
 
         Ok(())
-    })()
+    })
     .unwrap_or_else(|err| error!("{}: failed to read dir: {}: {}", module_path!(), dir.display(), err));
 }
 
@@ -4168,7 +4168,7 @@ impl<'a> MediaBrowser<'a> {
         self.grid_entries_selection_kind = None;
     }
 
-    fn clear_grid_entries_selection_and_close_ui(&mut self, ui: &mut egui::Ui) {
+    fn close_ui_and_clear_grid_entries_selection(&mut self, ui: &mut egui::Ui) {
         self.clear_grid_entries_selection();
 
         ui.close();
@@ -5410,6 +5410,8 @@ impl<'a> MediaBrowser<'a> {
             let mut checked = self.enable_fullscreen;
             let enable_fullscreen_checkbox_resp = ui.checkbox(&mut checked, "Fullscreen");
             if enable_fullscreen_checkbox_resp.clicked() {
+                self.close_ui_and_clear_grid_entries_selection(ui);
+
                 match checked {
                     true => {
                         self.window_windowed_inner_extent = Some(self.window_inner_extent);
@@ -6163,9 +6165,10 @@ impl<'a> MediaBrowser<'a> {
                     self.details_grid_entry_i = self.grid_entry_i;
                     self.details_dir_entries.clear();
 
-                    match grid_entry_info.path.is_dir() {
-                        true => replace_dir_entries(&mut self.details_dir_entries, &grid_entry_info.path),
-                        false => self.details_dir_entries.push(
+                    match grid_entry_info.file_kind {
+                        FileKind::Dir |
+                        FileKind::Junction => replace_dir_entries(&mut self.details_dir_entries, &grid_entry_info.path),
+                        _ => self.details_dir_entries.push(
                             DirEntryInfo {
                                 path: grid_entry_info.path.clone(),
                                 stem: grid_entry_info.stem.to_string(),
@@ -6473,14 +6476,14 @@ impl<'a> MediaBrowser<'a> {
                     });
                 }
 
-                self.clear_grid_entries_selection_and_close_ui(ui);
+                self.close_ui_and_clear_grid_entries_selection(ui);
             }
 
             let image_i = self.grid_entries[self.grid_entry_i].image_i;
             if ui.add_enabled(image_i.is_some(), egui::Button::new("Remove")).clicked() {
                 self.remove_image(ui, image_i.unwrap());
 
-                self.clear_grid_entries_selection_and_close_ui(ui);
+                self.close_ui_and_clear_grid_entries_selection(ui);
             }
         });
     }
@@ -6534,7 +6537,7 @@ impl<'a> MediaBrowser<'a> {
         if should_sort_grid_view {
             self.sort_grid_view();
 
-            self.clear_grid_entries_selection_and_close_ui(ui);
+            self.close_ui_and_clear_grid_entries_selection(ui);
         }
     }
 

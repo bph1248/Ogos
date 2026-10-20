@@ -70,7 +70,7 @@ macro_rules! now {
 }
 #[macro_export]
 macro_rules! invoke {
-    (-> $res:ty, $($token:tt)*) => {
+    (-> $res:ty { $($token:tt)* }) => {
         (|| -> $res {
             $($token)*
         })()
@@ -283,6 +283,7 @@ fn fmt_command(cmd: &Command, f: &mut Formatter<'_>) -> fmt::Result {
 pub enum FileKind {
     Dir,
     Image,
+    Junction,
     Manga,
     Vid,
     Other,

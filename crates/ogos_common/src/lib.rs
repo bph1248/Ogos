@@ -233,14 +233,26 @@ impl PathExt for Path {
     }
 
     fn get_file_kind(&self) -> ResVar<FileKind> {
-        Ok(match self.is_dir() {
-            true => FileKind::Dir,
-            false => {
-                let ext = self.get_file_ext()?;
+        if self.is_dir() {
+            return Ok(FileKind::Dir)
+        }
 
-                get_file_kind(ext)
+        match self.get_file_ext() {
+            Ok(ext) => {
+                let file_kind = get_file_kind(ext);
+
+                Ok(file_kind)
+            },
+            Err(file_ext_err) => {
+                match junction::get_target(self) {
+                    Ok(_) => Ok(FileKind::Junction),
+                    Err(get_target_err) => match get_target_err.kind() {
+                        std::io::ErrorKind::Other => Err(file_ext_err), // Not a junction
+                        _ => Err(get_target_err)?
+                    }
+                }
             }
-        })
+        }
     }
 
     fn get_file_name(&self) -> ResVar<&str> {
