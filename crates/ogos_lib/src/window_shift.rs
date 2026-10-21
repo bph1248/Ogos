@@ -1,7 +1,4 @@
-use crate::{
-    win32::*,
-    window_foreground
-};
+use crate::win32::*;
 use ogos_common::*;
 use ogos_config as config;
 use config::*;
@@ -600,7 +597,7 @@ fn foreground_disallows_shift(fg_hwnd: HWND, screen_extent: Extent2d) -> Res<boo
     let fg_is_fullscreen = fg_rect == screen_extent.into();
 
     let fg_class = fg_hwnd.get_class()?;
-    let fg_class_disallows_shift = !matches!(fg_class.as_str(), window_foreground::PROGMAN_CLASS_NAME | window_foreground::WORKERW_CLASS_NAME);
+    let fg_class_disallows_shift = !matches!(fg_class.as_str(), PROGMAN_CLASS_NAME | WORKERW_CLASS_NAME);
 
     if fg_is_fullscreen && fg_class_disallows_shift {
         return Ok(true)

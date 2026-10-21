@@ -210,9 +210,7 @@ pub fn begin_pixel_cleaning(prelude: Option<config::PixelCleaning>) -> Res2<()> 
 } }
 
 fn control_windows(arg: ControlWindowsArg) -> Res1<()> { unsafe {
-    let taskbar_class_name = window_foreground::TASKBAR_CLASS_NAME.to_win_str();
-    let taskbar_hwnd = FindWindowW(Some(&*taskbar_class_name), None)?;
-
+    let taskbar_hwnd = FindWindowW(Some(&TASKBAR_CLASS_NAME_W.as_pcwstr()), None)?;
     let wparam = WPARAM(
         match arg {
             ControlWindowsArg::MinimizeAll => MINIMIZE_ALL,

@@ -288,31 +288,45 @@ impl PathBufExt for PathBuf {
 }
 
 pub trait StrExt {
+    fn to_wide(&self) -> U16CString;
     fn to_wide_128(&self) -> [u16; 128];
     unsafe fn to_win_str(&self) -> WinStr;
 }
 impl StrExt for &str {
-    fn to_wide_128(&self) -> [u16; 128] {
-        let mut buf = [0_u16; 128];
-        let encoded = self.encode_utf16().collect::<Vec<_>>();
+    fn to_wide(&self) -> U16CString { unsafe {
+        U16CString::from_str_unchecked(self)
+    } }
 
-        let len = encoded.len().min(127);
-        buf[..len].copy_from_slice(&encoded[..len]);
+    fn to_wide_128(&self) -> [u16; 128] { unsafe {
+        let s = U16CString::from_str_unchecked(self);
+        let end = s.len().min(127);
+
+        let mut buf = [0_u16; 128];
+        buf[..end].copy_from_slice(&s.as_slice()[..end]);
 
         buf
-    }
+    } }
 
     unsafe fn to_win_str(&self) -> WinStr { unsafe {
         WinStr::new(self)
     } }
 }
 
+pub trait U16CStringExt {
+    fn as_pcwstr(&self) -> PCWSTR;
+}
+impl U16CStringExt for &U16CStr {
+    fn as_pcwstr(&self) -> PCWSTR {
+        PCWSTR(self.as_ptr())
+    }
+}
+
 pub trait VarName {
     fn var_name(&self) -> &'static str;
 }
 
-pub fn attempt<T, E>(mut f: impl FnMut() -> Result<T, E>, attempt_count: u32, sleep_dur: Duration) -> Result<T, E> {
-    for _ in 0..attempt_count.saturating_sub(1) {
+pub fn attempt<T, E>(mut f: impl FnMut() -> Result<T, E>, retry_count: u32, sleep_dur: Duration) -> Result<T, E> {
+    for _ in 0..retry_count {
         if let Ok(t) = f() {
             return Ok(t)
         }

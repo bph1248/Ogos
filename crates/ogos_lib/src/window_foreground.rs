@@ -33,11 +33,6 @@ use windows::Win32::{
     }
 };
 
-pub(crate) const PROGMAN_CLASS_NAME: &str = "Progman";
-pub(crate) const TASKBAR_START_MENU_CLASS_NAME: &str = "Start";
-pub(crate) const WORKERW_CLASS_NAME: &str = "WorkerW";
-pub(crate) const WINDOW_WATCH_CLASS_NAME: &str = "OgosWindowWatch";
-
 struct Binds<'a> {
     trigger_watch: Option<(JoinHandle<()>, mpsc::Sender<trigger_watch::Msg>)>,
     qmk: Option<QmkRuntime>,
@@ -132,18 +127,15 @@ impl LongLivedChannels {
 
 #[derive(Default)]
 pub(crate) struct Taskbar {
-    pub(crate) progman_class_name: WinStr,
     pub(crate) progman_hwnd: HWND,
     pub(crate) progman_tpids: Tpids,
     pub(crate) progman_hook: Option<WinEventHooksRx>,
-    pub(crate) taskbar_class_name: WinStr,
     pub(crate) taskbar_hwnd: HWND,
     pub(crate) taskbar_tpids: Tpids,
     pub(crate) taskbar_hooks: Option<WinEventHooksRx>,
     pub(crate) taskbar_side: Side,
     pub(crate) taskbar_rect: RECT,
     pub(crate) shell_experience_state: Option<(HWND, HookState)>,
-    pub(crate) start_menu_class_name: WinStr,
     pub(crate) start_menu_hwnd: HWND,
     pub(crate) start_menu_rect: RECT,
     pub(crate) hitbox_hwnd: HWND,
@@ -407,7 +399,7 @@ fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWND) -> R
             }
 
             let rehook_progman = || -> Res<()> {
-                let progman_hwnd = FindWindowW(Some(&*tb.progman_class_name), None)?;
+                let progman_hwnd = FindWindowW(Some(&PROGMAN_CLASS_NAME_W.as_pcwstr()), None)?;
                 let progman_tpids = progman_hwnd.get_thread_proc_ids()?;
 
                 let request = WinEventHookRequest {
@@ -436,8 +428,8 @@ fn handle_win_event_hook_explorer_destroy(ts: &mut ThreadState, hwnd: HWND) -> R
             }
 
             let rehook_taskbar = || -> Res<()> {
-                let taskbar_hwnd = FindWindowW(Some(&*tb.taskbar_class_name), None)?;
-                let start_menu_hwnd = FindWindowExW(Some(taskbar_hwnd), None, *tb.start_menu_class_name, None)?;
+                let taskbar_hwnd = FindWindowW(Some(&TASKBAR_CLASS_NAME_W.as_pcwstr()), None)?;
+                let start_menu_hwnd = FindWindowExW(Some(taskbar_hwnd), None, START_MENU_CLASS_NAME_W.as_pcwstr(), None)?;
                 let taskbar_tpids = taskbar_hwnd.get_thread_proc_ids()?;
 
                 let request = WinEventHookRequest {

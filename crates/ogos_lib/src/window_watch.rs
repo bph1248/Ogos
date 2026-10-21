@@ -17,7 +17,8 @@ use std::{
     sync::mpsc,
     fmt::{self, *},
     sync::mpsc::*,
-    thread::{self, *}
+    thread::{self, *},
+    time::*
 };
 use strum::*;
 use windows::Win32::{
@@ -247,15 +248,13 @@ fn init_hitbox(sxs: &Senders) -> Res1<HWND> { unsafe {
     let taskbar_config = config.taskbar.as_ref().ok_or(ErrVar::MissingConfigOption { name: config::Taskbar::NAME })?;
 
     // Progman
-    let progman_class_name = PROGMAN_CLASS_NAME.to_win_str();
-    let progman_hwnd = FindWindowW(Some(&*progman_class_name), None)?;
+    let progman_hwnd = attempt(|| FindWindowW(Some(&PROGMAN_CLASS_NAME_W.as_pcwstr()), None), 10, Duration::from_secs(1)).map_err(|_| ErrVar::MissingShell)?;
     let progman_tpids = progman_hwnd.get_thread_proc_ids()?;
     let (sx, progman_hook) = mpmc::bounded(1);
     sx.send(Ok(vec![SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(explorer_destroy_proc), progman_tpids.proc, progman_tpids.thread, WINEVENT_OUTOFCONTEXT).win32_var_ok()?])).unwrap();
 
     // Taskbar
-    let taskbar_class_name = TASKBAR_CLASS_NAME.to_win_str();
-    let taskbar_hwnd = FindWindowW(Some(&*taskbar_class_name), None)?;
+    let taskbar_hwnd = FindWindowW(Some(&TASKBAR_CLASS_NAME_W.as_pcwstr()), None)?;
     let taskbar_tpids = taskbar_hwnd.get_thread_proc_ids()?;
     let (sx, taskbar_hooks) = mpmc::bounded(1);
     sx.send(Ok(vec![
@@ -264,8 +263,7 @@ fn init_hitbox(sxs: &Senders) -> Res1<HWND> { unsafe {
     ]))
     .unwrap();
 
-    let start_menu_class_name = TASKBAR_START_MENU_CLASS_NAME.to_win_str();
-    let start_menu_hwnd = FindWindowExW(Some(taskbar_hwnd), None, *start_menu_class_name, None)?;
+    let start_menu_hwnd = FindWindowExW(Some(taskbar_hwnd), None, START_MENU_CLASS_NAME_W.as_pcwstr(), None)?;
     let start_menu_rect = start_menu_hwnd.get_rect()?;
 
     let screen_extent = get_screen_extent()?;
@@ -283,7 +281,6 @@ fn init_hitbox(sxs: &Senders) -> Res1<HWND> { unsafe {
     let hitbox_entry_side = taskbar_config.hitbox_entry.side.unwrap_or(taskbar_side);
     let hitbox_pos = get_hitbox_pos(taskbar_rect, taskbar_side, hitbox_entry_side, i32::from(taskbar_config.hitbox_entry.inset_px), i32::from(taskbar_config.hitbox_exit.taskbar_offset_px), screen_extent);
 
-    let class_name = WINDOW_WATCH_CLASS_NAME.to_win_str();
     let exe_module = GetModuleHandleW(None)?;
     let cursor_hnd = LoadCursorW(None, IDC_ARROW)?;
     let wnd_class = WNDCLASSEXW {
@@ -291,15 +288,15 @@ fn init_hitbox(sxs: &Senders) -> Res1<HWND> { unsafe {
         lpfnWndProc: Some(hitbox_proc),
         hInstance: exe_module.into(),
         hCursor: cursor_hnd,
-        lpszClassName: *class_name,
+        lpszClassName: WINDOW_WATCH_CLASS_NAME_W.as_pcwstr(),
         ..default!()
     };
     _ = RegisterClassExW(&wnd_class).win32_core_ok()?;
 
     let hitbox_hwnd = CreateWindowExW(
         WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT,
-        *class_name,
-        *class_name,
+        WINDOW_WATCH_CLASS_NAME_W.as_pcwstr(),
+        WINDOW_WATCH_CLASS_NAME_W.as_pcwstr(),
         WS_POPUP,
         hitbox_pos.entry.x,
         hitbox_pos.entry.y,
@@ -312,17 +309,14 @@ fn init_hitbox(sxs: &Senders) -> Res1<HWND> { unsafe {
     )?;
 
     let tb = Taskbar {
-        progman_class_name,
         progman_hwnd,
         progman_tpids,
         progman_hook: Some(progman_hook),
-        taskbar_class_name,
         taskbar_hwnd,
         taskbar_tpids,
         taskbar_hooks: Some(taskbar_hooks),
         taskbar_side,
         taskbar_rect,
-        start_menu_class_name,
         start_menu_hwnd,
         start_menu_rect,
         hitbox_hwnd,
@@ -365,20 +359,19 @@ fn begin(enable: WindowForegroundComponents, sxs: Senders, ready_sx: Sender<Read
         }
 
         if enable == WindowForegroundComponents::WINDOW_SHIFT {
-            let class_name = WINDOW_WATCH_CLASS_NAME.to_win_str();
             let exe_module = GetModuleHandleW(None)?;
             let wnd_class = WNDCLASSEXW {
                 cbSize: size_of::<WNDCLASSEXW>() as u32,
                 lpfnWndProc: Some(message_only_proc),
-                lpszClassName: *class_name,
+                lpszClassName: WINDOW_WATCH_CLASS_NAME_W.as_pcwstr(),
                 ..default!()
             };
             RegisterClassExW(&wnd_class).win32_core_ok()?;
 
             CreateWindowExW(
                 default!(),
-                *class_name,
-                *class_name,
+                WINDOW_WATCH_CLASS_NAME_W.as_pcwstr(),
+                WINDOW_WATCH_CLASS_NAME_W.as_pcwstr(),
                 default!(),
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
