@@ -900,7 +900,7 @@ fn init_binds<'a>(error_sx: &mpsc::Sender<String>) -> Res1<Binds<'a>> {
     const QMK_PID: u16 = 0x0140;
     const USAGE_PAGE: u16 = 0xff60;
 
-    let qmk = binds_config.qmk.map(|qmk| binds::QmkRuntime::new(QMK_VID, QMK_PID, USAGE_PAGE, &qmk))
+    let qmk = binds_config.qmk.map(|qmk_config| binds::QmkRuntime::new(QMK_VID, QMK_PID, USAGE_PAGE, &qmk_config))
         .transpose()
         .unwrap_or_else(|err| {
             error_sx.send(err.to_string()).unwrap();
@@ -974,10 +974,10 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
                     let win_errored = ts.win_errored.entry(fg_hwnd.as_usize())
                         .or_default();
 
-                    if let ErrVar::WinCore(inner) = *err.var &&
+                    if let ErrVar::WinCore(inner) = err.var.into_inner() &&
                         win_errored.hresults.insert(inner.code())
                     {
-                        err.var = Box::new(ErrVar::FailedWmMouseMouse { inner, fg_hwnd, fg_exe: fg_hwnd.get_exe_or_err() });
+                        err.var = Box::new(ErrVar::FailedWmMouseMouse { inner, fg_hwnd, fg_exe: fg_hwnd.get_exe_or_err() }.into());
                         Err(err)?;
                     }
                 }
@@ -987,9 +987,9 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
                     let win_errored = ts.win_errored.entry(hwnd)
                         .or_default();
 
-                    if match err.var.as_ref() {
+                    if match err.var() {
                         ErrVar::WinCore(inner) => win_errored.hresults.insert(inner.code()),
-                        _ => win_errored.others.insert(mem::discriminant(&err.var))
+                        _ => win_errored.others.insert(mem::discriminant(err.var()))
                     } {
                         Err(err)?;
                     }
@@ -1023,7 +1023,7 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
         let msg_name = msg.var_name();
 
         if let Err(err) = handle_msg(msg) {
-            if let ErrVar::Close = *err.var {
+            if let ErrVar::Close = err.var() {
                 if let Some(binds) = ts.binds.as_mut() && let Some((hnd, sx)) = binds.trigger_watch.take() {
                     sx.send(trigger_watch::Msg::Close).unwrap();
                     _ = hnd.join();
@@ -1034,7 +1034,7 @@ fn begin(enable: WindowForegroundComponents, rx: mpsc::Receiver<Msg>, hook_mgr_t
 
             error!("{}: failure on message loop: {}: {}", module_path!(), msg_name, err);
 
-            if let ErrVar::FailedContactHookMgr { .. } = *err.var {
+            if let ErrVar::FailedContactHookMgr { .. } = err.var() {
                 break
             }
         }

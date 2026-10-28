@@ -43,7 +43,7 @@ pub struct Errored {
 
 #[derive(Debug, Error)]
 pub struct ErrLoc<const ID: u32 = { LocVar::Default as u32 }> {
-    pub var: Box<ErrVar>,
+    pub var: Box<ErrVarKind>,
     pub msg: &'static str,
     pub trail: Option<Vec<Loc>>,
     pub x: Loc
@@ -53,6 +53,10 @@ impl<const ID: u32> ErrLoc<ID> {
         self.msg = msg;
 
         self
+    }
+
+    pub fn var(&self) -> &ErrVar {
+        self.var.inner()
     }
 }
 impl<const ID: u32> Display for ErrLoc<ID> {
@@ -73,7 +77,7 @@ impl<const ID: u32> Display for ErrLoc<ID> {
     }
 }
 impl<E, const ID: u32> From<E> for ErrLoc<ID> where
-    ErrVar: From<E>
+    ErrVarKind: From<E>
 {
     #[track_caller]
     fn from(err: E) -> Self {
@@ -373,13 +377,79 @@ impl From<WIN32_ERROR> for ErrVar {
 unsafe impl Send for ErrVar {}
 unsafe impl Sync for ErrVar {}
 
-pub trait Track<T, E> where
+#[derive(Debug, Error)]
+pub enum ErrVarExt {
+    Path { inner: ErrVar, path: PathBuf }
+}
+impl ErrVarExt {
+    fn inner(&self) -> &ErrVar {
+        match self {
+            ErrVarExt::Path { inner, .. } => inner
+        }
+    }
+
+    fn into_inner(self) -> ErrVar {
+        match self {
+            ErrVarExt::Path { inner, .. } => inner
+        }
+    }
+}
+impl Display for ErrVarExt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ErrVarExt::Path { inner, path } => write!(f, "{}: {}", inner, path.display()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ErrVarKind {
+    ErrVar(ErrVar),
+    ErrVarExt(ErrVarExt)
+}
+impl ErrVarKind {
+    pub fn inner(&self) -> &ErrVar {
+        match self {
+            ErrVarKind::ErrVar(var) => var,
+            ErrVarKind::ErrVarExt(var_ext) => var_ext.inner()
+        }
+    }
+
+    pub fn into_inner(self) -> ErrVar {
+        match self {
+            ErrVarKind::ErrVar(var) => var,
+            ErrVarKind::ErrVarExt(var_ext) => var_ext.into_inner()
+        }
+    }
+}
+impl Display for ErrVarKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ErrVarKind::ErrVar(var) => write!(f, "{}", var),
+            ErrVarKind::ErrVarExt(var_ext) => write!(f, "{}", var_ext)
+        }
+    }
+}
+impl<E> From<E> for ErrVarKind where
     ErrVar: From<E>
+{
+    fn from(value: E) -> Self {
+        Self::ErrVar(value.into())
+    }
+}
+impl From<ErrVarExt> for ErrVarKind {
+    fn from(value: ErrVarExt) -> Self {
+        Self::ErrVarExt(value)
+    }
+}
+
+pub trait Track<T, E> where
+    ErrVarKind: From<E>
 {
     fn x(self) -> Res<T>;
 }
 impl<T, E> Track<T, E> for Result<T, E> where
-    ErrVar: From<E>
+    ErrVarKind: From<E>
 {
     #[track_caller]
     fn x(self) -> Res<T> {

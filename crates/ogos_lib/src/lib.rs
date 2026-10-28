@@ -229,7 +229,7 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
         set_endpoint(name.as_str()).unwrap_or_else(|err| {
             let ErrLoc { var, x, .. } = &err;
 
-            match var.as_ref() {
+            match var.inner() {
                 ErrVar::UnknownEndpoint => error_alert(format!("{}: {var}: {name}, {x}", module_path!())),
                 ErrVar::FailedSpawnCommand { inner, cmd } => error_alert(format!("{}: failed to spawn app for endpoint: {}, cmd: {}: {}", module_path!(), name, cmd, inner)),
                 _ => error_alert(format!("{}: failed to set endpoint: {}: {}", module_path!(), name, err))
@@ -241,7 +241,7 @@ fn begin(cli: Cli, cli_path_kind: CliPathKind) -> Res<()> {
         set_eq(name).unwrap_or_else(|err| {
             let ErrLoc { var, x, .. } = &err;
 
-            match var.as_ref() {
+            match var.inner() {
                 ErrVar::UnknownEqApoConfigName => error_alert(format!("{}: {var}: {name}, {x}", module_path!())),
                 _ => error_alert(format!("{}: failed to set eq: {}: {}", module_path!(), name, err))
             }
@@ -440,7 +440,7 @@ pub fn entry() -> Res<()> {
     match init() {
         Ok((cli, cli_path_kind)) => begin(cli, cli_path_kind),
         Err(err) => {
-            if let ErrVar::Clap(inner) = err.var.as_ref() && inner.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
+            if let ErrVar::Clap(inner) = err.var() && inner.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
                 let long_help = cli::Cli::command().render_long_help();
                 let long_help = long_help.to_string();
 

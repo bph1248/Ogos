@@ -584,7 +584,7 @@ fn smaug(ts: &mut ThreadState, win_infos: &mut HashMap<usize, WinInfo>, win_erro
 
     loop {
         if let Err(err) = inner() {
-            match *err.var {
+            match err.var() {
                 ErrVar::RecvTimeout(mpsc::RecvTimeoutError::Timeout) => break Ok(()), // Typical, time is up this interval
                 _ => break Err(err)
             }
@@ -660,9 +660,9 @@ fn begin(init: Init, rx: &mpsc::Receiver<Msg>) -> Res<()> { unsafe {
                         let errored = win_errored.entry(hwnd.as_usize())
                             .or_default();
 
-                        if match err.var.as_ref() {
+                        if match err.var() {
                             ErrVar::WinCore(error) => errored.hresults.insert(error.code()),
-                            _ => errored.others.insert(mem::discriminant(&err.var))
+                            _ => errored.others.insert(mem::discriminant(err.var()))
 
                         } {
                             error!("{}: failed on window enumeration: hwnd: {:p}, exe: {}: {}", module_path!(), hwnd.0, hwnd.get_exe_or_err(), err);
@@ -671,7 +671,7 @@ fn begin(init: Init, rx: &mpsc::Receiver<Msg>) -> Res<()> { unsafe {
                 }
             },
             Err(err) => {
-                match *err.var {
+                match err.var() {
                     ErrVar::Close => break,
                     _ => Err(err)?
                 }
@@ -729,7 +729,7 @@ fn orbit(rx: &mpsc::Receiver<Msg>) -> Res<()> {
     let mut res = begin(init_, rx);
 
     loop {
-        if let Err(err) = res.as_ref() && let ErrVar::ReloadConfig = *err.var {
+        if let Err(err) = res.as_ref() && let ErrVar::ReloadConfig = err.var() {
             init_ = init()?;
 
             info!("{}: reloaded config", module_path!());
