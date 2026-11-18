@@ -4,6 +4,7 @@ use config::*;
 use ogos_core::*;
 use ogos_discord as discord;
 use ogos_err::*;
+use ogos_proc_macros::*;
 use ogos_video as video;
 
 use bytemuck::*;
@@ -158,6 +159,11 @@ impl AnimationInfo {
         ui.animate_bool_with_time_and_easing("animate".into(), self.target, self.dur, self.kind.as_easing())
     }
 }
+impl ClearableTextEdits for AnimationInfo {
+    fn clear_text_edits(&mut self) {
+        self.dur_edit.clear();
+    }
+}
 impl From<AnimationCache> for AnimationInfo {
     fn from(value: AnimationCache) -> Self {
         Self {
@@ -223,6 +229,15 @@ struct CacheEntryInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     bookmark: Option<Pivot>,
     preset: Option<Preset>
+}
+
+struct ClearingVisitor;
+impl<T> FieldVisitor<T> for ClearingVisitor where
+    T: ClearableTextEdits
+{
+    fn visit(&mut self, field: &mut T) {
+        field.clear_text_edits();
+    }
 }
 
 #[derive(Clone)]
@@ -337,6 +352,19 @@ impl PartialEq<egui::Vec2> for Extent2dF {
     }
 }
 
+#[derive(Default, FieldIter)]
+struct Extent2dText {
+    width: TextEditBufs,
+    height: TextEditBufs
+}
+impl ClearableTextEdits for Extent2dText {
+    fn clear_text_edits(&mut self) {
+        for dim in self.iter_mut() {
+            dim.edit.clear();
+        }
+    }
+}
+
 struct FerryImageInfo {
     image_file_name: Arc<str>,
     grid_entry_i: usize,
@@ -442,6 +470,28 @@ impl Deref for GenerationId {
 struct GenerationIdCheck {
     id: GenerationId,
     expected: usize
+}
+impl GenerationIdCheckExt for GenerationIdCheck {
+    fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()> {
+        if self.id.load(Ordering::Relaxed) != self.expected {
+            if let Some(ready) = signal_ready {
+                ready.signal();
+            }
+
+            return Err(ErrVar::Cancel)
+        }
+
+        Ok(())
+    }
+}
+impl GenerationIdCheckExt for Option<GenerationIdCheck> {
+    fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()> {
+        if let Some(cancel) = self {
+            return cancel.check(signal_ready)
+        }
+
+        Ok(())
+    }
 }
 
 struct GridEntryInfo {
@@ -657,7 +707,7 @@ impl ImageSync {
     }
 }
 
-#[derive(Default, FieldCount)]
+#[derive(Default, FieldCount, FieldIter)]
 struct ImageSyncs {
     base: ImageSync,
     grid: ImageSync,
@@ -672,51 +722,15 @@ impl ImageSyncs {
         }
     }
 
-    fn iter(&self) -> ImageSyncsIter<'_> {
-        ImageSyncsIter {
-            index: 0,
-            syncs: self
-        }
-    }
-
     fn signal_all(&self) {
-        self.base.file_ready.write().signal();
-        self.grid.file_ready.write().signal();
-        self.details.file_ready.write().signal();
+        for sync in self.iter() {
+            sync.file_ready.write().signal();
+        }
     }
 
     fn signal_ferry(&self) {
         self.grid.file_ready.write().signal();
         self.details.file_ready.write().signal();
-    }
-}
-
-struct ImageSyncsIter<'a> {
-    index: usize,
-    syncs: &'a ImageSyncs
-}
-impl<'a> Iterator for ImageSyncsIter<'a> {
-    type Item = &'a ImageSync;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        const END: usize = ImageSyncs::field_count();
-
-        let ret = match self.index {
-            0 => Some(&self.syncs.base),
-            1 => Some(&self.syncs.grid),
-            2 => Some(&self.syncs.details),
-            _end @ END.. => return None
-        };
-
-        self.index += 1;
-
-        ret
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let rem = ImageSyncs::field_count() - self.index;
-
-        (rem, Some(rem))
     }
 }
 
@@ -1132,6 +1146,11 @@ struct EaseInOutScroller {
     multiplier_edit: String,
     multiplier_display: String
 }
+impl ClearableTextEdits for EaseInOutScroller {
+    fn clear_text_edits(&mut self) {
+        self.multiplier_edit.clear();
+    }
+}
 impl From<EaseInOutScrollerCache> for EaseInOutScroller {
     fn from(value: EaseInOutScrollerCache) -> Self {
         Self {
@@ -1168,7 +1187,7 @@ impl From<&EaseInOutScroller> for EaseInOutScrollerCache {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, FieldVisit)]
 struct SpringDamperScroller {
     multiplier: f32,
     pos: f32,
@@ -1186,11 +1205,14 @@ struct SpringDamperScroller {
     vel_vel_coef: f32,
 
     should_smooth: bool,
+    #[field_visit = "visit_text_edits"]
     multiplier_edit: String,
-    stiffness_edit: String,
-    bounce_edit: String,
     multiplier_display: String,
+    #[field_visit = "visit_text_edits"]
+    stiffness_edit: String,
     stiffness_display: String,
+    #[field_visit = "visit_text_edits"]
+    bounce_edit: String,
     bounce_display: String
 }
 impl SpringDamperScroller {
@@ -1307,6 +1329,11 @@ impl SpringDamperScroller {
         write!(self.multiplier_display, "{:.2}", self.multiplier).unwrap();
         write!(self.stiffness_display, "{}", self.angular_frequency).unwrap();
         write!(self.bounce_display, "{:.2}", self.damping_ratio.recip()).unwrap();
+    }
+}
+impl ClearableTextEdits for SpringDamperScroller {
+    fn clear_text_edits(&mut self) {
+        self.visit_text_edits(ClearingVisitor);
     }
 }
 impl From<SpringDamperScrollerCache> for SpringDamperScroller {
@@ -1468,15 +1495,9 @@ impl StreamBuilder {
 }
 
 #[derive(Default)]
-struct TextRw {
-    edit: String,
-    display: String
-}
-
-#[derive(Default)]
-struct TextRwExtent {
-    width: TextRw,
-    height: TextRw
+struct TextEditBufs {
+    display: String,
+    edit: String
 }
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -1744,30 +1765,21 @@ enum Watching {
     Words
 }
 
+trait ClearableTextEdits {
+    fn clear_text_edits(&mut self);
+}
+impl ClearableTextEdits for String {
+    fn clear_text_edits(&mut self) {
+        self.clear();
+    }
+}
+
+trait FieldVisitor<T> {
+    fn visit(&mut self, field: &mut T);
+}
+
 trait GenerationIdCheckExt {
     fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()>;
-}
-impl GenerationIdCheckExt for GenerationIdCheck {
-    fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()> {
-        if self.id.load(Ordering::Relaxed) != self.expected {
-            if let Some(ready) = signal_ready {
-                ready.signal();
-            }
-
-            return Err(ErrVar::Cancel)
-        }
-
-        Ok(())
-    }
-}
-impl GenerationIdCheckExt for Option<GenerationIdCheck> {
-    fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()> {
-        if let Some(cancel) = self {
-            return cancel.check(signal_ready)
-        }
-
-        Ok(())
-    }
 }
 
 trait WaitGroupExt {
@@ -1803,7 +1815,7 @@ fn add_pseudo_heading(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) {
     });
 }
 
-fn add_dim_edit(ui: &mut egui::Ui, enabled: bool, text: &mut TextRw, dim: f32) -> egui::Response {
+fn add_dim_edit(ui: &mut egui::Ui, enabled: bool, text: &mut TextEditBufs, dim: f32) -> egui::Response {
     text.display.clear();
     write!(text.display, "{}", dim).unwrap();
 
@@ -3430,6 +3442,7 @@ struct MediaBrowserInfo<'a> {
     cache: Cache
 }
 
+#[derive(FieldVisit)]
 struct MediaBrowser<'a> {
     wgpu: egui_wgpu::RenderState,
     thread_pool: Arc<ThreadPool>,
@@ -3440,7 +3453,8 @@ struct MediaBrowser<'a> {
     center_window: bool,
     window_inner_extent: Extent2dF,
     window_windowed_inner_extent: Option<Extent2dF>,
-    window_inner_extent_text: TextRwExtent,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
+    window_inner_extent_text: Extent2dText, // 'Viewport'
     viewport_focused: bool,
     reactive_mode: ReactiveMode,
     image_dirs: &'static ImageDirs,
@@ -3457,7 +3471,8 @@ struct MediaBrowser<'a> {
     grid_entries_selection: HashSet<usize>,
     grid_entries_selection_kind: Option<SelectionKind>,
     grid_cell_size: egui::Vec2,
-    grid_cell_size_text: TextRwExtent,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
+    grid_cell_extent_text: Extent2dText, // 'Image'
     grid_cell_space: egui::Vec2,
     grid_cell_strokes: Vec<egui::Rect>,
     grid_cell_context_menu_open: Option<egui::Id>,
@@ -3468,15 +3483,20 @@ struct MediaBrowser<'a> {
     grid_view_i: usize,
     grid_view_pending_op: Option<GridViewOp>,
     lookahead: usize,
-    proximity: usize,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
     lookahead_edit: String,
-    proximity_edit: String,
     lookahead_display: String,
+    proximity: usize,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
+    proximity_edit: String,
     proximity_display: String,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
     animation: AnimationInfo,
     residence: Range<usize>,
     stream: Stream,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
     sort_name_edit: String,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
     new_tag_edit: String,
     /// Sets of indices into [`grid_entries`]
     tags: BTreeMap<Rc<str>, BTreeSet<usize>>,
@@ -3490,11 +3510,14 @@ struct MediaBrowser<'a> {
     details_grid_entry_i: usize,
     details_dir_entries: Vec<DirEntryInfo>,
     details_cell_size: egui::Vec2,
-    details_cell_size_text: TextRwExtent,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
+    details_cell_size_text: Extent2dText,
     details_hovered_dir_entry_i: usize,
     details_levels: Vec<PathBuf>,
     scroll_kind: ScrollKind,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
     ease_in_out_scroller: EaseInOutScroller,
+    #[field_visit = "visit_grid_cell_context_menu_text_edits"]
     spring_damper_scroller: SpringDamperScroller,
     maintain_sample_rate: bool,
     override_glsl_shaders: bool,
@@ -3994,7 +4017,7 @@ impl<'a> MediaBrowser<'a> {
             grid_entries_selection: default!(),
             grid_entries_selection_kind: default!(),
             grid_cell_size,
-            grid_cell_size_text: default!(),
+            grid_cell_extent_text: default!(),
             grid_cell_space,
             grid_cell_strokes: default!(),
             grid_cell_context_menu_open: default!(),
@@ -4004,10 +4027,10 @@ impl<'a> MediaBrowser<'a> {
             grid_view_i: default!(),
             grid_view_pending_op: default!(),
             lookahead,
-            proximity,
             lookahead_edit: default!(),
-            proximity_edit: default!(),
             lookahead_display: default!(),
+            proximity,
+            proximity_edit: default!(),
             proximity_display: default!(),
             animation,
             residence,
@@ -4128,7 +4151,7 @@ impl<'a> MediaBrowser<'a> {
             rescale_kind
         ) = match self.view_kind {
             ViewKind::Grid => (
-                &mut self.grid_cell_size_text,
+                &mut self.grid_cell_extent_text,
                 &mut self.grid_cell_size,
                 Some(&mut self.grid_cell_space),
                 ViewKind::RescaleGrid
@@ -4145,7 +4168,7 @@ impl<'a> MediaBrowser<'a> {
         let cell_width_edit_resp = add_dim_edit(ui, cell_text.height.edit.is_empty(), &mut cell_text.width, cell_size.x);
         let cell_height_edit_resp = add_dim_edit(ui, cell_text.width.edit.is_empty(), &mut cell_text.height, cell_size.y);
 
-        let try_set_cell_extent = |ui: &mut egui::Ui, cell_text: &mut TextRwExtent, extent: Option<Extent2dF>| {
+        let try_set_cell_extent = |ui: &mut egui::Ui, cell_text: &mut Extent2dText, extent: Option<Extent2dF>| {
             if let Some(extent) = extent {
                 cell_text.width.edit.clear();
 
@@ -6260,21 +6283,15 @@ impl<'a> MediaBrowser<'a> {
             .close_behavior(close_behaviour)
             .show(|ui| self.grid_cell_tags_submenus(ui));
 
-        match single_menu.or(multi_menu) {
-            Some(resp) => {
-                // Re-open menu on another cell
-                if let Some(id) = self.grid_cell_context_menu_open && id != resp.response.id {
-                    self.sort_name_edit.clear();
-                }
-
-                self.grid_cell_context_menu_open = Some(resp.response.id);
+        // Which menu is open?
+        match single_menu.map(|_| single_id).or(multi_menu.map(|_| multi_id)) {
+            Some(menu_id) => if self.grid_cell_context_menu_open.is_none_or(|saved_id| menu_id != saved_id) {
+                // Menu is opening or changing cell
+                self.visit_grid_cell_context_menu_text_edits(ClearingVisitor);
+                self.grid_cell_context_menu_open = Some(menu_id);
             },
-            None => if let Some(id) = self.grid_cell_context_menu_open &&
-                (id == single_id || id == multi_id)
-            {
-                // Close menu
-                self.sort_name_edit.clear();
-
+            None => if self.grid_cell_context_menu_open.is_some_and(|saved_id| [single_id, multi_id].contains(&saved_id)) {
+                // Menu was closed on this cell
                 self.grid_cell_context_menu_open = None;
             }
         }
@@ -6423,7 +6440,7 @@ impl<'a> MediaBrowser<'a> {
         Ok(())
     }
 
-    fn remove_image(&mut self, ui: &mut egui::Ui, image_i: usize) {
+    fn remove_image(&mut self, image_i: usize) {
         let grid_entry_info = &mut self.grid_entries[self.grid_entry_i];
         grid_entry_info.image_i = None;
 
@@ -6431,6 +6448,8 @@ impl<'a> MediaBrowser<'a> {
         image_info.ref_count -= 1;
 
         if image_info.ref_count == 0 {
+            reap_tex(image_info, &self.to_thanatos);
+
             let cancel = image_info.pipelines.incr_all_for_remove();
             image_info.syncs.signal_all();
 
@@ -6441,10 +6460,6 @@ impl<'a> MediaBrowser<'a> {
                 sync.file_lock.clone()
             });
             let paths = self.image_dirs.make_paths(image_file_name);
-
-            self.stream.drop.clear();
-            self.stream.drop.insert(self.grid_entry_i);
-            self.stream(ui);
 
             self.thread_pool.enqueue_high(move || {
                 for (file_lock, path) in file_locks.into_iter().zip(paths) {
@@ -6479,7 +6494,7 @@ impl<'a> MediaBrowser<'a> {
 
             let image_i = self.grid_entries[self.grid_entry_i].image_i;
             if ui.add_enabled(image_i.is_some(), egui::Button::new("Remove")).clicked() {
-                self.remove_image(ui, image_i.unwrap());
+                self.remove_image(image_i.unwrap());
 
                 self.close_ui_and_clear_grid_entries_selection(ui);
             }

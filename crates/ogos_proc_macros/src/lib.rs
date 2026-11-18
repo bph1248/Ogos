@@ -219,3 +219,139 @@ pub fn err_loc_sets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     }
     .into()
 }
+
+const MACRO_SUPPORT_REGULAR_STRUCTS: &str = "Struct must be regular";
+const MACRO_SUPPORT_ANNOTATION_VALUE_FN_IDENT: &str = "Annotation value must be usable as a fn identifier";
+const MACRO_SUPPORT_ANNOTATION_FORM_NAME_VALUE: &str = "Annotation must be of the form 'field_visit = \"value\"'";
+
+#[proc_macro_derive(FieldIter, attributes(field_iter))]
+pub fn field_iter(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let struct_ident = &input.ident;
+    let elided_lifetimes = input.generics.lifetimes().next().map(|_| quote! { <'_> });
+
+    let mut annotated_fields = match &input.data {
+        Data::Struct(data_struct) => match &data_struct.fields {
+            Fields::Named(fields) => fields.named.iter()
+                .filter(|field|
+                    field.attrs.iter().any(|attr| attr.path().get_ident().is_some_and(|ident| ident == "field_iter")))
+                .peekable(),
+            _ => panic!("{MACRO_SUPPORT_REGULAR_STRUCTS}")
+        },
+        _ => panic!("{MACRO_SUPPORT_REGULAR_STRUCTS}")
+    };
+    let (
+        iter_item_ty,
+        iterable_field_idents
+    ) : (
+        _,
+        [Box<dyn Iterator<Item = _>>; _]
+    ) = match annotated_fields.peek() {
+        Some(_) => {
+            let ty = &annotated_fields.peek().unwrap().ty;
+            let iterable_field_idents_1 = Box::new(annotated_fields.map(|field| &field.ident));
+            let iterable_field_idents_2 = Box::new(iterable_field_idents_1.as_ref().clone());
+
+            (ty, [iterable_field_idents_1, iterable_field_idents_2])
+        },
+        None => match &input.data {
+            Data::Struct(data_struct) => match &data_struct.fields {
+                Fields::Named(fields) => {
+                    let ty = &fields.named[0].ty;
+                    let iterable_field_idents_1 = Box::new(fields.named.iter().map(|field| &field.ident));
+                    let iterable_field_idents_2 = Box::new(iterable_field_idents_1.as_ref().clone());
+
+                    (ty, [iterable_field_idents_1, iterable_field_idents_2])
+                },
+                _ => panic!("{MACRO_SUPPORT_REGULAR_STRUCTS}")
+            },
+            _ => panic!("{MACRO_SUPPORT_REGULAR_STRUCTS}")
+        }
+    };
+    let [
+        iterable_field_idents_1,
+        iterable_field_idents_2
+    ] = iterable_field_idents;
+
+    quote! {
+        impl #struct_ident #elided_lifetimes {
+            pub fn iter(&self) -> impl Iterator<Item = &#iter_item_ty> {
+                [
+                    #(&self.#iterable_field_idents_1),*
+                ]
+                .into_iter()
+            }
+
+            pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut #iter_item_ty> {
+                [
+                    #(&mut self.#iterable_field_idents_2),*
+                ]
+                .into_iter()
+            }
+        }
+    }
+    .into()
+}
+
+#[proc_macro_derive(FieldVisit, attributes(field_visit))]
+pub fn field_visit(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let struct_ident = &input.ident;
+    let elided_lifetimes = input.generics.lifetimes().next().map(|_| quote! { <'_> });
+
+    let mut annotated_field_idents: HashMap<Ident, (Vec<&Ident>, HashSet<&Type>)> = HashMap::new();
+
+    match &input.data {
+        Data::Struct(data_struct) => match &data_struct.fields {
+            Fields::Named(fields) => for field in &fields.named {
+                if let Some(attr) = field.attrs.iter().find(|attr| attr.path().get_ident().is_some_and(|ident| ident == "field_visit")) {
+                    if let Meta::NameValue(nv) = &attr.meta &&
+                        let Expr::Lit(ExprLit { lit, .. }) = &nv.value &&
+                        let Lit::Str(lit_str) = lit
+                    {
+                        let method_name = lit_str.value();
+                        let method_ident = parse_str::<Ident>(&method_name).expect(MACRO_SUPPORT_ANNOTATION_VALUE_FN_IDENT);
+                        let field_ident = field.ident.as_ref().unwrap();
+                        let field_ty = &field.ty;
+
+                        annotated_field_idents.entry(method_ident)
+                            .and_modify(|(field_idents, field_tys)| {
+                                field_idents.push(field_ident);
+                                field_tys.insert(field_ty);
+                            })
+                            .or_insert((
+                                vec![field_ident],
+                                HashSet::from([field_ty])
+                            ));
+                    } else {
+                        panic!("{MACRO_SUPPORT_ANNOTATION_FORM_NAME_VALUE}")
+                    }
+                }
+            },
+            _ => panic!("{MACRO_SUPPORT_REGULAR_STRUCTS}")
+        },
+        _ => panic!("{MACRO_SUPPORT_REGULAR_STRUCTS}")
+    }
+
+    let method_impls_iter = annotated_field_idents.into_iter()
+        .map(|(method_name, (field_idents, field_tys))| {
+            let field_tys = field_tys.iter();
+
+            quote! {
+                fn #method_name<V>(&mut self, mut visitor: V) where
+                    V: #(FieldVisitor<#field_tys>)+*
+                {
+                    #(visitor.visit(&mut self.#field_idents);)*
+                }
+            }
+        });
+
+    quote! {
+        impl #struct_ident #elided_lifetimes {
+            #(#method_impls_iter)*
+        }
+    }
+    .into()
+}

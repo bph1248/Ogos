@@ -2943,6 +2943,7 @@ dependencies = [
  "ogos_core",
  "ogos_discord",
  "ogos_err",
+ "ogos_proc_macros",
  "ogos_video",
  "parking_lot",
  "range-compare",

@@ -30,6 +30,7 @@ ogos_config = { workspace = true }
 ogos_core = { workspace = true }
 ogos_discord = { workspace = true }
 ogos_err = { workspace = true }
+ogos_proc_macros = { workspace = true }
 ogos_video = { workspace = true }
 parking_lot = { workspace = true }
 range-compare = "0.1.1"

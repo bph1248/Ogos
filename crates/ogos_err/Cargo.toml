@@ -23,7 +23,7 @@ notify-debouncer-full = { workspace = true }
 nvapi-sys = { workspace = true }
 ogos_core = { workspace = true }
 ogos_mki = { workspace = true }
-ogos_proc_macros = { path = "../ogos_proc_macros" }
+ogos_proc_macros = { workspace = true }
 qmk-via-api = { workspace = true }
 resize = { workspace = true }
 ron = { workspace = true }
