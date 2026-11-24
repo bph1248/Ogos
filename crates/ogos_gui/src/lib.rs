@@ -1782,6 +1782,34 @@ trait GenerationIdCheckExt {
     fn check(&self, signal_ready: Option<&PollGroup>) -> ResVar<()>;
 }
 
+trait MutexExt<T: ?Sized> {
+    fn lock_scope<F, R>(&self, f: F) -> R where
+        F: FnOnce(MutexGuard<T>) -> R;
+}
+impl<T> MutexExt<T> for Mutex<T> {
+    fn lock_scope<F, R>(&self, f: F) -> R where
+        F: FnOnce(MutexGuard<T>) -> R
+    {
+        let guard = self.lock();
+
+        f(guard)
+    }
+}
+
+trait RwLockExt<T: ?Sized> {
+    fn write_scope<F>(&self, f: F) where
+        F: FnOnce(RwLockWriteGuard<T>);
+}
+impl<T> RwLockExt<T> for RwLock<T> {
+    fn write_scope<F>(&self, f: F) where
+        F: FnOnce(RwLockWriteGuard<T>)
+    {
+        let guard = self.write();
+
+        f(guard);
+    }
+}
+
 trait WaitGroupExt {
     fn signal(&mut self);
     fn wait(self);
@@ -2723,12 +2751,11 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
     let scale_image = || -> Res1<image::RgbaImage> {
         base_ready.wait();
 
-        let base_image = {
-            let _base_guard = base_lock.lock();
+        let base_image = base_lock.lock_scope(|_| {
             cancel.check(tex_ready.as_ref())?;
 
-            load_rgba_image(base_path)?
-        };
+            load_rgba_image(base_path)
+        })?;
 
         let aspect_ratio_v = base_image.dimensions()
             .into_::<Extent2dF>()
@@ -2756,10 +2783,13 @@ fn ferry_base_image(info: FerryBaseImageInfo) -> Res1<()> {
         let encoder = image::codecs::webp::WebPEncoder::new_lossless(image_file);
         let (width, height) = image.dimensions();
 
-        let _scaled_guard = scaled_lock.lock();
-        if cancel.check(None).is_ok() {
+        scaled_lock.lock_scope(|_| -> ResVar<_> {
+            cancel.check(None)?;
+
             encoder.encode(image.as_raw(), width, height, image::ExtendedColorType::Rgba8)?;
-        }
+
+            Ok(())
+        })?;
 
         Ok(())
     };
@@ -2860,12 +2890,11 @@ fn ferry_scaled_image(info: FerryScaledImageInfo) -> Res1<()> {
     let inner = || -> ResVar<image::RgbaImage> {
         scaled_ready.wait();
 
-        let image = {
-            let _scaled_guard = scaled_lock.lock();
+        let image = scaled_lock.lock_scope(|_| {
             cancel.check(tex_ready.as_ref())?;
 
-            load_rgba_image_scaled(&path)?
-        };
+            load_rgba_image_scaled(&path)
+        })?;
 
         Ok(image)
     };
@@ -3961,14 +3990,13 @@ impl<'a> MediaBrowser<'a> {
             base_image_kind: BaseImageKind::Cached,
             grid_cell_extent: grid_cell_size.into(),
             details_cell_extent: details_cell_size.into(),
-            grid_ship: resident_grid_sx.clone(),
+            grid_ship: resident_grid_sx,
             details_ship: charon_ship.clone(),
             ferry_image_infos,
             error_sx: error_sx.clone()
         };
         ferry_images(ferry_images_info);
 
-        drop(resident_grid_sx);
         for res in resident_grid_rx.iter() {
             match res {
                 Ok(image_info) => {
@@ -6411,28 +6439,29 @@ impl<'a> MediaBrowser<'a> {
         grid_entry_info.image_i = Some(image_i);
 
         self.thread_pool.enqueue_high(move || {
-            let base_file_guard = base_sync.file_lock.lock();
-            if cancel_copy.check(None).is_ok() {
+            base_sync.file_lock.lock_scope(|_| {
+                if cancel_copy.check(None).is_err() { return }
+
                 fs::copy(&pick_path, &base_image_path).map_err(|err| ErrVar::FailedCopyFile { inner: err, path: pick_path })
                     .consume_or_else(|err| error!("{}: {}", module_path!(), err));
-            }
-            drop(base_file_guard);
+            });
 
-            let mut base_ready_guard = base_sync.file_ready.write();
-            if cancel_copy.check(None).is_ok() {
-                base_ready_guard.take();
-            }
-            drop(base_ready_guard);
+            base_sync.file_ready.write_scope(|mut base_ready| {
+                if cancel_copy.check(None).is_err() { return }
+
+                base_ready.signal();
+            });
 
             if let Some(remove) = remove_image_file_info {
                 let paths = image_dirs.make_paths(&remove.file_name);
 
                 for (file_lock, path) in remove.file_locks.iter().zip(paths) {
-                    let _file_guard = file_lock.lock();
-                    if remove.cancel.check(None).is_err() { return }
+                    file_lock.lock_scope(|_| {
+                        if remove.cancel.check(None).is_err() { return }
 
-                    fs::remove_file(&path).map_err(|err| ErrVar::FailedRemoveFile { inner: err, path })
-                        .unwrap_or_else(|err| error!("{}: {}", module_path!(), err));
+                        fs::remove_file(&path).map_err(|err| ErrVar::FailedRemoveFile { inner: err, path })
+                            .unwrap_or_else(|err| error!("{}: {}", module_path!(), err));
+                    });
                 }
             }
         });
@@ -6463,11 +6492,12 @@ impl<'a> MediaBrowser<'a> {
 
             self.thread_pool.enqueue_high(move || {
                 for (file_lock, path) in file_locks.into_iter().zip(paths) {
-                    let _file_guard = file_lock.lock();
-                    if cancel.check(None).is_err() { return }
+                    file_lock.lock_scope(|_| {
+                        if cancel.check(None).is_err() { return }
 
-                    fs::remove_file(&path).map_err(|err| ErrVar::FailedRemoveFile { inner: err, path })
-                        .unwrap_or_else(|err| error!("{}: {}", module_path!(), err));
+                        fs::remove_file(&path).map_err(|err| ErrVar::FailedRemoveFile { inner: err, path })
+                            .unwrap_or_else(|err| error!("{}: {}", module_path!(), err));
+                    });
                 }
             });
         }
